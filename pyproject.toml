@@ -13,5 +13,9 @@ dependencies = [
     "numpy>=1.24",
     "matplotlib>=3.7",
     "tqdm>=4.65",
+    "tensorboard>=2.20.0",
+    "rich>=14.2.0",
 ]
 
+[tool.uv]
+extra-build-dependencies = { pygame = ["setuptools"] }

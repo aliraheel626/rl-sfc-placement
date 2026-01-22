@@ -27,6 +27,7 @@ def train(
     total_timesteps: int = 100000,
     save_path: str = "models/sfc_ppo",
     log_path: str = "logs/",
+    plot_freq: int = 5000,
     seed: int = 42,
 ):
     """
@@ -75,9 +76,12 @@ def train(
     )
 
     # Setup callbacks
+    plot_path = str(Path(save_path).with_suffix("")) + "_acceptance_ratio.png"
     callbacks = CallbackList(
         [
-            AcceptanceRatioCallback(verbose=1),
+            AcceptanceRatioCallback(
+                save_path=plot_path, plot_freq=plot_freq, verbose=1
+            ),
             BestModelCallback(
                 save_path=f"{save_path}_best", check_freq=1000, verbose=1
             ),
@@ -132,6 +136,12 @@ def main():
     parser.add_argument(
         "--log-path", type=str, default="logs/", help="Path for TensorBoard logs"
     )
+    parser.add_argument(
+        "--plot-freq",
+        type=int,
+        default=5000,
+        help="Frequency (in steps) to update the acceptance ratio plot",
+    )
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
 
     args = parser.parse_args()
@@ -147,6 +157,7 @@ def main():
         total_timesteps=timesteps,
         save_path=args.save_path,
         log_path=args.log_path,
+        plot_freq=args.plot_freq,
         seed=args.seed,
     )
 

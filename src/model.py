@@ -7,6 +7,8 @@ agent from sb3-contrib for use with the SFC placement environment.
 
 from typing import Optional, Any
 
+import os
+import matplotlib.pyplot as plt
 from sb3_contrib import MaskablePPO
 from sb3_contrib.common.wrappers import ActionMasker
 from stable_baselines3.common.callbacks import BaseCallback
@@ -98,11 +100,20 @@ def load_model(path: str, env: Optional[ActionMasker] = None) -> MaskablePPO:
 class AcceptanceRatioCallback(BaseCallback):
     """
     Custom callback to track and log acceptance ratio during training.
+    Also saves a plot of the acceptance ratio vs training steps.
     """
 
-    def __init__(self, verbose: int = 0):
+    def __init__(
+        self,
+        save_path: str = "plots/acceptance_ratio.png",
+        plot_freq: int = 5000,
+        verbose: int = 0,
+    ):
         super().__init__(verbose)
+        self.save_path = save_path
+        self.plot_freq = plot_freq
         self.acceptance_ratios = []
+        self.steps = []
 
     def _on_step(self) -> bool:
         """Called after each step."""
@@ -113,15 +124,66 @@ class AcceptanceRatioCallback(BaseCallback):
             if "acceptance_ratio" in info:
                 ratio = info["acceptance_ratio"]
                 self.acceptance_ratios.append(ratio)
+                self.steps.append(self.num_timesteps)
 
                 # Log to TensorBoard if available
                 if self.logger is not None:
                     self.logger.record("custom/acceptance_ratio", ratio)
 
+        # Plot and save every plot_freq steps
+        if self.n_calls > 0 and self.n_calls % self.plot_freq == 0:
+            self._save_plot()
+
         return True
+
+    def _save_plot(self):
+        """Generates and saves a plot of acceptance ratio."""
+        if not self.acceptance_ratios:
+            return
+
+        try:
+            # Create directory if it doesn't exist
+            os.makedirs(os.path.dirname(self.save_path), exist_ok=True)
+
+            plt.figure(figsize=(10, 6))
+            plt.plot(self.steps, self.acceptance_ratios, label="Acceptance Ratio")
+
+            # Add moving average for smoother visualization
+            if len(self.acceptance_ratios) > 100:
+                import numpy as np
+
+                window = min(100, len(self.acceptance_ratios) // 10)
+                moving_avg = np.convolve(
+                    self.acceptance_ratios, np.ones(window) / window, mode="valid"
+                )
+                plt.plot(
+                    self.steps[window - 1 :],
+                    moving_avg,
+                    label=f"Moving Avg ({window})",
+                    color="orange",
+                )
+
+            plt.title("Acceptance Ratio vs Training Steps")
+            plt.xlabel("Total Timesteps")
+            plt.ylabel("Acceptance Ratio")
+            plt.grid(True, linestyle="--", alpha=0.7)
+            plt.legend()
+
+            # Ensure the plot is saved
+            plt.tight_layout()
+            plt.savefig(self.save_path)
+            plt.close()
+
+            if self.verbose > 1:
+                print(f"Plot saved to {self.save_path} at step {self.num_timesteps}")
+        except Exception as e:
+            if self.verbose > 0:
+                print(f"Warning: Could not save plot: {e}")
 
     def _on_training_end(self) -> None:
         """Called at the end of training."""
+        self._save_plot()
+
         if self.acceptance_ratios:
             final_ratio = self.acceptance_ratios[-1]
             avg_ratio = sum(self.acceptance_ratios) / len(self.acceptance_ratios)
@@ -130,6 +192,7 @@ class AcceptanceRatioCallback(BaseCallback):
                 print("\nTraining Complete:")
                 print(f"  Final Acceptance Ratio: {final_ratio:.4f}")
                 print(f"  Average Acceptance Ratio: {avg_ratio:.4f}")
+                print(f"  Acceptance Ratio Plot saved to: {self.save_path}")
 
 
 class BestModelCallback(BaseCallback):

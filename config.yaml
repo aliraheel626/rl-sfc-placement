@@ -1,0 +1,84 @@
+# SFC Placement RL Environment Configuration
+
+# Substrate Network Configuration
+substrate:
+  num_nodes: 20
+  mesh_connectivity: 0.3  # Probability of edge between any two nodes
+  
+  # Node resource ranges (uniform random)
+  resources:
+    ram:
+      min: 8
+      max: 64
+    cpu:
+      min: 4
+      max: 32
+    storage:
+      min: 100
+      max: 1000
+    security_score:
+      min: 1
+      max: 5
+  
+  # Link attribute ranges
+  links:
+    bandwidth:
+      min: 100
+      max: 1000
+    latency:
+      min: 1
+      max: 50
+
+# SFC Request Configuration
+sfc:
+  # Number of VNFs per chain
+  vnf_count:
+    min: 2
+    max: 6
+  
+  # VNF resource demands (should be smaller than substrate)
+  vnf_resources:
+    ram:
+      min: 1
+      max: 16
+    cpu:
+      min: 1
+      max: 8
+    storage:
+      min: 10
+      max: 200
+  
+  # SFC-level constraints
+  constraints:
+    security_score:
+      min: 1
+      max: 5
+    max_latency:
+      min: 50
+      max: 200
+    min_bandwidth:
+      min: 50
+      max: 500
+  
+  # Time to live range
+  ttl:
+    min: 10
+    max: 100
+
+# Training Configuration
+training:
+  total_timesteps: 100000
+  learning_rate: 0.0003
+  n_steps: 2048
+  batch_size: 64
+  n_epochs: 10
+  gamma: 0.99
+  
+# Reward Configuration
+rewards:
+  acceptance: 10.0
+  rejection: -5.0
+
+# Evaluation Configuration
+evaluation:
+  num_requests: 1000

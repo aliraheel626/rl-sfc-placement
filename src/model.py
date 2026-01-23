@@ -100,7 +100,9 @@ def load_model(path: str, env: Optional[ActionMasker] = None) -> MaskablePPO:
 class AcceptanceRatioCallback(BaseCallback):
     """
     Custom callback to track and log acceptance ratio during training.
-    Also saves a plot of the acceptance ratio vs training steps.
+
+    Tracks the per-episode acceptance ratio (accepted/total requests within each episode)
+    and plots it against episode number.
     """
 
     def __init__(
@@ -112,23 +114,34 @@ class AcceptanceRatioCallback(BaseCallback):
         super().__init__(verbose)
         self.save_path = save_path
         self.plot_freq = plot_freq
-        self.acceptance_ratios = []
-        self.steps = []
+        self.episode_acceptance_ratios = []  # Per-episode acceptance ratios
+        self.episodes = []  # Episode numbers
 
     def _on_step(self) -> bool:
         """Called after each step."""
-        # Get info from the environment
+        # Get info from the environment - check for episode completion
         infos = self.locals.get("infos", [])
+        dones = self.locals.get("dones", [])
 
-        for info in infos:
-            if "acceptance_ratio" in info:
-                ratio = info["acceptance_ratio"]
-                self.acceptance_ratios.append(ratio)
-                self.steps.append(self.num_timesteps)
+        for i, info in enumerate(infos):
+            # Only record at episode end (when terminated)
+            if dones[i] if isinstance(dones, (list, tuple)) else dones:
+                if "episode_acceptance_ratio" in info:
+                    ratio = info["episode_acceptance_ratio"]
+                    episode_num = info.get("total_episodes", len(self.episodes) + 1)
 
-                # Log to TensorBoard if available
-                if self.logger is not None:
-                    self.logger.record("custom/acceptance_ratio", ratio)
+                    self.episode_acceptance_ratios.append(ratio)
+                    self.episodes.append(episode_num)
+
+                    # Log to TensorBoard if available
+                    if self.logger is not None:
+                        self.logger.record("custom/episode_acceptance_ratio", ratio)
+                        self.logger.record(
+                            "custom/episode_accepted", info.get("episode_accepted", 0)
+                        )
+                        self.logger.record(
+                            "custom/episode_requests", info.get("episode_requests", 0)
+                        )
 
         # Plot and save every plot_freq steps
         if self.n_calls > 0 and self.n_calls % self.plot_freq == 0:
@@ -137,8 +150,8 @@ class AcceptanceRatioCallback(BaseCallback):
         return True
 
     def _save_plot(self):
-        """Generates and saves a plot of acceptance ratio."""
-        if not self.acceptance_ratios:
+        """Generates and saves a plot of acceptance ratio per episode."""
+        if not self.episode_acceptance_ratios:
             return
 
         try:
@@ -146,26 +159,37 @@ class AcceptanceRatioCallback(BaseCallback):
             os.makedirs(os.path.dirname(self.save_path), exist_ok=True)
 
             plt.figure(figsize=(10, 6))
-            plt.plot(self.steps, self.acceptance_ratios, label="Acceptance Ratio")
+            plt.plot(
+                self.episodes,
+                self.episode_acceptance_ratios,
+                alpha=0.6,
+                label="Episode Acceptance Ratio",
+                linewidth=0.5,
+            )
 
             # Add moving average for smoother visualization
-            if len(self.acceptance_ratios) > 100:
+            if len(self.episode_acceptance_ratios) > 10:
                 import numpy as np
 
-                window = min(100, len(self.acceptance_ratios) // 10)
-                moving_avg = np.convolve(
-                    self.acceptance_ratios, np.ones(window) / window, mode="valid"
-                )
-                plt.plot(
-                    self.steps[window - 1 :],
-                    moving_avg,
-                    label=f"Moving Avg ({window})",
-                    color="orange",
-                )
+                window = min(50, len(self.episode_acceptance_ratios) // 5)
+                if window > 1:
+                    moving_avg = np.convolve(
+                        self.episode_acceptance_ratios,
+                        np.ones(window) / window,
+                        mode="valid",
+                    )
+                    plt.plot(
+                        self.episodes[window - 1 :],
+                        moving_avg,
+                        label=f"Moving Avg ({window} episodes)",
+                        color="orange",
+                        linewidth=2,
+                    )
 
-            plt.title("Acceptance Ratio vs Training Steps")
-            plt.xlabel("Total Timesteps")
-            plt.ylabel("Acceptance Ratio")
+            plt.title("Episode Acceptance Ratio vs Episode Number")
+            plt.xlabel("Episode")
+            plt.ylabel("Acceptance Ratio (per episode)")
+            plt.ylim(0, 1.05)
             plt.grid(True, linestyle="--", alpha=0.7)
             plt.legend()
 
@@ -184,20 +208,28 @@ class AcceptanceRatioCallback(BaseCallback):
         """Called at the end of training."""
         self._save_plot()
 
-        if self.acceptance_ratios:
-            final_ratio = self.acceptance_ratios[-1]
-            avg_ratio = sum(self.acceptance_ratios) / len(self.acceptance_ratios)
+        if self.episode_acceptance_ratios:
+            final_ratio = self.episode_acceptance_ratios[-1]
+            avg_ratio = sum(self.episode_acceptance_ratios) / len(
+                self.episode_acceptance_ratios
+            )
+
+            # Calculate stats over last 10 episodes
+            last_n = min(10, len(self.episode_acceptance_ratios))
+            recent_avg = sum(self.episode_acceptance_ratios[-last_n:]) / last_n
 
             if self.verbose > 0:
                 print("\nTraining Complete:")
-                print(f"  Final Acceptance Ratio: {final_ratio:.4f}")
+                print(f"  Total Episodes: {len(self.episodes)}")
+                print(f"  Final Episode Acceptance Ratio: {final_ratio:.4f}")
                 print(f"  Average Acceptance Ratio: {avg_ratio:.4f}")
+                print(f"  Last {last_n} Episodes Avg: {recent_avg:.4f}")
                 print(f"  Acceptance Ratio Plot saved to: {self.save_path}")
 
 
 class BestModelCallback(BaseCallback):
     """
-    Callback to save the best model based on acceptance ratio.
+    Callback to save the best model based on episode acceptance ratio.
     """
 
     def __init__(self, save_path: str, check_freq: int = 1000, verbose: int = 0):
@@ -205,21 +237,34 @@ class BestModelCallback(BaseCallback):
         self.save_path = save_path
         self.check_freq = check_freq
         self.best_ratio = 0.0
+        self.recent_ratios = []  # Track recent episode ratios
 
     def _on_step(self) -> bool:
         """Called after each step."""
-        if self.n_calls % self.check_freq == 0:
-            infos = self.locals.get("infos", [])
+        infos = self.locals.get("infos", [])
+        dones = self.locals.get("dones", [])
 
-            for info in infos:
-                if "acceptance_ratio" in info:
-                    ratio = info["acceptance_ratio"]
+        for i, info in enumerate(infos):
+            # Only check at episode end
+            if dones[i] if isinstance(dones, (list, tuple)) else dones:
+                if "episode_acceptance_ratio" in info:
+                    self.recent_ratios.append(info["episode_acceptance_ratio"])
 
-                    if ratio > self.best_ratio:
-                        self.best_ratio = ratio
-                        self.model.save(self.save_path)
+        # Check for best model every check_freq steps
+        if self.n_calls % self.check_freq == 0 and self.recent_ratios:
+            # Use average of recent episodes as the metric
+            avg_ratio = sum(self.recent_ratios) / len(self.recent_ratios)
 
-                        if self.verbose > 0:
-                            print(f"New best model saved! Ratio: {ratio:.4f}")
+            if avg_ratio > self.best_ratio:
+                self.best_ratio = avg_ratio
+                self.model.save(self.save_path)
+
+                if self.verbose > 0:
+                    print(
+                        f"New best model saved! Avg Ratio: {avg_ratio:.4f} (over {len(self.recent_ratios)} episodes)"
+                    )
+
+            # Clear recent ratios for next check period
+            self.recent_ratios = []
 
         return True

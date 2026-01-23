@@ -106,10 +106,11 @@ def train(
 
     # Get final stats from environment
     base_env = env.unwrapped
+    print(f"Total Episodes: {base_env.total_episodes}")
     print(f"Total Requests: {base_env.total_requests}")
-    print(f"Accepted Requests: {base_env.accepted_requests}")
+    print(f"Total Accepted: {base_env.accepted_requests}")
     print(
-        f"Final Acceptance Ratio: {base_env.accepted_requests / max(1, base_env.total_requests):.4f}"
+        f"Overall Acceptance Ratio: {base_env.accepted_requests / max(1, base_env.total_requests):.4f}"
     )
 
     return model

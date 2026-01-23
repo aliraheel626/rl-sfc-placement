@@ -63,15 +63,26 @@ class SFCPlacementEnv(gym.Env):
         self.acceptance_reward = self.config["rewards"]["acceptance"]
         self.rejection_penalty = self.config["rewards"]["rejection"]
 
+        # Episode configuration - how many requests per episode
+        training_config = self.config.get("training", {})
+        self.max_requests_per_episode = training_config.get(
+            "max_requests_per_episode", 100
+        )
+
         # Environment state
         self.current_request: Optional[SFCRequest] = None
         self.current_vnf_index: int = 0
         self.current_placement: list[int] = []
         self.episode_step: int = 0
 
-        # Statistics tracking
+        # Episode-level statistics (reset each episode)
+        self.episode_requests = 0
+        self.episode_accepted = 0
+
+        # Global statistics tracking (across all episodes)
         self.total_requests = 0
         self.accepted_requests = 0
+        self.total_episodes = 0
 
         # Define action and observation spaces
         self.num_nodes = self.substrate.num_nodes
@@ -116,10 +127,30 @@ class SFCPlacementEnv(gym.Env):
         """
         Reset the environment for a new episode.
 
-        Each episode handles one SFC request.
+        Each episode handles max_requests_per_episode SFC requests.
+        The substrate network is reset to full capacity at the start of each episode.
         """
         super().reset(seed=seed)
 
+        # Reset substrate network to full capacity for new episode
+        self.substrate.reset()
+        self.request_generator.reset()
+
+        # Reset episode-level counters
+        self.episode_requests = 0
+        self.episode_accepted = 0
+        self.total_episodes += 1
+
+        # Generate first SFC request for this episode
+        self._start_new_request()
+
+        observation = self._get_observation()
+        info = self._get_info()
+
+        return observation, info
+
+    def _start_new_request(self):
+        """Start processing a new SFC request within the current episode."""
         # Advance time and release expired placements
         self.substrate.tick()
 
@@ -128,12 +159,9 @@ class SFCPlacementEnv(gym.Env):
         self.current_vnf_index = 0
         self.current_placement = []
         self.episode_step = 0
+
+        self.episode_requests += 1
         self.total_requests += 1
-
-        observation = self._get_observation()
-        info = self._get_info()
-
-        return observation, info
 
     def step(self, action: int) -> tuple[np.ndarray, float, bool, bool, dict]:
         """
@@ -195,13 +223,22 @@ class SFCPlacementEnv(gym.Env):
         """Handle successful SFC placement."""
         self.substrate.register_placement(self.current_request, self.current_placement)
         self.accepted_requests += 1
+        self.episode_accepted += 1
+
+        # Check if episode is complete
+        terminated = self.episode_requests >= self.max_requests_per_episode
+
+        if not terminated:
+            # Move to next request within the same episode
+            self._start_new_request()
 
         observation = self._get_observation()
         info = self._get_info()
         info["success"] = True
         info["placement"] = self.current_placement.copy()
+        info["sfc_complete"] = True  # This SFC was completed
 
-        return observation, self.acceptance_reward, True, False, info
+        return observation, self.acceptance_reward, terminated, False, info
 
     def _handle_rejection(
         self, reason: str, release_resources: bool = False
@@ -221,12 +258,20 @@ class SFCPlacementEnv(gym.Env):
                     self.current_request.min_bandwidth,
                 )
 
+        # Check if episode is complete
+        terminated = self.episode_requests >= self.max_requests_per_episode
+
+        if not terminated:
+            # Move to next request within the same episode
+            self._start_new_request()
+
         observation = self._get_observation()
         info = self._get_info()
         info["success"] = False
         info["rejection_reason"] = reason
+        info["sfc_complete"] = True  # This SFC was completed (rejected)
 
-        return observation, self.rejection_penalty, True, False, info
+        return observation, self.rejection_penalty, terminated, False, info
 
     def _get_observation(self) -> np.ndarray:
         """Construct the observation vector."""
@@ -279,12 +324,25 @@ class SFCPlacementEnv(gym.Env):
 
     def _get_info(self) -> dict:
         """Get additional info about the current state."""
+        # Episode-level acceptance ratio (this is what we want to track for learning)
+        episode_acceptance_ratio = (
+            self.episode_accepted / self.episode_requests
+            if self.episode_requests > 0
+            else 0.0
+        )
+
         return {
             "current_vnf_index": self.current_vnf_index,
             "total_vnfs": self.current_request.num_vnfs if self.current_request else 0,
             "current_placement": self.current_placement.copy(),
+            # Episode-level stats
+            "episode_requests": self.episode_requests,
+            "episode_accepted": self.episode_accepted,
+            "episode_acceptance_ratio": episode_acceptance_ratio,
+            # Global stats
             "total_requests": self.total_requests,
             "accepted_requests": self.accepted_requests,
+            "total_episodes": self.total_episodes,
             "acceptance_ratio": (
                 self.accepted_requests / self.total_requests
                 if self.total_requests > 0

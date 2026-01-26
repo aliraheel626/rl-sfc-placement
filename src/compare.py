@@ -31,17 +31,17 @@ def evaluate_baseline(
     substrate: SubstrateNetwork,
     request_generator: RequestGenerator,
     algorithm: BasePlacement,
-    num_requests: int,
+    num_episodes: int,
     verbose: bool = False,
 ) -> dict:
     """
-    Evaluate a baseline algorithm on a series of requests.
+    Evaluate a baseline algorithm on a series of episodes.
 
     Args:
         substrate: The substrate network (will be copied)
         request_generator: Generator for SFC requests
         algorithm: The placement algorithm to evaluate
-        num_requests: Number of requests to process
+        num_episodes: Number of episodes to process
         verbose: Whether to print progress
 
     Returns:
@@ -56,13 +56,22 @@ def evaluate_baseline(
     total_latency = 0.0
     latencies = []
 
-    iterator = range(num_requests)
+    iterator = range(num_episodes)
     if verbose:
         iterator = tqdm(iterator, desc=f"Evaluating {algorithm.__class__.__name__}")
 
     for _ in iterator:
-        # Generate request
-        request = request_generator.generate_request()
+        # Each episode starts with a fresh substrate
+        substrate_copy.reset()
+        request_generator.reset()
+
+        # We simulate the same number of requests as defined in the environment config
+        # Defaulting to 100 if not easily accessible
+        max_requests = 100
+
+        for _ in range(max_requests):
+            # Generate request
+            request = request_generator.generate_request()
 
         # Advance time (release expired placements)
         substrate_copy.tick()
@@ -111,7 +120,7 @@ def evaluate_baseline(
 
 
 def evaluate_rl_agent(
-    model_path: str, config_path: str, num_requests: int, verbose: bool = False
+    model_path: str, config_path: str, num_episodes: int, verbose: bool = False
 ) -> dict:
     """
     Evaluate a trained RL agent.
@@ -119,7 +128,7 @@ def evaluate_rl_agent(
     Args:
         model_path: Path to the trained model
         config_path: Path to configuration file
-        num_requests: Number of requests to process
+        num_episodes: Number of episodes to process
         verbose: Whether to print progress
 
     Returns:
@@ -136,7 +145,7 @@ def evaluate_rl_agent(
     total_latency = 0.0
     latencies = []
 
-    iterator = range(num_requests)
+    iterator = range(num_episodes)
     if verbose:
         iterator = tqdm(iterator, desc="Evaluating RL Agent")
 
@@ -150,21 +159,24 @@ def evaluate_rl_agent(
 
             # Get action from model
             action, _ = model.predict(obs, action_masks=action_mask, deterministic=True)
+            if isinstance(action, np.ndarray):
+                action = action.item()
 
             # Take action
             obs, reward, terminated, truncated, info = env.step(action)
             done = terminated or truncated
 
-        if info.get("success", False):
-            accepted += 1
-            # Get latency from placement
-            placement = info.get("placement", [])
-            if len(placement) > 1:
-                latency = env.unwrapped.substrate.get_total_latency(placement)
-                total_latency += latency
-                latencies.append(latency)
-        else:
-            rejected += 1
+            if info.get("sfc_complete", False):
+                if info.get("success", False):
+                    accepted += 1
+                    # Get latency from placement
+                    placement = info.get("placement", [])
+                    if len(placement) > 1:
+                        latency = env.unwrapped.substrate.get_total_latency(placement)
+                        total_latency += latency
+                        latencies.append(latency)
+                else:
+                    rejected += 1
 
     total = accepted + rejected
     acceptance_ratio = accepted / total if total > 0 else 0.0
@@ -184,7 +196,7 @@ def evaluate_rl_agent(
 def compare_all(
     config_path: str = "config.yaml",
     model_path: Optional[str] = None,
-    num_requests: int = 1000,
+    num_episodes: int = 10,
     save_plot: Optional[str] = None,
     verbose: bool = True,
 ) -> dict:
@@ -194,7 +206,7 @@ def compare_all(
     Args:
         config_path: Path to configuration file
         model_path: Path to trained RL model (optional)
-        num_requests: Number of requests to process per algorithm
+        num_episodes: Number of episodes to process per algorithm
         save_plot: Path to save comparison plot (optional)
         verbose: Whether to print results
 
@@ -222,7 +234,7 @@ def compare_all(
             print(f"\nEvaluating {algorithm.__class__.__name__}...")
 
         result = evaluate_baseline(
-            substrate, request_generator, algorithm, num_requests, verbose=verbose
+            substrate, request_generator, algorithm, num_episodes, verbose=verbose
         )
         results[result["algorithm"]] = result
 
@@ -232,7 +244,7 @@ def compare_all(
             print("\nEvaluating RL Agent...")
 
         result = evaluate_rl_agent(
-            model_path, config_path, num_requests, verbose=verbose
+            model_path, config_path, num_episodes, verbose=verbose
         )
         results[result["algorithm"]] = result
     elif model_path:
@@ -326,13 +338,16 @@ def main():
         "--config", type=str, default="config.yaml", help="Path to configuration file"
     )
     parser.add_argument(
-        "--model", type=str, default=None, help="Path to trained RL model"
+        "--model",
+        type=str,
+        default="models/sfc_ppo_best.zip",
+        help="Path to trained RL model",
     )
     parser.add_argument(
-        "--requests",
+        "--episodes",
         type=int,
         default=None,
-        help="Number of requests to evaluate (overrides config)",
+        help="Number of episodes to evaluate (overrides config)",
     )
     parser.add_argument(
         "--plot", type=str, default=None, help="Path to save comparison plot"
@@ -341,16 +356,14 @@ def main():
 
     args = parser.parse_args()
 
-    # Load config for default num_requests
+    # Load config for default num_episodes
     config = load_config(args.config)
-    num_requests = args.requests or config.get("evaluation", {}).get(
-        "num_requests", 1000
-    )
+    num_episodes = args.episodes or config.get("evaluation", {}).get("num_episodes", 10)
 
     compare_all(
         config_path=args.config,
         model_path=args.model,
-        num_requests=num_requests,
+        num_episodes=num_episodes,
         save_plot=args.plot,
         verbose=not args.quiet,
     )

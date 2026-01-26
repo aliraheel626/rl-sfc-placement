@@ -182,3 +182,5 @@ cython_debug/
 
 *.0
 *.zip
+*.png
+logs/

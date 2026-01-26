@@ -4,14 +4,12 @@ Training Script for SFC Placement with Maskable PPO.
 This script handles the training loop for the RL agent, including:
 - Environment setup with action masking
 - Model initialization
-- Training with callbacks
+- Training with callbacks (episode-based)
 - Model saving
 """
 
 import argparse
 from pathlib import Path
-
-from stable_baselines3.common.callbacks import CallbackList
 
 from src.requests import load_config
 from src.model import (
@@ -20,14 +18,16 @@ from src.model import (
     AcceptanceRatioCallback,
     BestModelCallback,
 )
+from stable_baselines3.common.callbacks import CallbackList
 
 
 def train(
     config_path: str = "config.yaml",
-    total_timesteps: int = 100000,
+    total_timesteps: int = 1_000_000,
     save_path: str = "models/sfc_ppo",
     log_path: str = "logs/",
-    plot_freq: int = 5000,
+    plot_freq: int = 10000,
+    save_freq: int = 50000,
     seed: int = 42,
 ):
     """
@@ -38,6 +38,8 @@ def train(
         total_timesteps: Total training timesteps
         save_path: Path to save the trained model
         log_path: Path for TensorBoard logs
+        plot_freq: Frequency (in steps) to update the acceptance ratio plot
+        save_freq: Frequency (in steps) to save the model
         seed: Random seed for reproducibility
     """
     # Load configuration
@@ -52,9 +54,11 @@ def train(
     print("SFC Placement Training with Maskable PPO")
     print("=" * 50)
     print(f"Config: {config_path}")
-    print(f"Timesteps: {total_timesteps}")
+    print(f"Total Timesteps: {total_timesteps}")
     print(f"Save path: {save_path}")
     print(f"Log path: {log_path}")
+    print(f"Plot frequency: every {plot_freq} steps")
+    print(f"Save frequency: every {save_freq} steps")
     print("=" * 50)
 
     # Create environment
@@ -63,10 +67,11 @@ def train(
 
     # Create model
     print("Creating MaskablePPO model...")
+    n_steps = training_config.get("n_steps", 2048)
     model = create_maskable_ppo(
         env,
         learning_rate=training_config.get("learning_rate", 3e-4),
-        n_steps=training_config.get("n_steps", 2048),
+        n_steps=n_steps,
         batch_size=training_config.get("batch_size", 64),
         n_epochs=training_config.get("n_epochs", 10),
         gamma=training_config.get("gamma", 0.99),
@@ -77,22 +82,31 @@ def train(
 
     # Setup callbacks
     plot_path = str(Path(save_path).with_suffix("")) + "_acceptance_ratio.png"
-    callbacks = CallbackList(
-        [
-            AcceptanceRatioCallback(
-                save_path=plot_path, plot_freq=plot_freq, verbose=1
-            ),
-            BestModelCallback(
-                save_path=f"{save_path}_best", check_freq=1000, verbose=1
-            ),
-        ]
+
+    # 1. Acceptance Ratio Tracking and Plotting
+    acceptance_callback = AcceptanceRatioCallback(
+        save_path=plot_path, plot_freq=plot_freq, verbose=1
     )
 
-    # Train
+    # 2. Save Best Model
+    best_model_path = str(Path(save_path).parent / "sfc_ppo_best.zip")
+    best_model_callback = BestModelCallback(
+        save_path=best_model_path, check_freq=1000, verbose=1
+    )
+
+    # Combine callbacks
+    callback = CallbackList([acceptance_callback, best_model_callback])
+
+    # Start training
     print("\nStarting training...")
     print("-" * 50)
 
-    model.learn(total_timesteps=total_timesteps, callback=callbacks, progress_bar=True)
+    model.learn(
+        total_timesteps=total_timesteps,
+        callback=callback,
+        progress_bar=True,
+        tb_log_name="MaskablePPO",
+    )
 
     # Save final model
     print("\nSaving final model...")
@@ -140,8 +154,14 @@ def main():
     parser.add_argument(
         "--plot-freq",
         type=int,
-        default=5000,
+        default=10000,
         help="Frequency (in steps) to update the acceptance ratio plot",
+    )
+    parser.add_argument(
+        "--save-freq",
+        type=int,
+        default=50000,
+        help="Frequency (in steps) to save model checkpoints",
     )
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
 
@@ -150,7 +170,7 @@ def main():
     # Load config to get default timesteps
     config = load_config(args.config)
     timesteps = args.timesteps or config.get("training", {}).get(
-        "total_timesteps", 100000
+        "total_timesteps", 1000000
     )
 
     train(
@@ -159,6 +179,7 @@ def main():
         save_path=args.save_path,
         log_path=args.log_path,
         plot_freq=args.plot_freq,
+        save_freq=args.save_freq,
         seed=args.seed,
     )
 

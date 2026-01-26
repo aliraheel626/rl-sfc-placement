@@ -151,8 +151,6 @@ class SFCPlacementEnv(gym.Env):
 
     def _start_new_request(self):
         """Start processing a new SFC request within the current episode."""
-        # Advance time and release expired placements
-        self.substrate.tick()
 
         # Generate new SFC request
         self.current_request = self.request_generator.generate_request()
@@ -174,6 +172,9 @@ class SFCPlacementEnv(gym.Env):
             observation, reward, terminated, truncated, info
         """
         self.episode_step += 1
+
+        # Advance time and release expired placements (TTL is per step)
+        self.substrate.tick()
 
         current_vnf = self.current_request.vnfs[self.current_vnf_index]
 

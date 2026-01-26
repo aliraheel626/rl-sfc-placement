@@ -313,6 +313,13 @@ class BestModelCallback(BaseCallback):
             # Use average of recent episodes as the metric
             avg_ratio = sum(self.recent_ratios) / len(self.recent_ratios)
 
+            # Always save the latest checkpoint
+            self.model.save(self.last_checkpoint_path)
+            if self.verbose > 0:
+                print(
+                    f"Checkpoint saved to {self.last_checkpoint_path} at step {self.num_timesteps} (Avg Ratio: {avg_ratio:.4f})"
+                )
+
             if avg_ratio > self.best_ratio:
                 self.best_ratio = avg_ratio
                 self.model.save(self.save_path)

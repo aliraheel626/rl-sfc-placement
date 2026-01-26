@@ -462,7 +462,6 @@ class SFCPlacementEnv(gym.Env):
 
         return mask
 
-        return mask
 
     def render(self):
         """Render the environment state."""

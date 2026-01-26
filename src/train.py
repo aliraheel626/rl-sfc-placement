@@ -264,10 +264,11 @@ def main():
     # Resolve load path
     load_path = args.resume
     if load_path == "DEFAULT":
-        # Default to the save_path with .zip extension
-        load_path = args.save_path
-        if not load_path.endswith(".zip"):
-            load_path += ".zip"
+        # Default to the last checkpoint (sfc_ppo_last.zip)
+        from pathlib import Path
+
+        save_dir = Path(args.save_path).parent
+        load_path = str(save_dir / "sfc_ppo_last.zip")
 
     train(
         config_path=args.config,

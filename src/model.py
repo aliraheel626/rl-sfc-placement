@@ -293,6 +293,11 @@ class BestModelCallback(BaseCallback):
     def __init__(self, save_path: str, check_freq: int = 1000, verbose: int = 0):
         super().__init__(verbose)
         self.save_path = save_path
+        # Derive the last checkpoint path from the best model path
+        self.last_checkpoint_path = save_path.replace("_best.zip", "_last.zip")
+        if self.last_checkpoint_path == save_path:
+            # Fallback if the pattern doesn't match
+            self.last_checkpoint_path = save_path.replace(".zip", "_last.zip")
         self.check_freq = check_freq
         self.best_ratio = 0.0
         self.recent_ratios = []  # Track recent episode ratios

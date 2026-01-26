@@ -229,15 +229,15 @@ class SFCPlacementEnv(gym.Env):
         info = self._get_info()
 
         # Intermediate reward for progress
-        reward = 0.5
+        reward = 0
 
-        # Penalty for latency/distance (encourage locality)
-        if self.current_placement and len(self.current_placement) > 1:
-            prev_node = self.current_placement[-2]
-            curr_node = self.current_placement[-1]
-            latency = self.substrate.get_path_latency(prev_node, curr_node)
-            norm_latency = min(latency / self.max_latency, 1.0)
-            reward -= 0.1 * norm_latency
+        # # Penalty for latency/distance (encourage locality)
+        # if self.current_placement and len(self.current_placement) > 1:
+        #     prev_node = self.current_placement[-2]
+        #     curr_node = self.current_placement[-1]
+        #     latency = self.substrate.get_path_latency(prev_node, curr_node)
+        #     norm_latency = min(latency / self.max_latency, 1.0)
+        #     reward -= 0.1 * norm_latency
 
         return observation, reward, False, False, info
 
@@ -461,7 +461,6 @@ class SFCPlacementEnv(gym.Env):
             mask = feasible_mask
 
         return mask
-
 
     def render(self):
         """Render the environment state."""

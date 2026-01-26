@@ -11,6 +11,7 @@ This script handles the training loop for the RL agent, including:
 import argparse
 from pathlib import Path
 
+from sb3_contrib import MaskablePPO
 from src.requests import load_config
 from src.model import (
     create_masked_env,
@@ -29,6 +30,7 @@ def train(
     plot_freq: int = 10000,
     save_freq: int = 50000,
     seed: int = 42,
+    load_path: str = None,
 ):
     """
     Train the Maskable PPO agent for SFC placement.
@@ -41,6 +43,7 @@ def train(
         plot_freq: Frequency (in steps) to update the acceptance ratio plot
         save_freq: Frequency (in steps) to save the model
         seed: Random seed for reproducibility
+        load_path: Path to a checkpoint to load and continue training from
     """
     # Load configuration
     config = load_config(config_path)
@@ -59,26 +62,43 @@ def train(
     print(f"Log path: {log_path}")
     print(f"Plot frequency: every {plot_freq} steps")
     print(f"Save frequency: every {save_freq} steps")
+    if load_path:
+        print(f"Resuming training from: {load_path}")
     print("=" * 50)
 
     # Create environment
     print("\nCreating environment...")
     env = create_masked_env(config_path)
 
-    # Create model
-    print("Creating MaskablePPO model...")
-    n_steps = training_config.get("n_steps", 2048)
-    model = create_maskable_ppo(
-        env,
-        learning_rate=training_config.get("learning_rate", 3e-4),
-        n_steps=n_steps,
-        batch_size=training_config.get("batch_size", 64),
-        n_epochs=training_config.get("n_epochs", 10),
-        gamma=training_config.get("gamma", 0.99),
-        verbose=1,
-        tensorboard_log=log_path,
-        seed=seed,
-    )
+    # Create or load model
+    reset_timesteps = True
+    if load_path:
+        print(f"Loading MaskablePPO model from {load_path}...")
+        # Start with a dummy learning rate, it will be overwritten by the saved model's schedule
+        # unless custom_objects is used, but usually we want to continue with the saved state.
+        # However, we must ensure the env is attached.
+        model = MaskablePPO.load(
+            load_path,
+            env=env,
+            tensorboard_log=log_path,
+            # We can optionally update hyperparameters here if needed using custom_objects
+            # or kwargs, but simply loading is usually what's expected for resuming.
+        )
+        reset_timesteps = False
+    else:
+        print("Creating MaskablePPO model...")
+        n_steps = training_config.get("n_steps", 2048)
+        model = create_maskable_ppo(
+            env,
+            learning_rate=training_config.get("learning_rate", 3e-4),
+            n_steps=n_steps,
+            batch_size=training_config.get("batch_size", 64),
+            n_epochs=training_config.get("n_epochs", 10),
+            gamma=training_config.get("gamma", 0.99),
+            verbose=1,
+            tensorboard_log=log_path,
+            seed=seed,
+        )
 
     # Setup callbacks
     plot_path = str(Path(save_path).with_suffix("")) + "_acceptance_ratio.png"
@@ -106,6 +126,7 @@ def train(
         callback=callback,
         progress_bar=True,
         tb_log_name="MaskablePPO",
+        reset_num_timesteps=reset_timesteps,
     )
 
     # Save final model
@@ -164,6 +185,12 @@ def main():
         help="Frequency (in steps) to save model checkpoints",
     )
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    parser.add_argument(
+        "--resume",
+        nargs="?",
+        const="DEFAULT",
+        help="Resume training. Defaults to save_path if no path provided.",
+    )
 
     args = parser.parse_args()
 
@@ -173,6 +200,14 @@ def main():
         "total_timesteps", 1000000
     )
 
+    # Resolve load path
+    load_path = args.resume
+    if load_path == "DEFAULT":
+        # Default to the save_path with .zip extension
+        load_path = args.save_path
+        if not load_path.endswith(".zip"):
+            load_path += ".zip"
+
     train(
         config_path=args.config,
         total_timesteps=timesteps,
@@ -181,6 +216,7 @@ def main():
         plot_freq=args.plot_freq,
         save_freq=args.save_freq,
         seed=args.seed,
+        load_path=load_path,
     )
 
 

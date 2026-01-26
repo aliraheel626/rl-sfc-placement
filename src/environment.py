@@ -180,8 +180,8 @@ class SFCPlacementEnv(gym.Env):
 
         # Validate the action (should be valid due to masking, but double-check)
         if not self._is_valid_action(action):
-            # Invalid action - reject the SFC
-            return self._handle_rejection("invalid_action")
+            # Invalid action - reject the SFC and release any partial resources
+            return self._handle_rejection("invalid_action", release_resources=True)
 
         # Allocate resources for this VNF
         self.substrate.allocate_resources(action, current_vnf)

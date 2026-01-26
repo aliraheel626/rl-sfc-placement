@@ -31,7 +31,7 @@ def evaluate_baseline(
     substrate: SubstrateNetwork,
     request_generator: RequestGenerator,
     algorithm: BasePlacement,
-    num_episodes: int,
+    num_requests: int,
     verbose: bool = False,
 ) -> dict:
     """
@@ -41,7 +41,7 @@ def evaluate_baseline(
         substrate: The substrate network (will be copied)
         request_generator: Generator for SFC requests
         algorithm: The placement algorithm to evaluate
-        num_episodes: Number of episodes to process
+        num_requests: Number of requests to process
         verbose: Whether to print progress
 
     Returns:
@@ -56,7 +56,7 @@ def evaluate_baseline(
     total_latency = 0.0
     latencies = []
 
-    iterator = range(num_episodes)
+    iterator = range(num_requests)
     if verbose:
         iterator = tqdm(iterator, desc=f"Evaluating {algorithm.__class__.__name__}")
 
@@ -120,7 +120,7 @@ def evaluate_baseline(
 
 
 def evaluate_rl_agent(
-    model_path: str, config_path: str, num_episodes: int, verbose: bool = False
+    model_path: str, config_path: str, num_requests: int, verbose: bool = False
 ) -> dict:
     """
     Evaluate a trained RL agent.
@@ -145,38 +145,45 @@ def evaluate_rl_agent(
     total_latency = 0.0
     latencies = []
 
-    iterator = range(num_episodes)
+    # Reset environment once
+    obs, info = env.reset()
+
+    requests_processed = 0
+    pbar = None
     if verbose:
-        iterator = tqdm(iterator, desc="Evaluating RL Agent")
+        pbar = tqdm(total=num_requests, desc="Evaluating RL Agent")
 
-    for _ in iterator:
-        obs, info = env.reset()
-        done = False
+    while requests_processed < num_requests:
+        # Get action mask
+        action_mask = env.unwrapped.action_masks()
 
-        while not done:
-            # Get action mask
-            action_mask = env.unwrapped.action_masks()
+        # Get action from model
+        action, _ = model.predict(obs, action_masks=action_mask, deterministic=True)
+        if isinstance(action, np.ndarray):
+            action = action.item()
 
-            # Get action from model
-            action, _ = model.predict(obs, action_masks=action_mask, deterministic=True)
-            if isinstance(action, np.ndarray):
-                action = action.item()
+        # Take action
+        obs, reward, terminated, truncated, info = env.step(action)
 
-            # Take action
-            obs, reward, terminated, truncated, info = env.step(action)
-            done = terminated or truncated
+        # Check if request processing finished (sfc_complete is True)
+        if info.get("sfc_complete", False):
+            requests_processed += 1
+            if pbar:
+                pbar.update(1)
 
-            if info.get("sfc_complete", False):
-                if info.get("success", False):
-                    accepted += 1
-                    # Get latency from placement
-                    placement = info.get("placement", [])
-                    if len(placement) > 1:
-                        latency = env.unwrapped.substrate.get_total_latency(placement)
-                        total_latency += latency
-                        latencies.append(latency)
-                else:
-                    rejected += 1
+            if info.get("success", False):
+                accepted += 1
+                # Get latency from placement
+                placement = info.get("placement", [])
+                if len(placement) > 1:
+                    latency = env.unwrapped.substrate.get_total_latency(placement)
+                    total_latency += latency
+                    latencies.append(latency)
+            else:
+                rejected += 1
+
+    if pbar:
+        pbar.close()
 
     total = accepted + rejected
     acceptance_ratio = accepted / total if total > 0 else 0.0
@@ -196,7 +203,7 @@ def evaluate_rl_agent(
 def compare_all(
     config_path: str = "config.yaml",
     model_path: Optional[str] = None,
-    num_episodes: int = 10,
+    num_requests: int = 1000,
     save_plot: Optional[str] = None,
     verbose: bool = True,
 ) -> dict:
@@ -234,7 +241,11 @@ def compare_all(
             print(f"\nEvaluating {algorithm.__class__.__name__}...")
 
         result = evaluate_baseline(
-            substrate, request_generator, algorithm, num_episodes, verbose=verbose
+            substrate,
+            request_generator,
+            algorithm,
+            num_requests=num_requests,
+            verbose=verbose,
         )
         results[result["algorithm"]] = result
 
@@ -244,7 +255,7 @@ def compare_all(
             print("\nEvaluating RL Agent...")
 
         result = evaluate_rl_agent(
-            model_path, config_path, num_episodes, verbose=verbose
+            model_path, config_path, num_requests=num_requests, verbose=verbose
         )
         results[result["algorithm"]] = result
     elif model_path:
@@ -338,16 +349,13 @@ def main():
         "--config", type=str, default="config.yaml", help="Path to configuration file"
     )
     parser.add_argument(
-        "--model",
-        type=str,
-        default="models/sfc_ppo_best.zip",
-        help="Path to trained RL model",
+        "--model", type=str, default=None, help="Path to trained RL model"
     )
     parser.add_argument(
-        "--episodes",
+        "--requests",
         type=int,
         default=None,
-        help="Number of episodes to evaluate (overrides config)",
+        help="Number of requests to evaluate (overrides config)",
     )
     parser.add_argument(
         "--plot", type=str, default=None, help="Path to save comparison plot"
@@ -356,14 +364,16 @@ def main():
 
     args = parser.parse_args()
 
-    # Load config for default num_episodes
+    # Load config for default num_requests
     config = load_config(args.config)
-    num_episodes = args.episodes or config.get("evaluation", {}).get("num_episodes", 10)
+    num_requests = args.requests or config.get("evaluation", {}).get(
+        "num_requests", 1000
+    )
 
     compare_all(
         config_path=args.config,
         model_path=args.model,
-        num_episodes=num_episodes,
+        num_requests=num_requests,
         save_plot=args.plot,
         verbose=not args.quiet,
     )

@@ -359,9 +359,9 @@ class SubstrateNetwork:
                 return False
 
         # Check bandwidth on each edge of the path
+        # Using bandwidth_matrix is much faster than constructing tuple keys
         for i in range(len(path) - 1):
-            edge_key = tuple(sorted([path[i], path[i + 1]]))
-            if self.link_bandwidth[edge_key] < required_bw:
+            if self.bandwidth_matrix[path[i], path[i + 1]] < required_bw:
                 return False
 
         return True

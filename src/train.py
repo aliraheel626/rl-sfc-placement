@@ -143,7 +143,7 @@ def train(
     # 2. Save Best Model
     best_model_path = str(Path(save_path).parent / "sfc_ppo_best.zip")
     best_model_callback = BestModelCallback(
-        save_path=best_model_path, check_freq=1000, verbose=1
+        save_path=best_model_path, check_freq=5000, verbose=1
     )
 
     # Combine callbacks
@@ -207,7 +207,7 @@ def main():
     parser.add_argument(
         "--plot-freq",
         type=int,
-        default=1000,
+        default=10000,
         help="Frequency (in steps) to update the acceptance ratio plot",
     )
     parser.add_argument(

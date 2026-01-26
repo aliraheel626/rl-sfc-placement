@@ -123,6 +123,18 @@ class SubstrateNetwork:
             self.node_resources[node] = resources.copy()
             self.original_resources[node] = resources.copy()
 
+        # Initialize resource matrix for fast vectorized checks
+        # Columns: [RAM, CPU, Storage, Security]
+        self.resource_matrix = np.zeros((self.num_nodes, 4), dtype=np.float32)
+        for node in self.graph.nodes():
+            res = self.node_resources[node]
+            self.resource_matrix[node] = [
+                res["ram"],
+                res["cpu"],
+                res["storage"],
+                res["security_score"],
+            ]
+
         # Initialize link attributes
         for u, v in self.graph.edges():
             bandwidth = random.uniform(
@@ -139,28 +151,41 @@ class SubstrateNetwork:
             self.link_bandwidth[edge_key] = bandwidth
             self.original_bandwidth[edge_key] = bandwidth
 
+        # Initialize bandwidth matrix for fast lookups
+        self.bandwidth_matrix = np.zeros(
+            (self.num_nodes, self.num_nodes), dtype=np.float32
+        )
+        for (u, v), bw in self.link_bandwidth.items():
+            self.bandwidth_matrix[u, v] = bw
+            self.bandwidth_matrix[v, u] = bw
+
         self._precompute_latencies()
 
     def _precompute_latencies(self):
-        """Precompute latencies for all pairs of nodes to speed up lookup."""
-        self.path_latencies = {}
+        """Precompute paths and latencies for all pairs of nodes."""
+        # Use a numpy matrix for O(1) vectorized lookups
+        self.latency_matrix = np.full(
+            (self.num_nodes, self.num_nodes), float("inf"), dtype=np.float32
+        )
+
+        # Store paths for bandwidth checks
+        self.all_paths = {}
 
         # 1. Compute all-pairs shortest paths (min-hop)
-        # Note: self.graph is guaranteed connected by _generate_topology
         try:
-            all_paths = dict(nx.all_pairs_shortest_path(self.graph))
+            # This returns a dict of dicts: source -> target -> path (list of nodes)
+            self.all_paths = dict(nx.all_pairs_shortest_path(self.graph))
         except Exception:
-            # Fallback if something goes wrong, though graph should be connected
             return
 
         # 2. Calculate latency for each path
         for u in self.graph.nodes():
-            self.path_latencies[(u, u)] = 0.0
+            self.latency_matrix[u, u] = 0.0
 
-            if u not in all_paths:
+            if u not in self.all_paths:
                 continue
 
-            for v, path in all_paths[u].items():
+            for v, path in self.all_paths[u].items():
                 if u == v:
                     continue
 
@@ -170,7 +195,7 @@ class SubstrateNetwork:
                     # Direct edge lookup is faster
                     path_latency += self.graph[path[i]][path[i + 1]]["latency"]
 
-                self.path_latencies[(u, v)] = path_latency
+                self.latency_matrix[u, v] = path_latency
 
     def regenerate_topology(self):
         """Regenerate the network topology (new random graph)."""
@@ -185,8 +210,23 @@ class SubstrateNetwork:
         for node in self.graph.nodes():
             self.node_resources[node] = self.original_resources[node].copy()
 
+            # Reset matrix row
+            res = self.node_resources[node]
+            self.resource_matrix[node] = [
+                res["ram"],
+                res["cpu"],
+                res["storage"],
+                res["security_score"],
+            ]
+
         for edge_key in self.link_bandwidth:
             self.link_bandwidth[edge_key] = self.original_bandwidth[edge_key]
+
+        # Reset bandwidth matrix
+        self.bandwidth_matrix.fill(0)
+        for (u, v), bw in self.link_bandwidth.items():
+            self.bandwidth_matrix[u, v] = bw
+            self.bandwidth_matrix[v, u] = bw
 
         self.active_placements.clear()
 
@@ -221,24 +261,48 @@ class SubstrateNetwork:
         Returns:
             Array of shape (num_nodes, 1) normalized [0, 1]
         """
-        connectivity = np.zeros((self.num_nodes, 1))
+        # Sum of bandwidth for each node's edges
+        total_bw_per_node = np.sum(self.bandwidth_matrix, axis=1)
+
+        # Count non-zero entries (neighbors)
+        # Note: bandwidth_matrix will have 0s where no edge exists
+        # BUT it might also have 0s if bandwidth is fully used.
+        # We need the neighbor count (degree), which doesn't change.
+        # It's better to store the degree vector or use the adjacency matrix from graph.
+
+        # Using networkx graph degree is cleaner and static per episode
+        degrees = np.array(
+            [val for (node, val) in self.graph.degree()], dtype=np.float32
+        )
+
+        # Avoid division by zero
+        degrees = np.maximum(degrees, 1.0)
+
+        avg_bw = total_bw_per_node / degrees
+
+        # Normalize
         max_bw = self.link_config["bandwidth"]["max"]
-
-        for u in self.graph.nodes():
-            neighbors = list(self.graph.neighbors(u))
-            if not neighbors:
-                continue
-
-            total_bw = 0.0
-            for v in neighbors:
-                edge_key = tuple(sorted([u, v]))
-                total_bw += self.link_bandwidth.get(edge_key, 0.0)
-
-            # Average bandwidth to neighbors
-            avg_bw = total_bw / len(neighbors)
-            connectivity[u] = [avg_bw / max_bw]
+        connectivity = (avg_bw / max_bw).reshape(-1, 1)
 
         return connectivity
+
+    def get_feasible_nodes(self, vnf: VNF, min_security: float) -> np.ndarray:
+        """
+        Get a boolean mask of nodes that have sufficient resources for the VNF.
+
+        Returns:
+            np.ndarray: Shape (num_nodes,) boolean vector
+        """
+        # Vectorized check: RAM, CPU, Storage >= required AND Security >= required
+        # resource_matrix columns: 0=RAM, 1=CPU, 2=Storage, 3=Security
+
+        # Check resources
+        ram_check = self.resource_matrix[:, 0] >= vnf.ram
+        cpu_check = self.resource_matrix[:, 1] >= vnf.cpu
+        storage_check = self.resource_matrix[:, 2] >= vnf.storage
+        security_check = self.resource_matrix[:, 3] >= min_security
+
+        return ram_check & cpu_check & storage_check & security_check
 
     def check_node_feasibility(
         self, node_id: int, vnf: VNF, min_security: float
@@ -280,10 +344,19 @@ class SubstrateNetwork:
         if src_node == dst_node:
             return True
 
-        try:
-            path = nx.shortest_path(self.graph, src_node, dst_node)
-        except nx.NetworkXNoPath:
-            return False
+        # Use precomputed path if available
+        if (
+            hasattr(self, "all_paths")
+            and src_node in self.all_paths
+            and dst_node in self.all_paths[src_node]
+        ):
+            path = self.all_paths[src_node][dst_node]
+        else:
+            # Fallback
+            try:
+                path = nx.shortest_path(self.graph, src_node, dst_node)
+            except nx.NetworkXNoPath:
+                return False
 
         # Check bandwidth on each edge of the path
         for i in range(len(path) - 1):
@@ -321,6 +394,30 @@ class SubstrateNetwork:
 
         return total_latency
 
+    def get_all_path_latencies(self, src_node: int) -> np.ndarray:
+        """
+        Get latencies from src_node to all other nodes as a vectorized array.
+
+        Returns:
+            np.ndarray: Shape (num_nodes,) containing latencies.
+                        Unreachable nodes have latency = inf.
+        """
+        if hasattr(self, "latency_matrix"):
+            return self.latency_matrix[src_node]
+        elif hasattr(self, "path_latencies"):
+            # Fallback to dict reconstruction
+            latencies = np.full(self.num_nodes, float("inf"), dtype=np.float32)
+            for dst_node in range(self.num_nodes):
+                if (src_node, dst_node) in self.path_latencies:
+                    latencies[dst_node] = self.path_latencies[(src_node, dst_node)]
+            return latencies
+        else:
+            # Fallback (slow)
+            latencies = np.full(self.num_nodes, float("inf"), dtype=np.float32)
+            for dst_node in range(self.num_nodes):
+                latencies[dst_node] = self.get_path_latency(src_node, dst_node)
+            return latencies
+
     def get_total_latency(self, placement: list[int]) -> float:
         """
         Calculate total end-to-end latency for a placement.
@@ -342,19 +439,37 @@ class SubstrateNetwork:
         self.node_resources[node_id]["cpu"] -= vnf.cpu
         self.node_resources[node_id]["storage"] -= vnf.storage
 
+        # Update matrix
+        self.resource_matrix[node_id, 0] -= vnf.ram
+        self.resource_matrix[node_id, 1] -= vnf.cpu
+        self.resource_matrix[node_id, 2] -= vnf.storage
+
     def allocate_bandwidth(self, src_node: int, dst_node: int, bandwidth: float):
         """Allocate bandwidth on the path between two nodes."""
         if src_node == dst_node:
             return
 
-        try:
-            path = nx.shortest_path(self.graph, src_node, dst_node)
-        except nx.NetworkXNoPath:
-            return
+        # Use precomputed path if available
+        if (
+            hasattr(self, "all_paths")
+            and src_node in self.all_paths
+            and dst_node in self.all_paths[src_node]
+        ):
+            path = self.all_paths[src_node][dst_node]
+        else:
+            try:
+                path = nx.shortest_path(self.graph, src_node, dst_node)
+            except nx.NetworkXNoPath:
+                return
 
         for i in range(len(path) - 1):
-            edge_key = tuple(sorted([path[i], path[i + 1]]))
+            u, v = path[i], path[i + 1]
+            edge_key = tuple(sorted([u, v]))
             self.link_bandwidth[edge_key] -= bandwidth
+
+            # Update matrix
+            self.bandwidth_matrix[u, v] -= bandwidth
+            self.bandwidth_matrix[v, u] -= bandwidth
 
     def release_resources(self, node_id: int, vnf: VNF):
         """Release resources when a VNF placement expires."""
@@ -362,19 +477,37 @@ class SubstrateNetwork:
         self.node_resources[node_id]["cpu"] += vnf.cpu
         self.node_resources[node_id]["storage"] += vnf.storage
 
+        # Update matrix
+        self.resource_matrix[node_id, 0] += vnf.ram
+        self.resource_matrix[node_id, 1] += vnf.cpu
+        self.resource_matrix[node_id, 2] += vnf.storage
+
     def release_bandwidth(self, src_node: int, dst_node: int, bandwidth: float):
         """Release bandwidth when a placement expires."""
         if src_node == dst_node:
             return
 
-        try:
-            path = nx.shortest_path(self.graph, src_node, dst_node)
-        except nx.NetworkXNoPath:
-            return
+        # Use precomputed path if available
+        if (
+            hasattr(self, "all_paths")
+            and src_node in self.all_paths
+            and dst_node in self.all_paths[src_node]
+        ):
+            path = self.all_paths[src_node][dst_node]
+        else:
+            try:
+                path = nx.shortest_path(self.graph, src_node, dst_node)
+            except nx.NetworkXNoPath:
+                return
 
         for i in range(len(path) - 1):
-            edge_key = tuple(sorted([path[i], path[i + 1]]))
+            u, v = path[i], path[i + 1]
+            edge_key = tuple(sorted([u, v]))
             self.link_bandwidth[edge_key] += bandwidth
+
+            # Update matrix
+            self.bandwidth_matrix[u, v] += bandwidth
+            self.bandwidth_matrix[v, u] += bandwidth
 
     def register_placement(self, request: SFCRequest, placement: list[int]):
         """

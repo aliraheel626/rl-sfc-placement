@@ -305,19 +305,22 @@ class SFCPlacementEnv(gym.Env):
         connectivity = self.substrate.get_nodes_connectivity()
 
         # c. Distance from previous node: (num_nodes, 1)
-        distances = np.zeros((self.num_nodes, 1), dtype=np.float32)
         if self.current_placement:
             prev_node = self.current_placement[-1]
-            for node_id in range(self.num_nodes):
-                if node_id == prev_node:
-                    dist = 0.0
-                else:
-                    dist = self.substrate.get_path_latency(prev_node, node_id)
-                    # Normalize distance (Handling inf if no path)
-                    if dist == float("inf"):
-                        dist = self.max_latency * 2  # Penalty for unreachable
 
-                distances[node_id] = min(dist / self.max_latency, 1.0)
+            # Vectorized retrieval (O(1) with matrix)
+            raw_distances = self.substrate.get_all_path_latencies(prev_node)
+
+            # Handle unreachable nodes (inf)
+            # Replace inf with penalty (max_latency * 2)
+            raw_distances = np.where(
+                np.isinf(raw_distances), self.max_latency * 2, raw_distances
+            )
+
+            # Normalize
+            distances = np.minimum(raw_distances / self.max_latency, 1.0).reshape(-1, 1)
+        else:
+            distances = np.zeros((self.num_nodes, 1), dtype=np.float32)
 
         # Combine node features: (num_nodes, 6)
         node_features = np.concatenate(
@@ -435,23 +438,29 @@ class SFCPlacementEnv(gym.Env):
             return mask
 
         current_vnf = self.current_request.vnfs[self.current_vnf_index]
+        min_security = self.current_request.min_security_score
 
-        for node_id in range(self.num_nodes):
-            # Check node feasibility
-            if not self.substrate.check_node_feasibility(
-                node_id, current_vnf, self.current_request.min_security_score
-            ):
-                continue
+        # 1. Vectorized Resource Feasibility Check (O(1) relative to Python loop)
+        feasible_mask = self.substrate.get_feasible_nodes(current_vnf, min_security)
 
-            # Check bandwidth if not first VNF
-            if self.current_placement:
-                prev_node = self.current_placement[-1]
-                if not self.substrate.check_bandwidth(
-                    prev_node, node_id, self.current_request.min_bandwidth
-                ):
-                    continue
+        # 2. Bandwidth Check (only for resource-feasible nodes)
+        if self.current_placement:
+            prev_node = self.current_placement[-1]
+            min_bw = self.current_request.min_bandwidth
 
-            mask[node_id] = True
+            # Get indices of feasible nodes
+            feasible_indices = np.where(feasible_mask)[0]
+
+            for node_id in feasible_indices:
+                # We still need to check bandwidth for these specific paths.
+                # Since we cached paths, this is fast (O(PathLen)).
+                if self.substrate.check_bandwidth(prev_node, node_id, min_bw):
+                    mask[node_id] = True
+        else:
+            # First VNF: no bandwidth constraints yet, so mask is just resource feasibility
+            mask = feasible_mask
+
+        return mask
 
         return mask
 

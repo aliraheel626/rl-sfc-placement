@@ -12,8 +12,14 @@ import matplotlib.pyplot as plt
 from sb3_contrib import MaskablePPO
 from sb3_contrib.common.wrappers import ActionMasker
 from stable_baselines3.common.callbacks import BaseCallback
+import networkx as nx
 
 from src.environment import SFCPlacementEnv
+from src.gnn_policy import (
+    GNNFeaturesExtractor,
+    get_edge_index_from_adj,
+    create_edge_getter,
+)
 
 
 def mask_fn(env: SFCPlacementEnv) -> Any:
@@ -48,6 +54,11 @@ def create_maskable_ppo(
     gamma: float = 0.99,
     verbose: int = 1,
     tensorboard_log: Optional[str] = None,
+    use_gnn: bool = False,
+    gnn_type: str = "gcn",  # Options: "gcn", "gat", "sage"
+    gnn_hidden_dim: int = 64,
+    gnn_features_dim: int = 256,
+    num_gnn_layers: int = 3,
     **kwargs,
 ) -> MaskablePPO:
     """
@@ -62,11 +73,57 @@ def create_maskable_ppo(
         gamma: Discount factor
         verbose: Verbosity level
         tensorboard_log: Path for TensorBoard logs
+        use_gnn: Whether to use GNN feature extractor (PyTorch Geometric)
+        gnn_type: Type of GNN layer ("gcn", "gat", "sage")
+        gnn_hidden_dim: Hidden dimension for GNN layers
+        gnn_features_dim: Output dimension of GNN feature extractor
+        num_gnn_layers: Number of GNN layers
         **kwargs: Additional arguments passed to MaskablePPO
 
     Returns:
         Configured MaskablePPO model
     """
+
+    policy_kwargs = kwargs.pop("policy_kwargs", {})
+
+    if use_gnn:
+        # Extract graph from environment
+        # ActionMasker -> SFCPlacementEnv
+        base_env = env.unwrapped
+
+        if hasattr(base_env, "substrate") and hasattr(base_env.substrate, "graph"):
+            graph = base_env.substrate.graph
+            adj = nx.to_numpy_array(graph)
+
+            # Convert adjacency matrix to edge index format for PyTorch Geometric
+            edge_index = get_edge_index_from_adj(adj)
+
+            # Create edge getter for dynamic topology support
+            edge_getter = create_edge_getter(env)
+
+            policy_kwargs["features_extractor_class"] = GNNFeaturesExtractor
+            policy_kwargs["features_extractor_kwargs"] = {
+                "num_nodes": base_env.num_nodes,
+                "edge_index": edge_index,
+                "node_feat_dim": 6,  # [RAM, CPU, Storage, Security, AvgBW, DistToPrev]
+                "hidden_dim": gnn_hidden_dim,
+                "features_dim": gnn_features_dim,
+                "gnn_type": gnn_type,
+                "num_gnn_layers": num_gnn_layers,
+                "edge_getter": edge_getter,
+                "dropout": 0.1,
+            }
+
+            # Smaller MLP on top of GNN features
+            if "net_arch" not in policy_kwargs:
+                policy_kwargs["net_arch"] = [128, 128]
+
+            print(
+                f"Using PyG GNN Feature Extractor ({gnn_type.upper()}) with {base_env.num_nodes} nodes, {edge_index.shape[1]} edges."
+            )
+        else:
+            print("Warning: Could not extract graph for GNN. Falling back to MLP.")
+
     model = MaskablePPO(
         "MlpPolicy",
         env,
@@ -77,6 +134,7 @@ def create_maskable_ppo(
         gamma=gamma,
         verbose=verbose,
         tensorboard_log=tensorboard_log,
+        policy_kwargs=policy_kwargs,
         **kwargs,
     )
 

@@ -135,10 +135,17 @@ class SubstrateNetwork:
             self.graph[u][v]["bandwidth"] = bandwidth
             self.graph[u][v]["latency"] = latency
 
-            # Store bandwidth for tracking (use sorted tuple for consistency)
             edge_key = tuple(sorted([u, v]))
             self.link_bandwidth[edge_key] = bandwidth
             self.original_bandwidth[edge_key] = bandwidth
+
+    def regenerate_topology(self):
+        """Regenerate the network topology (new random graph)."""
+        self.node_resources.clear()
+        self.original_resources.clear()
+        self.link_bandwidth.clear()
+        self.original_bandwidth.clear()
+        self._generate_topology()
 
     def reset(self):
         """Reset the network to initial state (full resources)."""
@@ -173,6 +180,32 @@ class SubstrateNetwork:
                 res["security_score"] / self.resource_config["security_score"]["max"],
             ]
         return resources
+
+    def get_nodes_connectivity(self) -> np.ndarray:
+        """
+        Get connectivity metrics for all nodes (avg available bandwidth).
+
+        Returns:
+            Array of shape (num_nodes, 1) normalized [0, 1]
+        """
+        connectivity = np.zeros((self.num_nodes, 1))
+        max_bw = self.link_config["bandwidth"]["max"]
+
+        for u in self.graph.nodes():
+            neighbors = list(self.graph.neighbors(u))
+            if not neighbors:
+                continue
+
+            total_bw = 0.0
+            for v in neighbors:
+                edge_key = tuple(sorted([u, v]))
+                total_bw += self.link_bandwidth.get(edge_key, 0.0)
+
+            # Average bandwidth to neighbors
+            avg_bw = total_bw / len(neighbors)
+            connectivity[u] = [avg_bw / max_bw]
+
+        return connectivity
 
     def check_node_feasibility(
         self, node_id: int, vnf: VNF, min_security: float

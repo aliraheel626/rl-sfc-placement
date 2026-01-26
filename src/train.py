@@ -9,6 +9,7 @@ This script handles the training loop for the RL agent, including:
 """
 
 import argparse
+import shutil
 from pathlib import Path
 
 from sb3_contrib import MaskablePPO
@@ -27,10 +28,15 @@ def train(
     total_timesteps: int = 1_000_000,
     save_path: str = "models/sfc_ppo",
     log_path: str = "logs/",
-    plot_freq: int = 10000,
+    plot_freq: int = 1000,
     save_freq: int = 50000,
     seed: int = 42,
     load_path: str = None,
+    use_gnn: bool = False,
+    gnn_type: str = "gcn",
+    gnn_hidden_dim: int = 64,
+    gnn_features_dim: int = 256,
+    num_gnn_layers: int = 3,
 ):
     """
     Train the Maskable PPO agent for SFC placement.
@@ -44,13 +50,29 @@ def train(
         save_freq: Frequency (in steps) to save the model
         seed: Random seed for reproducibility
         load_path: Path to a checkpoint to load and continue training from
+        use_gnn: Whether to use GNN feature extractor (PyTorch Geometric)
+        gnn_type: Type of GNN layer ("gcn", "gat", "sage")
+        gnn_hidden_dim: Hidden dimension for GNN layers
+        gnn_features_dim: Output dimension of GNN feature extractor
+        num_gnn_layers: Number of GNN layers
     """
     # Load configuration
     config = load_config(config_path)
     training_config = config.get("training", {})
 
     # Create directories
-    Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+    save_dir = Path(save_path).parent
+
+    if not load_path and save_dir.exists():
+        print(f"Cleaning up save directory: {save_dir}")
+        # Delete all files and subdirectories in the save directory
+        for item in save_dir.iterdir():
+            if item.is_file():
+                item.unlink()
+            elif item.is_dir():
+                shutil.rmtree(item)
+
+    save_dir.mkdir(parents=True, exist_ok=True)
     Path(log_path).mkdir(parents=True, exist_ok=True)
 
     print("=" * 50)
@@ -62,6 +84,11 @@ def train(
     print(f"Log path: {log_path}")
     print(f"Plot frequency: every {plot_freq} steps")
     print(f"Save frequency: every {save_freq} steps")
+    if use_gnn:
+        print(f"GNN Type: {gnn_type.upper()}")
+        print(
+            f"GNN Layers: {num_gnn_layers}, Hidden: {gnn_hidden_dim}, Features: {gnn_features_dim}"
+        )
     if load_path:
         print(f"Resuming training from: {load_path}")
     print("=" * 50)
@@ -98,6 +125,11 @@ def train(
             verbose=1,
             tensorboard_log=log_path,
             seed=seed,
+            use_gnn=use_gnn,
+            gnn_type=gnn_type,
+            gnn_hidden_dim=gnn_hidden_dim,
+            gnn_features_dim=gnn_features_dim,
+            num_gnn_layers=num_gnn_layers,
         )
 
     # Setup callbacks
@@ -175,7 +207,7 @@ def main():
     parser.add_argument(
         "--plot-freq",
         type=int,
-        default=10000,
+        default=1000,
         help="Frequency (in steps) to update the acceptance ratio plot",
     )
     parser.add_argument(
@@ -188,8 +220,37 @@ def main():
     parser.add_argument(
         "--resume",
         nargs="?",
-        const="DEFAULT",
         help="Resume training. Defaults to save_path if no path provided.",
+    )
+    parser.add_argument(
+        "--gnn",
+        action="store_true",
+        help="Use GNN Feature Extractor (PyTorch Geometric)",
+    )
+    parser.add_argument(
+        "--gnn-type",
+        type=str,
+        default="gcn",
+        choices=["gcn", "gat", "sage"],
+        help="Type of GNN layer: gcn, gat, or sage (default: gcn)",
+    )
+    parser.add_argument(
+        "--gnn-hidden-dim",
+        type=int,
+        default=64,
+        help="Hidden dimension for GNN layers (default: 64)",
+    )
+    parser.add_argument(
+        "--gnn-features-dim",
+        type=int,
+        default=256,
+        help="Output dimension of GNN feature extractor (default: 256)",
+    )
+    parser.add_argument(
+        "--gnn-layers",
+        type=int,
+        default=3,
+        help="Number of GNN layers (default: 3)",
     )
 
     args = parser.parse_args()
@@ -214,9 +275,13 @@ def main():
         save_path=args.save_path,
         log_path=args.log_path,
         plot_freq=args.plot_freq,
-        save_freq=args.save_freq,
         seed=args.seed,
         load_path=load_path,
+        use_gnn=args.gnn,
+        gnn_type=args.gnn_type,
+        gnn_hidden_dim=args.gnn_hidden_dim,
+        gnn_features_dim=args.gnn_features_dim,
+        num_gnn_layers=args.gnn_layers,
     )
 
 

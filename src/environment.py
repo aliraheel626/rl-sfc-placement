@@ -42,6 +42,8 @@ class SFCPlacementEnv(gym.Env):
     Reward:
         - +acceptance_reward for successfully placing entire SFC
         - +rejection_penalty (negative) for failed placement
+        - +0.5 per step for successful VNF placement (dense reward)
+        - -0.1 * (normalized_latency) per step to encourage locality
     """
 
     metadata = {"render_modes": ["human"]}
@@ -58,6 +60,13 @@ class SFCPlacementEnv(gym.Env):
         # Initialize substrate network and request generator
         self.substrate = SubstrateNetwork(self.config["substrate"])
         self.request_generator = RequestGenerator(self.config["sfc"])
+
+        # Topology configuration
+        self.randomize_topology = self.config.get("training", {}).get(
+            "randomize_topology", False
+        )
+        if self.randomize_topology:
+            print("INFO: Topology randomization enabled (new graph per episode).")
 
         # Reward configuration
         self.acceptance_reward = self.config["rewards"]["acceptance"]
@@ -89,13 +98,13 @@ class SFCPlacementEnv(gym.Env):
         self.action_space = spaces.Discrete(self.num_nodes)
 
         # Observation space components
-        # 1. Node resources: (num_nodes, 4)
+        # 1. Node resources: (num_nodes, 6) -> [RAM, CPU, Storage, Security, AvgBW, DistToPrev]
         # 2. Current VNF: (3,)
         # 3. SFC constraints: (3,)
         # 4. VNF index: (1,)
         # 5. Placement mask: (num_nodes,)
         obs_dim = (
-            self.num_nodes * 4  # Node resources flattened
+            self.num_nodes * 6  # Node resources + Connectivity + Distance
             + 3  # Current VNF requirements
             + 3  # SFC constraints
             + 1  # Current VNF index (normalized)
@@ -133,7 +142,11 @@ class SFCPlacementEnv(gym.Env):
         super().reset(seed=seed)
 
         # Reset substrate network to full capacity for new episode
-        self.substrate.reset()
+        if self.randomize_topology:
+            self.substrate.regenerate_topology()
+        else:
+            self.substrate.reset()
+
         self.request_generator.reset()
 
         # Reset episode-level counters
@@ -215,8 +228,16 @@ class SFCPlacementEnv(gym.Env):
         observation = self._get_observation()
         info = self._get_info()
 
-        # Small intermediate reward to encourage progress
-        reward = 0.0
+        # Intermediate reward for progress
+        reward = 0.5
+
+        # Penalty for latency/distance (encourage locality)
+        if self.current_placement and len(self.current_placement) > 1:
+            prev_node = self.current_placement[-2]
+            curr_node = self.current_placement[-1]
+            latency = self.substrate.get_path_latency(prev_node, curr_node)
+            norm_latency = min(latency / self.max_latency, 1.0)
+            reward -= 0.1 * norm_latency
 
         return observation, reward, False, False, info
 
@@ -276,8 +297,33 @@ class SFCPlacementEnv(gym.Env):
 
     def _get_observation(self) -> np.ndarray:
         """Construct the observation vector."""
-        # 1. Node resources (flattened)
-        node_resources = self.substrate.get_all_node_resources().flatten()
+        # 1. Node Feature Matrix Construction
+        # a. Basic Resources: (num_nodes, 4) [RAM, CPU, Storage, Security]
+        base_resources = self.substrate.get_all_node_resources()
+
+        # b. Connectivity: (num_nodes, 1) [AvgBandwidth]
+        connectivity = self.substrate.get_nodes_connectivity()
+
+        # c. Distance from previous node: (num_nodes, 1)
+        distances = np.zeros((self.num_nodes, 1), dtype=np.float32)
+        if self.current_placement:
+            prev_node = self.current_placement[-1]
+            for node_id in range(self.num_nodes):
+                if node_id == prev_node:
+                    dist = 0.0
+                else:
+                    dist = self.substrate.get_path_latency(prev_node, node_id)
+                    # Normalize distance (Handling inf if no path)
+                    if dist == float("inf"):
+                        dist = self.max_latency * 2  # Penalty for unreachable
+
+                distances[node_id] = min(dist / self.max_latency, 1.0)
+
+        # Combine node features: (num_nodes, 6)
+        node_features = np.concatenate(
+            [base_resources, connectivity, distances], axis=1
+        )
+        node_features_flat = node_features.flatten()
 
         # 2. Current VNF requirements (normalized)
         if self.current_vnf_index < self.current_request.num_vnfs:
@@ -315,7 +361,7 @@ class SFCPlacementEnv(gym.Env):
 
         # Concatenate all components
         observation = np.concatenate(
-            [node_resources, vnf_obs, sfc_constraints, vnf_progress, placement_mask]
+            [node_features_flat, vnf_obs, sfc_constraints, vnf_progress, placement_mask]
         ).astype(np.float32)
 
         # Clip to [0, 1] range

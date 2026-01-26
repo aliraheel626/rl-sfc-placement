@@ -15,6 +15,7 @@ dependencies = [
     "tqdm>=4.65",
     "tensorboard>=2.20.0",
     "rich>=14.2.0",
+    "torch-geometric>=2.7.0",
 ]
 
 [tool.uv]

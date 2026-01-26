@@ -139,6 +139,39 @@ class SubstrateNetwork:
             self.link_bandwidth[edge_key] = bandwidth
             self.original_bandwidth[edge_key] = bandwidth
 
+        self._precompute_latencies()
+
+    def _precompute_latencies(self):
+        """Precompute latencies for all pairs of nodes to speed up lookup."""
+        self.path_latencies = {}
+
+        # 1. Compute all-pairs shortest paths (min-hop)
+        # Note: self.graph is guaranteed connected by _generate_topology
+        try:
+            all_paths = dict(nx.all_pairs_shortest_path(self.graph))
+        except Exception:
+            # Fallback if something goes wrong, though graph should be connected
+            return
+
+        # 2. Calculate latency for each path
+        for u in self.graph.nodes():
+            self.path_latencies[(u, u)] = 0.0
+
+            if u not in all_paths:
+                continue
+
+            for v, path in all_paths[u].items():
+                if u == v:
+                    continue
+
+                # Sum latency along the path
+                path_latency = 0.0
+                for i in range(len(path) - 1):
+                    # Direct edge lookup is faster
+                    path_latency += self.graph[path[i]][path[i + 1]]["latency"]
+
+                self.path_latencies[(u, v)] = path_latency
+
     def regenerate_topology(self):
         """Regenerate the network topology (new random graph)."""
         self.node_resources.clear()
@@ -269,6 +302,14 @@ class SubstrateNetwork:
         if src_node == dst_node:
             return 0.0
 
+        # Use precomputed latency if available
+        if (
+            hasattr(self, "path_latencies")
+            and (src_node, dst_node) in self.path_latencies
+        ):
+            return self.path_latencies[(src_node, dst_node)]
+
+        # Fallback for safety (though precompute should cover everything)
         try:
             path = nx.shortest_path(self.graph, src_node, dst_node)
         except nx.NetworkXNoPath:

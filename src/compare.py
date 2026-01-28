@@ -349,7 +349,15 @@ def main():
         "--config", type=str, default="config.yaml", help="Path to configuration file"
     )
     parser.add_argument(
-        "--model", type=str, default=None, help="Path to trained RL model"
+        "--model",
+        type=str,
+        default="models/sfc_ppo_best.zip",
+        help="Path to trained RL model (default: models/sfc_ppo_best.zip, use --no-model to skip)",
+    )
+    parser.add_argument(
+        "--no-model",
+        action="store_true",
+        help="Skip RL model evaluation (only evaluate baselines)",
     )
     parser.add_argument(
         "--requests",
@@ -370,9 +378,12 @@ def main():
         "num_requests", 1000
     )
 
+    # Handle --no-model flag
+    model_path = None if args.no_model else args.model
+
     compare_all(
         config_path=args.config,
-        model_path=args.model,
+        model_path=model_path,
         num_requests=num_requests,
         save_plot=args.plot,
         verbose=not args.quiet,

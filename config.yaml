@@ -69,8 +69,8 @@ sfc:
 training:
   total_timesteps: 100000
   learning_rate: 0.0003
-  n_steps: 2048
-  batch_size: 64
+  n_steps: 4096
+  batch_size: 256
   n_epochs: 10
   gamma: 0.99
   max_requests_per_episode: 250  # Number of SFC requests before episode ends and network resets
@@ -79,7 +79,7 @@ training:
 # Reward Configuration
 rewards:
   acceptance: 10.0
-  rejection: -20.0
+  rejection: -5.0
 
 # Evaluation Configuration
 evaluation:

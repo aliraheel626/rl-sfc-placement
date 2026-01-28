@@ -72,6 +72,9 @@ class SFCPlacementEnv(gym.Env):
         self.acceptance_reward = self.config["rewards"]["acceptance"]
         self.rejection_penalty = self.config["rewards"]["rejection"]
 
+        # Link latency bounds for latency-aware masking
+        self.min_link_latency = self.config["substrate"]["links"]["latency"]["min"]
+
         # Episode configuration - how many requests per episode
         training_config = self.config.get("training", {})
         self.max_requests_per_episode = training_config.get(
@@ -82,6 +85,7 @@ class SFCPlacementEnv(gym.Env):
         self.current_request: Optional[SFCRequest] = None
         self.current_vnf_index: int = 0
         self.current_placement: list[int] = []
+        self.current_latency: float = 0.0  # Accumulated latency for current SFC
         self.episode_step: int = 0
 
         # Episode-level statistics (reset each episode)
@@ -97,9 +101,10 @@ class SFCPlacementEnv(gym.Env):
 
         # Rejection reason tracking
         self.rejection_reasons = {
-            "latency_violation": 0,
+            "latency_violation": 0,  # Final check after all VNFs placed
+            "latency_constraint": 0,  # Early rejection via action masking
             "invalid_action": 0,
-            "no_valid_actions": 0,
+            "no_valid_actions": 0,  # Resources/bandwidth exhausted
         }
 
         # Define action and observation spaces
@@ -180,6 +185,7 @@ class SFCPlacementEnv(gym.Env):
         self.current_request = self.request_generator.generate_request()
         self.current_vnf_index = 0
         self.current_placement = []
+        self.current_latency = 0.0
         self.episode_step = 0
 
         self.episode_requests += 1
@@ -210,12 +216,14 @@ class SFCPlacementEnv(gym.Env):
         # Allocate resources for this VNF
         self.substrate.allocate_resources(action, current_vnf)
 
-        # If not the first VNF, allocate bandwidth from previous node
+        # If not the first VNF, allocate bandwidth from previous node and track latency
         if self.current_placement:
             prev_node = self.current_placement[-1]
             self.substrate.allocate_bandwidth(
                 prev_node, action, self.current_request.min_bandwidth
             )
+            # Accumulate latency for this hop
+            self.current_latency += self.substrate.get_path_latency(prev_node, action)
 
         # Record placement
         self.current_placement.append(action)
@@ -451,7 +459,13 @@ class SFCPlacementEnv(gym.Env):
 
     def action_masks(self) -> np.ndarray:
         """
-        Return a boolean mask indicating valid actions.
+        Get mask of valid actions for current state.
+
+        An action is valid if:
+        1. Node has sufficient resources (RAM, CPU, storage) for the VNF
+        2. Node meets security requirements
+        3. Path from previous node has sufficient bandwidth (if not first VNF)
+        4. Placing the VNF won't make latency violation inevitable (NEW)
 
         This is used by MaskablePPO to prevent selecting invalid actions.
         """
@@ -469,7 +483,17 @@ class SFCPlacementEnv(gym.Env):
         # 1. Vectorized Resource Feasibility Check (O(1) relative to Python loop)
         feasible_mask = self.substrate.get_feasible_nodes(current_vnf, min_security)
 
-        # 2. Bandwidth Check (only for resource-feasible nodes)
+        # Calculate latency budget for remaining VNFs
+        remaining_vnfs = self.current_request.num_vnfs - self.current_vnf_index - 1
+        # Optimistic estimate: minimum possible latency for remaining hops
+        min_remaining_latency = remaining_vnfs * self.min_link_latency
+        latency_budget = (
+            self.current_request.max_latency
+            - self.current_latency
+            - min_remaining_latency
+        )
+
+        # 2. Bandwidth Check and Latency Check (only for resource-feasible nodes)
         if self.current_placement:
             prev_node = self.current_placement[-1]
             min_bw = self.current_request.min_bandwidth
@@ -478,12 +502,16 @@ class SFCPlacementEnv(gym.Env):
             feasible_indices = np.where(feasible_mask)[0]
 
             for node_id in feasible_indices:
-                # We still need to check bandwidth for these specific paths.
-                # Since we cached paths, this is fast (O(PathLen)).
-                if self.substrate.check_bandwidth(prev_node, node_id, min_bw):
+                # Check bandwidth
+                if not self.substrate.check_bandwidth(prev_node, node_id, min_bw):
+                    continue
+
+                # Check if this node would violate latency budget
+                hop_latency = self.substrate.get_path_latency(prev_node, node_id)
+                if hop_latency <= latency_budget:
                     mask[node_id] = True
         else:
-            # First VNF: no bandwidth constraints yet, so mask is just resource feasibility
+            # First VNF: no bandwidth/latency constraints yet
             mask = feasible_mask
 
         return mask

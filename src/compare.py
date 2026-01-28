@@ -11,6 +11,7 @@ import argparse
 from typing import Optional
 from pathlib import Path
 import copy
+import time
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -55,6 +56,8 @@ def evaluate_baseline(
     rejected = 0
     total_latency = 0.0
     latencies = []
+
+    start_time = time.perf_counter()
 
     iterator = range(num_requests)
     if verbose:
@@ -105,8 +108,10 @@ def evaluate_baseline(
 
     # Compute metrics
     total = accepted + rejected
+    elapsed_time = time.perf_counter() - start_time
     acceptance_ratio = accepted / total if total > 0 else 0.0
     avg_latency = total_latency / accepted if accepted > 0 else 0.0
+    avg_time_per_request = (elapsed_time / total * 1000) if total > 0 else 0.0  # ms
 
     return {
         "algorithm": algorithm.__class__.__name__,
@@ -115,6 +120,7 @@ def evaluate_baseline(
         "rejected": rejected,
         "acceptance_ratio": acceptance_ratio,
         "avg_latency": avg_latency,
+        "avg_time_ms": avg_time_per_request,
         "latencies": latencies,
     }
 
@@ -153,6 +159,8 @@ def evaluate_rl_agent(
     if verbose:
         pbar = tqdm(total=num_requests, desc="Evaluating RL Agent")
 
+    start_time = time.perf_counter()
+
     while requests_processed < num_requests:
         # Get action mask
         action_mask = env.unwrapped.action_masks()
@@ -182,12 +190,18 @@ def evaluate_rl_agent(
             else:
                 rejected += 1
 
+        # Reset environment if episode terminated
+        if terminated or truncated:
+            obs, info = env.reset()
+
     if pbar:
         pbar.close()
 
     total = accepted + rejected
+    elapsed_time = time.perf_counter() - start_time
     acceptance_ratio = accepted / total if total > 0 else 0.0
     avg_latency = total_latency / accepted if accepted > 0 else 0.0
+    avg_time_per_request = (elapsed_time / total * 1000) if total > 0 else 0.0  # ms
 
     return {
         "algorithm": "MaskablePPO",
@@ -196,6 +210,7 @@ def evaluate_rl_agent(
         "rejected": rejected,
         "acceptance_ratio": acceptance_ratio,
         "avg_latency": avg_latency,
+        "avg_time_ms": avg_time_per_request,
         "latencies": latencies,
     }
 
@@ -263,21 +278,21 @@ def compare_all(
 
     # Print comparison table
     if verbose:
-        print("\n" + "=" * 70)
+        print("\n" + "=" * 90)
         print("COMPARISON RESULTS")
-        print("=" * 70)
+        print("=" * 90)
         print(
-            f"{'Algorithm':<20} {'Accepted':<12} {'Rejected':<12} {'Ratio':<12} {'Avg Latency':<12}"
+            f"{'Algorithm':<20} {'Accepted':<12} {'Rejected':<12} {'Ratio':<12} {'Avg Latency':<12} {'Avg Time (ms)':<12}"
         )
-        print("-" * 70)
+        print("-" * 90)
 
         for name, result in results.items():
             print(
                 f"{name:<20} {result['accepted']:<12} {result['rejected']:<12} "
-                f"{result['acceptance_ratio']:.4f}       {result['avg_latency']:.2f}"
+                f"{result['acceptance_ratio']:.4f}       {result['avg_latency']:<12.2f} {result.get('avg_time_ms', 0):.3f}"
             )
 
-        print("=" * 70)
+        print("=" * 90)
 
     # Generate plot if requested
     if save_plot:

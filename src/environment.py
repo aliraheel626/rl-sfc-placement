@@ -87,11 +87,20 @@ class SFCPlacementEnv(gym.Env):
         # Episode-level statistics (reset each episode)
         self.episode_requests = 0
         self.episode_accepted = 0
+        self.episode_latency_violations = 0
+        self.episode_rejections = 0
 
         # Global statistics tracking (across all episodes)
         self.total_requests = 0
         self.accepted_requests = 0
         self.total_episodes = 0
+
+        # Rejection reason tracking
+        self.rejection_reasons = {
+            "latency_violation": 0,
+            "invalid_action": 0,
+            "no_valid_actions": 0,
+        }
 
         # Define action and observation spaces
         self.num_nodes = self.substrate.num_nodes
@@ -152,6 +161,8 @@ class SFCPlacementEnv(gym.Env):
         # Reset episode-level counters
         self.episode_requests = 0
         self.episode_accepted = 0
+        self.episode_latency_violations = 0
+        self.episode_rejections = 0
         self.total_episodes += 1
 
         # Generate first SFC request for this episode
@@ -266,6 +277,13 @@ class SFCPlacementEnv(gym.Env):
         self, reason: str, release_resources: bool = False
     ) -> tuple[np.ndarray, float, bool, bool, dict]:
         """Handle SFC rejection."""
+        # Track rejection reason
+        self.episode_rejections += 1
+        if reason in self.rejection_reasons:
+            self.rejection_reasons[reason] += 1
+        if reason == "latency_violation":
+            self.episode_latency_violations += 1
+
         if release_resources:
             # Release all resources allocated so far
             for i, node_id in enumerate(self.current_placement):
@@ -389,6 +407,13 @@ class SFCPlacementEnv(gym.Env):
             "episode_requests": self.episode_requests,
             "episode_accepted": self.episode_accepted,
             "episode_acceptance_ratio": episode_acceptance_ratio,
+            "episode_rejections": self.episode_rejections,
+            "episode_latency_violations": self.episode_latency_violations,
+            "episode_latency_violation_ratio": (
+                self.episode_latency_violations / self.episode_rejections
+                if self.episode_rejections > 0
+                else 0.0
+            ),
             # Global stats
             "total_requests": self.total_requests,
             "accepted_requests": self.accepted_requests,
@@ -398,6 +423,7 @@ class SFCPlacementEnv(gym.Env):
                 if self.total_requests > 0
                 else 0.0
             ),
+            "rejection_reasons": self.rejection_reasons.copy(),
         }
 
     def _is_valid_action(self, action: int) -> bool:

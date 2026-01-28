@@ -19,6 +19,7 @@ from src.model import (
     create_maskable_ppo,
     AcceptanceRatioCallback,
     BestModelCallback,
+    LatencyViolationCallback,
 )
 from stable_baselines3.common.callbacks import CallbackList
 
@@ -146,8 +147,16 @@ def train(
         save_path=best_model_path, check_freq=5000, verbose=1
     )
 
+    # 3. Latency Violation Tracking and Plotting
+    rejection_plot_path = str(Path(save_path).parent / "sfc_ppo_rejection_ratio.png")
+    latency_callback = LatencyViolationCallback(
+        save_path=rejection_plot_path, plot_freq=plot_freq, verbose=1
+    )
+
     # Combine callbacks
-    callback = CallbackList([acceptance_callback, best_model_callback])
+    callback = CallbackList(
+        [acceptance_callback, best_model_callback, latency_callback]
+    )
 
     # Start training
     print("\nStarting training...")
@@ -179,6 +188,13 @@ def train(
     print(
         f"Overall Acceptance Ratio: {base_env.accepted_requests / max(1, base_env.total_requests):.4f}"
     )
+
+    # Print rejection breakdown
+    print("\nRejection Breakdown:")
+    total_rejections = base_env.total_requests - base_env.accepted_requests
+    for reason, count in base_env.rejection_reasons.items():
+        pct = (count / max(1, total_rejections)) * 100
+        print(f"  {reason}: {count} ({pct:.1f}%)")
 
     return model
 

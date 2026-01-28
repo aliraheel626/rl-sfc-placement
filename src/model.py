@@ -338,3 +338,133 @@ class BestModelCallback(BaseCallback):
             self.recent_ratios = []
 
         return True
+
+
+class LatencyViolationCallback(BaseCallback):
+    """
+    Custom callback to track and plot latency violation ratio during training.
+
+    Tracks the percentage of rejections caused by latency violations per episode.
+    """
+
+    def __init__(
+        self,
+        save_path: str = "models/sfc_ppo_rejection_ratio.png",
+        plot_freq: int = 10000,
+        verbose: int = 0,
+    ):
+        super().__init__(verbose)
+        self.save_path = save_path
+        self.plot_freq = plot_freq
+        self.episode_latency_violation_ratios = []  # Per-episode latency violation ratios
+        self.episodes = []  # Episode numbers
+
+    def _on_step(self) -> bool:
+        """Called after each step."""
+        infos = self.locals.get("infos", [])
+        dones = self.locals.get("dones", [])
+
+        for i, info in enumerate(infos):
+            # Only record at episode end (when terminated)
+            if dones[i] if isinstance(dones, (list, tuple)) else dones:
+                if "episode_latency_violation_ratio" in info:
+                    ratio = info["episode_latency_violation_ratio"]
+                    episode_num = info.get("total_episodes", len(self.episodes) + 1)
+
+                    self.episode_latency_violation_ratios.append(ratio)
+                    self.episodes.append(episode_num)
+
+                    # Log to TensorBoard if available
+                    if self.logger is not None:
+                        self.logger.record(
+                            "custom/episode_latency_violation_ratio", ratio
+                        )
+                        self.logger.record(
+                            "custom/episode_latency_violations",
+                            info.get("episode_latency_violations", 0),
+                        )
+                        self.logger.record(
+                            "custom/episode_rejections",
+                            info.get("episode_rejections", 0),
+                        )
+
+        # Plot and save every plot_freq steps
+        if self.n_calls > 0 and self.n_calls % self.plot_freq == 0:
+            self._save_plot()
+
+        return True
+
+    def _save_plot(self):
+        """Generates and saves a plot of latency violation ratio per episode."""
+        if not self.episode_latency_violation_ratios:
+            return
+
+        try:
+            # Create directory if it doesn't exist
+            os.makedirs(os.path.dirname(self.save_path), exist_ok=True)
+
+            plt.figure(figsize=(10, 6))
+            plt.plot(
+                self.episodes,
+                self.episode_latency_violation_ratios,
+                alpha=0.6,
+                label="Latency Violation Ratio",
+                linewidth=0.5,
+                color="red",
+            )
+
+            # Add moving average for smoother visualization
+            if len(self.episode_latency_violation_ratios) > 10:
+                import numpy as np
+
+                window = min(50, len(self.episode_latency_violation_ratios) // 5)
+                if window > 1:
+                    moving_avg = np.convolve(
+                        self.episode_latency_violation_ratios,
+                        np.ones(window) / window,
+                        mode="valid",
+                    )
+                    plt.plot(
+                        self.episodes[window - 1 :],
+                        moving_avg,
+                        label=f"Moving Avg ({window} episodes)",
+                        color="darkred",
+                        linewidth=2,
+                    )
+
+            plt.title("Latency Violation % of Rejections vs Episode")
+            plt.xlabel("Episode")
+            plt.ylabel("Latency Violations / Total Rejections")
+            plt.ylim(0, 1.05)
+            plt.grid(True, linestyle="--", alpha=0.7)
+            plt.legend()
+
+            plt.tight_layout()
+            plt.savefig(self.save_path)
+            plt.close()
+
+            if self.verbose > 1:
+                print(
+                    f"Rejection ratio plot saved to {self.save_path} at step {self.num_timesteps}"
+                )
+        except Exception as e:
+            if self.verbose > 0:
+                print(f"Warning: Could not save rejection ratio plot: {e}")
+
+    def _on_training_end(self) -> None:
+        """Called at the end of training."""
+        self._save_plot()
+
+        if self.episode_latency_violation_ratios:
+            avg_ratio = sum(self.episode_latency_violation_ratios) / len(
+                self.episode_latency_violation_ratios
+            )
+
+            last_n = min(10, len(self.episode_latency_violation_ratios))
+            recent_avg = sum(self.episode_latency_violation_ratios[-last_n:]) / last_n
+
+            if self.verbose > 0:
+                print("\nLatency Violation Stats:")
+                print(f"  Average Latency Violation Ratio: {avg_ratio:.4f}")
+                print(f"  Last {last_n} Episodes Avg: {recent_avg:.4f}")
+                print(f"  Rejection Ratio Plot saved to: {self.save_path}")

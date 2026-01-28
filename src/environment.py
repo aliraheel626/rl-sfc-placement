@@ -519,14 +519,14 @@ class SFCPlacementEnv(gym.Env):
     def render(self):
         """Render the environment state."""
         if self.render_mode == "human":
-            print(f"\n=== SFC Placement Environment ===")
+            print("\n=== SFC Placement Environment ===")
             print(f"Request ID: {self.current_request.request_id}")
             print(f"VNFs: {self.current_request.num_vnfs}")
             print(
                 f"Current VNF: {self.current_vnf_index + 1}/{self.current_request.num_vnfs}"
             )
             print(f"Placement so far: {self.current_placement}")
-            print(f"Constraints:")
+            print("Constraints:")
             print(f"  Min Security: {self.current_request.min_security_score:.2f}")
             print(f"  Max Latency: {self.current_request.max_latency:.2f}")
             print(f"  Min Bandwidth: {self.current_request.min_bandwidth:.2f}")

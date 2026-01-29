@@ -38,6 +38,9 @@ class BasePlacement(ABC):
         vnf: VNF,
         request: SFCRequest,
         prev_node: Optional[int] = None,
+        current_latency: float = 0.0,
+        remaining_vnfs: int = 0,
+        min_link_latency: float = 1.0,
     ) -> list[int]:
         """
         Get list of valid nodes for placing a VNF.
@@ -47,11 +50,18 @@ class BasePlacement(ABC):
             vnf: The VNF to place
             request: The SFC request (for constraints)
             prev_node: Previous node in the chain (for bandwidth check)
+            current_latency: Accumulated latency so far
+            remaining_vnfs: Number of VNFs remaining after this one
+            min_link_latency: Minimum possible link latency (for optimistic estimate)
 
         Returns:
             List of valid node IDs
         """
         valid_nodes = []
+
+        # Calculate latency budget (optimistic estimate for remaining hops)
+        min_remaining_latency = remaining_vnfs * min_link_latency
+        latency_budget = request.max_latency - current_latency - min_remaining_latency
 
         for node_id in range(substrate.num_nodes):
             # Check resource and security feasibility
@@ -65,6 +75,11 @@ class BasePlacement(ABC):
                 if not substrate.check_bandwidth(
                     prev_node, node_id, request.min_bandwidth
                 ):
+                    continue
+
+                # Check latency constraint (early masking)
+                hop_latency = substrate.get_path_latency(prev_node, node_id)
+                if hop_latency > latency_budget:
                     continue
 
             valid_nodes.append(node_id)
@@ -113,8 +128,12 @@ class ViterbiPlacement(BasePlacement):
             dp[0][node] = 0.0
 
         # Fill the trellis
+        min_link_latency = 1.0  # Minimum possible link latency
+
         for vnf_idx in range(1, num_vnfs):
             vnf = request.vnfs[vnf_idx]
+            remaining_vnfs = num_vnfs - vnf_idx - 1
+            min_remaining_latency = remaining_vnfs * min_link_latency
 
             for curr_node in range(num_nodes):
                 # Check if current node is valid for this VNF
@@ -137,6 +156,10 @@ class ViterbiPlacement(BasePlacement):
                     # Calculate latency for this transition
                     link_latency = substrate.get_path_latency(prev_node, curr_node)
                     total_latency = dp[vnf_idx - 1][prev_node] + link_latency
+
+                    # Early pruning: skip if this path can't possibly meet the constraint
+                    if total_latency + min_remaining_latency > request.max_latency:
+                        continue
 
                     # Update if better
                     if total_latency < dp[vnf_idx][curr_node]:
@@ -181,21 +204,33 @@ class FirstFitPlacement(BasePlacement):
         Place VNFs using first-fit strategy.
         """
         placement = []
+        current_latency = 0.0
+        min_link_latency = 1.0  # Minimum possible link latency
 
-        for vnf in request.vnfs:
+        for i, vnf in enumerate(request.vnfs):
             prev_node = placement[-1] if placement else None
-            valid_nodes = self.get_valid_nodes(substrate, vnf, request, prev_node)
+            remaining_vnfs = request.num_vnfs - i - 1
+
+            valid_nodes = self.get_valid_nodes(
+                substrate,
+                vnf,
+                request,
+                prev_node,
+                current_latency,
+                remaining_vnfs,
+                min_link_latency,
+            )
 
             if not valid_nodes:
                 return None
 
             # Select first valid node
-            placement.append(valid_nodes[0])
+            selected_node = valid_nodes[0]
+            placement.append(selected_node)
 
-        # Validate latency constraint
-        total_latency = substrate.get_total_latency(placement)
-        if total_latency > request.max_latency:
-            return None
+            # Update accumulated latency
+            if prev_node is not None:
+                current_latency += substrate.get_path_latency(prev_node, selected_node)
 
         return placement
 
@@ -215,10 +250,22 @@ class BestFitPlacement(BasePlacement):
         Place VNFs using best-fit strategy.
         """
         placement = []
+        current_latency = 0.0
+        min_link_latency = 1.0
 
-        for vnf in request.vnfs:
+        for i, vnf in enumerate(request.vnfs):
             prev_node = placement[-1] if placement else None
-            valid_nodes = self.get_valid_nodes(substrate, vnf, request, prev_node)
+            remaining_vnfs = request.num_vnfs - i - 1
+
+            valid_nodes = self.get_valid_nodes(
+                substrate,
+                vnf,
+                request,
+                prev_node,
+                current_latency,
+                remaining_vnfs,
+                min_link_latency,
+            )
 
             if not valid_nodes:
                 return None
@@ -243,10 +290,9 @@ class BestFitPlacement(BasePlacement):
 
             placement.append(best_node)
 
-        # Validate latency constraint
-        total_latency = substrate.get_total_latency(placement)
-        if total_latency > request.max_latency:
-            return None
+            # Update accumulated latency
+            if prev_node is not None:
+                current_latency += substrate.get_path_latency(prev_node, best_node)
 
         return placement
 
@@ -266,10 +312,22 @@ class LatencyAwarePlacement(BasePlacement):
         Place VNFs prioritizing low latency links.
         """
         placement = []
+        current_latency = 0.0
+        min_link_latency = 1.0
 
-        for vnf in request.vnfs:
+        for i, vnf in enumerate(request.vnfs):
             prev_node = placement[-1] if placement else None
-            valid_nodes = self.get_valid_nodes(substrate, vnf, request, prev_node)
+            remaining_vnfs = request.num_vnfs - i - 1
+
+            valid_nodes = self.get_valid_nodes(
+                substrate,
+                vnf,
+                request,
+                prev_node,
+                current_latency,
+                remaining_vnfs,
+                min_link_latency,
+            )
 
             if not valid_nodes:
                 return None
@@ -288,10 +346,9 @@ class LatencyAwarePlacement(BasePlacement):
 
             placement.append(best_node)
 
-        # Validate latency constraint
-        total_latency = substrate.get_total_latency(placement)
-        if total_latency > request.max_latency:
-            return None
+            # Update accumulated latency
+            if prev_node is not None:
+                current_latency += substrate.get_path_latency(prev_node, best_node)
 
         return placement
 

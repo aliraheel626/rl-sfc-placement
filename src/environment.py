@@ -12,8 +12,8 @@ import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
 
+from src.substrate import SubstrateNetwork
 from src.requests import (
-    SubstrateNetwork,
     RequestGenerator,
     SFCRequest,
     load_config,

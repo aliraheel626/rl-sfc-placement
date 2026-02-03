@@ -10,7 +10,8 @@ This module implements baseline placement algorithms for comparison:
 from abc import ABC, abstractmethod
 from typing import Optional
 
-from src.requests import SubstrateNetwork, SFCRequest, VNF
+from src.substrate import SubstrateNetwork
+from src.requests import SFCRequest, VNF
 
 
 class BasePlacement(ABC):

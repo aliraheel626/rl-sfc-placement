@@ -17,7 +17,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 
-from src.requests import SubstrateNetwork, RequestGenerator, load_config
+from src.substrate import SubstrateNetwork
+from src.requests import RequestGenerator, load_config
 from src.model import create_masked_env, load_model
 from src.baselines import (
     BasePlacement,

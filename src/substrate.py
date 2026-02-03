@@ -516,3 +516,36 @@ class SubstrateNetwork:
                 del self.active_placements[request_id]
 
         return expired
+
+    def get_sfcs_per_node(self) -> dict[int, int]:
+        """
+        Get the count of SFCs using each substrate node.
+
+        An SFC is counted for a node if at least one of its VNFs is placed there.
+
+        Returns:
+            Dictionary mapping node_id -> number of SFCs using that node
+        """
+        sfcs_count = {node: 0 for node in self.graph.nodes()}
+
+        for info in self.active_placements.values():
+            placed_nodes = set(info["placement"])  # Unique nodes used by this SFC
+            for node in placed_nodes:
+                sfcs_count[node] += 1
+
+        return sfcs_count
+
+    def get_vnfs_per_node(self) -> dict[int, int]:
+        """
+        Get the count of VNFs placed on each substrate node.
+
+        Returns:
+            Dictionary mapping node_id -> number of VNFs on that node
+        """
+        vnfs_count = {node: 0 for node in self.graph.nodes()}
+
+        for info in self.active_placements.values():
+            for node in info["placement"]:  # Each VNF placement counts
+                vnfs_count[node] += 1
+
+        return vnfs_count

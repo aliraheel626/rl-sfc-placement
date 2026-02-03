@@ -58,6 +58,8 @@ def evaluate_baseline(
     total_latency = 0.0
     latencies = []
     security_margins = []  # Track security margins for each accepted request
+    sfc_tenancy_samples = []  # Track SFC tenancy per node over time
+    vnf_tenancy_samples = []  # Track VNF tenancy per node over time
 
     start_time = time.perf_counter()
 
@@ -110,7 +112,16 @@ def evaluate_baseline(
 
             # Register for TTL tracking
             substrate_copy.register_placement(request, placement)
-        else:
+
+        # Sample tenancy metrics after each request (regardless of accept/reject)
+        sfcs_per_node = substrate_copy.get_sfcs_per_node()
+        vnfs_per_node = substrate_copy.get_vnfs_per_node()
+        if sfcs_per_node:
+            sfc_tenancy_samples.append(sum(sfcs_per_node.values()) / len(sfcs_per_node))
+        if vnfs_per_node:
+            vnf_tenancy_samples.append(sum(vnfs_per_node.values()) / len(vnfs_per_node))
+
+        if placement is None:
             rejected += 1
 
     # Compute metrics
@@ -122,6 +133,16 @@ def evaluate_baseline(
     avg_sec_margin = (
         sum(security_margins) / len(security_margins) if security_margins else 0.0
     )
+    avg_sfc_tenancy = (
+        sum(sfc_tenancy_samples) / len(sfc_tenancy_samples)
+        if sfc_tenancy_samples
+        else 0.0
+    )
+    avg_vnf_tenancy = (
+        sum(vnf_tenancy_samples) / len(vnf_tenancy_samples)
+        if vnf_tenancy_samples
+        else 0.0
+    )
 
     return {
         "algorithm": algorithm.__class__.__name__,
@@ -132,6 +153,8 @@ def evaluate_baseline(
         "avg_latency": avg_latency,
         "avg_time_ms": avg_time_per_request,
         "avg_sec_margin": avg_sec_margin,
+        "avg_sfc_tenancy": avg_sfc_tenancy,
+        "avg_vnf_tenancy": avg_vnf_tenancy,
         "latencies": latencies,
     }
 
@@ -162,6 +185,8 @@ def evaluate_rl_agent(
     total_latency = 0.0
     latencies = []
     security_margins = []  # Track security margins for each accepted request
+    sfc_tenancy_samples = []  # Track SFC tenancy per node over time
+    vnf_tenancy_samples = []  # Track VNF tenancy per node over time
 
     # Reset environment once
     obs, info = env.reset()
@@ -224,6 +249,18 @@ def evaluate_rl_agent(
             else:
                 rejected += 1
 
+            # Sample tenancy metrics after each request
+            sfcs_per_node = env.unwrapped.substrate.get_sfcs_per_node()
+            vnfs_per_node = env.unwrapped.substrate.get_vnfs_per_node()
+            if sfcs_per_node:
+                sfc_tenancy_samples.append(
+                    sum(sfcs_per_node.values()) / len(sfcs_per_node)
+                )
+            if vnfs_per_node:
+                vnf_tenancy_samples.append(
+                    sum(vnfs_per_node.values()) / len(vnfs_per_node)
+                )
+
         # Reset environment if episode terminated
         if terminated or truncated:
             obs, info = env.reset()
@@ -239,6 +276,16 @@ def evaluate_rl_agent(
     avg_sec_margin = (
         sum(security_margins) / len(security_margins) if security_margins else 0.0
     )
+    avg_sfc_tenancy = (
+        sum(sfc_tenancy_samples) / len(sfc_tenancy_samples)
+        if sfc_tenancy_samples
+        else 0.0
+    )
+    avg_vnf_tenancy = (
+        sum(vnf_tenancy_samples) / len(vnf_tenancy_samples)
+        if vnf_tenancy_samples
+        else 0.0
+    )
 
     return {
         "algorithm": "MaskablePPO",
@@ -249,6 +296,8 @@ def evaluate_rl_agent(
         "avg_latency": avg_latency,
         "avg_time_ms": avg_time_per_request,
         "avg_sec_margin": avg_sec_margin,
+        "avg_sfc_tenancy": avg_sfc_tenancy,
+        "avg_vnf_tenancy": avg_vnf_tenancy,
         "latencies": latencies,
     }
 
@@ -315,21 +364,22 @@ def compare_all(
 
     # Print comparison table
     if verbose:
-        print("\n" + "=" * 110)
+        print("\n" + "=" * 140)
         print("COMPARISON RESULTS")
-        print("=" * 110)
+        print("=" * 140)
         print(
-            f"{'Algorithm':<20} {'Accepted':<12} {'Rejected':<12} {'Ratio':<12} {'Avg Latency':<12} {'Avg Sec Margin':<14} {'Avg Time (ms)':<14}"
+            f"{'Algorithm':<20} {'Accepted':<10} {'Rejected':<10} {'Ratio':<10} {'Avg Latency':<12} {'Avg Sec Margin':<14} {'Avg SFC/Node':<14} {'Avg VNF/Node':<14} {'Avg Time (ms)':<14}"
         )
-        print("-" * 110)
+        print("-" * 140)
 
         for name, result in results.items():
             print(
-                f"{name:<20} {result['accepted']:<12} {result['rejected']:<12} "
-                f"{result['acceptance_ratio']:.4f}       {result['avg_latency']:<12.2f} {result.get('avg_sec_margin', 0):<14.4f} {result.get('avg_time_ms', 0):.3f}"
+                f"{name:<20} {result['accepted']:<10} {result['rejected']:<10} "
+                f"{result['acceptance_ratio']:.4f}     {result['avg_latency']:<12.2f} {result.get('avg_sec_margin', 0):<14.4f} "
+                f"{result.get('avg_sfc_tenancy', 0):<14.2f} {result.get('avg_vnf_tenancy', 0):<14.2f} {result.get('avg_time_ms', 0):.3f}"
             )
 
-        print("=" * 110)
+        print("=" * 140)
 
     # Generate plot if requested
     if save_plot:

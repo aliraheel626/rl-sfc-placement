@@ -36,7 +36,7 @@ def evaluate_baseline(
     verbose: bool = False,
 ) -> dict:
     """
-    Evaluate a baseline algorithm on a series of episodes.
+    Evaluate a baseline algorithm on a series of requests with sustained load.
 
     Args:
         substrate: The substrate network (will be copied)
@@ -50,6 +50,7 @@ def evaluate_baseline(
     """
     # Create a copy of the substrate to not affect original
     substrate_copy = copy.deepcopy(substrate)
+    substrate_copy.reset()  # Start with fresh resources
     request_generator.reset()
 
     accepted = 0
@@ -64,20 +65,11 @@ def evaluate_baseline(
         iterator = tqdm(iterator, desc=f"Evaluating {algorithm.__class__.__name__}")
 
     for _ in iterator:
-        # Each episode starts with a fresh substrate
-        substrate_copy.reset()
-        request_generator.reset()
-
-        # We simulate the same number of requests as defined in the environment config
-        # Defaulting to 100 if not easily accessible
-        max_requests = 100
-
-        for _ in range(max_requests):
-            # Generate request
-            request = request_generator.generate_request()
-
-        # Advance time (release expired placements)
+        # Advance time first (release expired placements from previous steps)
         substrate_copy.tick()
+
+        # Generate a new request
+        request = request_generator.generate_request()
 
         # Try to place
         placement = algorithm.place(substrate_copy, request)

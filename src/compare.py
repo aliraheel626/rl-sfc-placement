@@ -56,6 +56,7 @@ def evaluate_baseline(
     rejected = 0
     total_latency = 0.0
     latencies = []
+    security_margins = []  # Track security margins for each accepted request
 
     start_time = time.perf_counter()
 
@@ -82,6 +83,20 @@ def evaluate_baseline(
             total_latency += latency
             latencies.append(latency)
 
+            # Calculate security margin for this placement
+            # Margin = node_security_score - sfc_min_security for each node
+            placement_margins = []
+            for node_id in placement:
+                node_security = substrate_copy.node_resources[node_id]["security_score"]
+                margin = node_security - request.min_security_score
+                placement_margins.append(margin)
+            avg_placement_margin = (
+                sum(placement_margins) / len(placement_margins)
+                if placement_margins
+                else 0.0
+            )
+            security_margins.append(avg_placement_margin)
+
             # Allocate resources
             for vnf, node_id in zip(request.vnfs, placement):
                 substrate_copy.allocate_resources(node_id, vnf)
@@ -103,6 +118,9 @@ def evaluate_baseline(
     acceptance_ratio = accepted / total if total > 0 else 0.0
     avg_latency = total_latency / accepted if accepted > 0 else 0.0
     avg_time_per_request = (elapsed_time / total * 1000) if total > 0 else 0.0  # ms
+    avg_sec_margin = (
+        sum(security_margins) / len(security_margins) if security_margins else 0.0
+    )
 
     return {
         "algorithm": algorithm.__class__.__name__,
@@ -112,6 +130,7 @@ def evaluate_baseline(
         "acceptance_ratio": acceptance_ratio,
         "avg_latency": avg_latency,
         "avg_time_ms": avg_time_per_request,
+        "avg_sec_margin": avg_sec_margin,
         "latencies": latencies,
     }
 
@@ -141,6 +160,7 @@ def evaluate_rl_agent(
     rejected = 0
     total_latency = 0.0
     latencies = []
+    security_margins = []  # Track security margins for each accepted request
 
     # Reset environment once
     obs, info = env.reset()
@@ -178,6 +198,28 @@ def evaluate_rl_agent(
                     latency = env.unwrapped.substrate.get_total_latency(placement)
                     total_latency += latency
                     latencies.append(latency)
+
+                # Calculate security margin for this placement
+                if placement:
+                    placement_margins = []
+                    min_security = (
+                        env.unwrapped.current_request.min_security_score
+                        if hasattr(env.unwrapped, "current_request")
+                        and env.unwrapped.current_request
+                        else 0
+                    )
+                    for node_id in placement:
+                        node_security = env.unwrapped.substrate.node_resources[node_id][
+                            "security_score"
+                        ]
+                        margin = node_security - min_security
+                        placement_margins.append(margin)
+                    avg_placement_margin = (
+                        sum(placement_margins) / len(placement_margins)
+                        if placement_margins
+                        else 0.0
+                    )
+                    security_margins.append(avg_placement_margin)
             else:
                 rejected += 1
 
@@ -193,6 +235,9 @@ def evaluate_rl_agent(
     acceptance_ratio = accepted / total if total > 0 else 0.0
     avg_latency = total_latency / accepted if accepted > 0 else 0.0
     avg_time_per_request = (elapsed_time / total * 1000) if total > 0 else 0.0  # ms
+    avg_sec_margin = (
+        sum(security_margins) / len(security_margins) if security_margins else 0.0
+    )
 
     return {
         "algorithm": "MaskablePPO",
@@ -202,6 +247,7 @@ def evaluate_rl_agent(
         "acceptance_ratio": acceptance_ratio,
         "avg_latency": avg_latency,
         "avg_time_ms": avg_time_per_request,
+        "avg_sec_margin": avg_sec_margin,
         "latencies": latencies,
     }
 
@@ -268,21 +314,21 @@ def compare_all(
 
     # Print comparison table
     if verbose:
-        print("\n" + "=" * 90)
+        print("\n" + "=" * 110)
         print("COMPARISON RESULTS")
-        print("=" * 90)
+        print("=" * 110)
         print(
-            f"{'Algorithm':<20} {'Accepted':<12} {'Rejected':<12} {'Ratio':<12} {'Avg Latency':<12} {'Avg Time (ms)':<12}"
+            f"{'Algorithm':<20} {'Accepted':<12} {'Rejected':<12} {'Ratio':<12} {'Avg Latency':<12} {'Avg Time (ms)':<14} {'Avg Sec Margin':<14}"
         )
-        print("-" * 90)
+        print("-" * 110)
 
         for name, result in results.items():
             print(
                 f"{name:<20} {result['accepted']:<12} {result['rejected']:<12} "
-                f"{result['acceptance_ratio']:.4f}       {result['avg_latency']:<12.2f} {result.get('avg_time_ms', 0):.3f}"
+                f"{result['acceptance_ratio']:.4f}       {result['avg_latency']:<12.2f} {result.get('avg_time_ms', 0):<14.3f} {result.get('avg_sec_margin', 0):.4f}"
             )
 
-        print("=" * 90)
+        print("=" * 110)
 
     # Generate plot if requested
     if save_plot:

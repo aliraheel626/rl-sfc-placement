@@ -12,6 +12,11 @@ import random
 
 import yaml
 
+# Re-export SubstrateNetwork for backward compatibility
+# Saved models contain serialized references to src.requests.SubstrateNetwork
+# that need to resolve during model unpickling/loading
+from src.substrate import SubstrateNetwork  # noqa: F401
+
 
 @dataclass
 class VNF:

@@ -318,14 +318,14 @@ def compare_all(
         print("COMPARISON RESULTS")
         print("=" * 110)
         print(
-            f"{'Algorithm':<20} {'Accepted':<12} {'Rejected':<12} {'Ratio':<12} {'Avg Latency':<12} {'Avg Time (ms)':<14} {'Avg Sec Margin':<14}"
+            f"{'Algorithm':<20} {'Accepted':<12} {'Rejected':<12} {'Ratio':<12} {'Avg Latency':<12} {'Avg Sec Margin':<14} {'Avg Time (ms)':<14}"
         )
         print("-" * 110)
 
         for name, result in results.items():
             print(
                 f"{name:<20} {result['accepted']:<12} {result['rejected']:<12} "
-                f"{result['acceptance_ratio']:.4f}       {result['avg_latency']:<12.2f} {result.get('avg_time_ms', 0):<14.3f} {result.get('avg_sec_margin', 0):.4f}"
+                f"{result['acceptance_ratio']:.4f}       {result['avg_latency']:<12.2f} {result.get('avg_sec_margin', 0):<14.4f} {result.get('avg_time_ms', 0):.3f}"
             )
 
         print("=" * 110)

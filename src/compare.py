@@ -24,7 +24,6 @@ from src.baselines import (
     ViterbiPlacement,
     FirstFitPlacement,
     BestFitPlacement,
-    LatencyAwarePlacement,
 )
 
 
@@ -240,7 +239,6 @@ def compare_all(
         ViterbiPlacement(),
         FirstFitPlacement(),
         BestFitPlacement(),
-        LatencyAwarePlacement(),
     ]
 
     for algorithm in baselines:

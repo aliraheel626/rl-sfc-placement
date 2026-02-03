@@ -297,68 +297,12 @@ class BestFitPlacement(BasePlacement):
         return placement
 
 
-class LatencyAwarePlacement(BasePlacement):
-    """
-    Latency-aware greedy placement.
-
-    For each VNF, selects the valid node that minimizes
-    the latency from the previous node.
-    """
-
-    def place(
-        self, substrate: SubstrateNetwork, request: SFCRequest
-    ) -> Optional[list[int]]:
-        """
-        Place VNFs prioritizing low latency links.
-        """
-        placement = []
-        current_latency = 0.0
-        min_link_latency = 1.0
-
-        for i, vnf in enumerate(request.vnfs):
-            prev_node = placement[-1] if placement else None
-            remaining_vnfs = request.num_vnfs - i - 1
-
-            valid_nodes = self.get_valid_nodes(
-                substrate,
-                vnf,
-                request,
-                prev_node,
-                current_latency,
-                remaining_vnfs,
-                min_link_latency,
-            )
-
-            if not valid_nodes:
-                return None
-
-            if prev_node is None:
-                # First VNF - choose node with best security/resources
-                best_node = max(
-                    valid_nodes,
-                    key=lambda n: substrate.get_node_resources(n)["security_score"],
-                )
-            else:
-                # Choose node with minimum latency from previous
-                best_node = min(
-                    valid_nodes, key=lambda n: substrate.get_path_latency(prev_node, n)
-                )
-
-            placement.append(best_node)
-
-            # Update accumulated latency
-            if prev_node is not None:
-                current_latency += substrate.get_path_latency(prev_node, best_node)
-
-        return placement
-
-
 def get_placement_algorithm(name: str) -> BasePlacement:
     """
     Factory function to get a placement algorithm by name.
 
     Args:
-        name: Algorithm name (viterbi, first_fit, best_fit, latency_aware)
+        name: Algorithm name (viterbi, first_fit, best_fit)
 
     Returns:
         Instance of the placement algorithm
@@ -367,7 +311,6 @@ def get_placement_algorithm(name: str) -> BasePlacement:
         "viterbi": ViterbiPlacement,
         "first_fit": FirstFitPlacement,
         "best_fit": BestFitPlacement,
-        "latency_aware": LatencyAwarePlacement,
     }
 
     if name not in algorithms:

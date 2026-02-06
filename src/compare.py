@@ -58,8 +58,9 @@ def evaluate_baseline(
     total_latency = 0.0
     latencies = []
     security_margins = []  # Track security margins for each accepted request
-    sfc_tenancy_samples = []  # Track SFC tenancy per node over time
-    vnf_tenancy_samples = []  # Track VNF tenancy per node over time
+    sfc_tenancy_samples = []  # Track SFC tenancy per occupied node over time
+    vnf_tenancy_samples = []  # Track VNF tenancy per occupied node over time
+    substrate_utilization_samples = []  # Track % of nodes being used over time
 
     start_time = time.perf_counter()
 
@@ -116,10 +117,25 @@ def evaluate_baseline(
         # Sample tenancy metrics after each request (regardless of accept/reject)
         sfcs_per_node = substrate_copy.get_sfcs_per_node()
         vnfs_per_node = substrate_copy.get_vnfs_per_node()
+
+        # Calculate average tenancy only on occupied nodes (nodes with count > 0)
+        occupied_sfc_nodes = [v for v in sfcs_per_node.values() if v > 0]
+        occupied_vnf_nodes = [v for v in vnfs_per_node.values() if v > 0]
+
+        if occupied_sfc_nodes:
+            sfc_tenancy_samples.append(
+                sum(occupied_sfc_nodes) / len(occupied_sfc_nodes)
+            )
+        if occupied_vnf_nodes:
+            vnf_tenancy_samples.append(
+                sum(occupied_vnf_nodes) / len(occupied_vnf_nodes)
+            )
+
+        # Substrate utilization: % of nodes being used
         if sfcs_per_node:
-            sfc_tenancy_samples.append(sum(sfcs_per_node.values()) / len(sfcs_per_node))
-        if vnfs_per_node:
-            vnf_tenancy_samples.append(sum(vnfs_per_node.values()) / len(vnfs_per_node))
+            nodes_in_use = len(occupied_sfc_nodes)
+            total_nodes = len(sfcs_per_node)
+            substrate_utilization_samples.append(nodes_in_use / total_nodes)
 
         if placement is None:
             rejected += 1
@@ -143,6 +159,11 @@ def evaluate_baseline(
         if vnf_tenancy_samples
         else 0.0
     )
+    avg_substrate_utilization = (
+        sum(substrate_utilization_samples) / len(substrate_utilization_samples)
+        if substrate_utilization_samples
+        else 0.0
+    )
 
     return {
         "algorithm": algorithm.__class__.__name__,
@@ -155,7 +176,12 @@ def evaluate_baseline(
         "avg_sec_margin": avg_sec_margin,
         "avg_sfc_tenancy": avg_sfc_tenancy,
         "avg_vnf_tenancy": avg_vnf_tenancy,
+        "avg_substrate_utilization": avg_substrate_utilization,
         "latencies": latencies,
+        # Per-request samples for rolling average plots
+        "sfc_tenancy_samples": sfc_tenancy_samples,
+        "vnf_tenancy_samples": vnf_tenancy_samples,
+        "substrate_utilization_samples": substrate_utilization_samples,
     }
 
 
@@ -185,8 +211,9 @@ def evaluate_rl_agent(
     total_latency = 0.0
     latencies = []
     security_margins = []  # Track security margins for each accepted request
-    sfc_tenancy_samples = []  # Track SFC tenancy per node over time
-    vnf_tenancy_samples = []  # Track VNF tenancy per node over time
+    sfc_tenancy_samples = []  # Track SFC tenancy per occupied node over time
+    vnf_tenancy_samples = []  # Track VNF tenancy per occupied node over time
+    substrate_utilization_samples = []  # Track % of nodes being used over time
 
     # Reset environment once
     obs, info = env.reset()
@@ -252,14 +279,25 @@ def evaluate_rl_agent(
             # Sample tenancy metrics after each request
             sfcs_per_node = env.unwrapped.substrate.get_sfcs_per_node()
             vnfs_per_node = env.unwrapped.substrate.get_vnfs_per_node()
-            if sfcs_per_node:
+
+            # Calculate average tenancy only on occupied nodes (nodes with count > 0)
+            occupied_sfc_nodes = [v for v in sfcs_per_node.values() if v > 0]
+            occupied_vnf_nodes = [v for v in vnfs_per_node.values() if v > 0]
+
+            if occupied_sfc_nodes:
                 sfc_tenancy_samples.append(
-                    sum(sfcs_per_node.values()) / len(sfcs_per_node)
+                    sum(occupied_sfc_nodes) / len(occupied_sfc_nodes)
                 )
-            if vnfs_per_node:
+            if occupied_vnf_nodes:
                 vnf_tenancy_samples.append(
-                    sum(vnfs_per_node.values()) / len(vnfs_per_node)
+                    sum(occupied_vnf_nodes) / len(occupied_vnf_nodes)
                 )
+
+            # Substrate utilization: % of nodes being used
+            if sfcs_per_node:
+                nodes_in_use = len(occupied_sfc_nodes)
+                total_nodes = len(sfcs_per_node)
+                substrate_utilization_samples.append(nodes_in_use / total_nodes)
 
         # Reset environment if episode terminated
         if terminated or truncated:
@@ -286,6 +324,11 @@ def evaluate_rl_agent(
         if vnf_tenancy_samples
         else 0.0
     )
+    avg_substrate_utilization = (
+        sum(substrate_utilization_samples) / len(substrate_utilization_samples)
+        if substrate_utilization_samples
+        else 0.0
+    )
 
     return {
         "algorithm": "MaskablePPO",
@@ -298,7 +341,12 @@ def evaluate_rl_agent(
         "avg_sec_margin": avg_sec_margin,
         "avg_sfc_tenancy": avg_sfc_tenancy,
         "avg_vnf_tenancy": avg_vnf_tenancy,
+        "avg_substrate_utilization": avg_substrate_utilization,
         "latencies": latencies,
+        # Per-request samples for rolling average plots
+        "sfc_tenancy_samples": sfc_tenancy_samples,
+        "vnf_tenancy_samples": vnf_tenancy_samples,
+        "substrate_utilization_samples": substrate_utilization_samples,
     }
 
 
@@ -364,26 +412,29 @@ def compare_all(
 
     # Print comparison table
     if verbose:
-        print("\n" + "=" * 140)
+        print("\n" + "=" * 160)
         print("COMPARISON RESULTS")
-        print("=" * 140)
+        print("=" * 160)
         print(
-            f"{'Algorithm':<20} {'Accepted':<10} {'Rejected':<10} {'Ratio':<10} {'Avg Latency':<12} {'Avg Sec Margin':<14} {'Avg SFC/Node':<14} {'Avg VNF/Node':<14} {'Avg Time (ms)':<14}"
+            f"{'Algorithm':<20} {'Accepted':<10} {'Rejected':<10} {'Ratio':<10} {'Avg Latency':<12} {'Avg Sec Margin':<14} {'Avg SFC/Node':<14} {'Avg VNF/Node':<14} {'Substrate Util':<14} {'Avg Time (ms)':<14}"
         )
-        print("-" * 140)
+        print("-" * 160)
 
         for name, result in results.items():
             print(
                 f"{name:<20} {result['accepted']:<10} {result['rejected']:<10} "
                 f"{result['acceptance_ratio']:.4f}     {result['avg_latency']:<12.2f} {result.get('avg_sec_margin', 0):<14.4f} "
-                f"{result.get('avg_sfc_tenancy', 0):<14.2f} {result.get('avg_vnf_tenancy', 0):<14.2f} {result.get('avg_time_ms', 0):.3f}"
+                f"{result.get('avg_sfc_tenancy', 0):<14.2f} {result.get('avg_vnf_tenancy', 0):<14.2f} {result.get('avg_substrate_utilization', 0):<14.2%} {result.get('avg_time_ms', 0):.3f}"
             )
 
-        print("=" * 140)
+        print("=" * 160)
 
-    # Generate plot if requested
+    # Generate bar chart plot if requested
     if save_plot:
         plot_comparison(results, save_plot)
+
+    # Always generate rolling average plots to eval/
+    plot_rolling_averages(results, "eval/", window_size=50)
 
     return results
 
@@ -442,6 +493,84 @@ def plot_comparison(results: dict, save_path: str):
     plt.savefig(save_path, dpi=150, bbox_inches="tight")
     print(f"Comparison plot saved to: {save_path}")
     plt.close()
+
+
+def plot_rolling_averages(results: dict, output_dir: str, window_size: int = 50):
+    """
+    Generate rolling window average plots for time-series metrics.
+
+    Args:
+        results: Dictionary of algorithm results with per-request samples
+        output_dir: Directory to save the plots
+        window_size: Size of the rolling window for smoothing
+    """
+    # Create output directory if it doesn't exist
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    # Define metrics to plot
+    metrics = [
+        (
+            "sfc_tenancy_samples",
+            "Avg SFCs per Occupied Node",
+            "sfc_per_node_rolling.png",
+        ),
+        (
+            "vnf_tenancy_samples",
+            "Avg VNFs per Occupied Node",
+            "vnf_per_node_rolling.png",
+        ),
+        (
+            "substrate_utilization_samples",
+            "Substrate Utilization",
+            "substrate_util_rolling.png",
+        ),
+    ]
+
+    # Color palette for algorithms
+    colors = plt.cm.tab10(np.linspace(0, 1, len(results)))
+
+    for metric_key, metric_title, filename in metrics:
+        fig, ax = plt.subplots(figsize=(12, 6))
+
+        for (alg_name, alg_results), color in zip(results.items(), colors):
+            samples = alg_results.get(metric_key, [])
+            if not samples:
+                continue
+
+            # Convert to numpy array
+            samples = np.array(samples)
+
+            # Calculate rolling average
+            if len(samples) >= window_size:
+                # Use convolution for rolling average
+                kernel = np.ones(window_size) / window_size
+                rolling_avg = np.convolve(samples, kernel, mode="valid")
+                x_values = np.arange(window_size - 1, len(samples))
+            else:
+                # Not enough data for rolling average, use raw data
+                rolling_avg = samples
+                x_values = np.arange(len(samples))
+
+            ax.plot(x_values, rolling_avg, label=alg_name, color=color, linewidth=2)
+
+        ax.set_xlabel("Request Number", fontsize=12)
+        ax.set_ylabel(metric_title, fontsize=12)
+        ax.set_title(
+            f"{metric_title} Over Time (Rolling Window = {window_size})", fontsize=14
+        )
+        ax.legend(loc="best", fontsize=10)
+        ax.grid(True, alpha=0.3)
+
+        # Format y-axis as percentage for substrate utilization
+        if "utilization" in metric_key:
+            ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: f"{y:.0%}"))
+
+        plt.tight_layout()
+        save_path = output_path / filename
+        plt.savefig(save_path, dpi=150, bbox_inches="tight")
+        print(f"Rolling average plot saved to: {save_path}")
+        plt.close()
 
 
 def main():

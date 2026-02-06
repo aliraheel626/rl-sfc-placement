@@ -187,3 +187,5 @@ logs/
 sfc_ppo_acceptance_ratio.png
 
 models/
+eval/
+.vscode/

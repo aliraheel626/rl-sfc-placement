@@ -47,6 +47,10 @@ class SubstrateNetwork:
         # Track active placements for TTL management
         self.active_placements: dict[int, dict] = {}  # request_id -> placement info
 
+        # Track nodes that are hard-isolated (cannot be shared with other SFCs)
+        # Maps node_id -> request_id of the SFC that isolated it
+        self.hard_isolated_nodes: dict[int, int] = {}
+
         self._generate_topology()
 
     def _generate_topology(self):
@@ -192,6 +196,7 @@ class SubstrateNetwork:
             self.bandwidth_matrix[v, u] = bw
 
         self.active_placements.clear()
+        self.hard_isolated_nodes.clear()
 
     def get_node_resources(self, node_id: int) -> dict:
         """Get current available resources for a node."""
@@ -486,6 +491,11 @@ class SubstrateNetwork:
             "remaining_ttl": request.ttl,
         }
 
+        # If this SFC has hard isolation, mark all its nodes as isolated
+        if request.hard_isolation:
+            for node_id in placement:
+                self.hard_isolated_nodes[node_id] = request.request_id
+
     def tick(self) -> list[int]:
         """
         Advance time by one step and release expired placements.
@@ -511,6 +521,12 @@ class SubstrateNetwork:
                     self.release_bandwidth(
                         placement[i], placement[i + 1], request.min_bandwidth
                     )
+
+                # Clear hard isolation for this SFC's nodes
+                if request.hard_isolation:
+                    for node_id in placement:
+                        if self.hard_isolated_nodes.get(node_id) == request_id:
+                            del self.hard_isolated_nodes[node_id]
 
                 expired.append(request_id)
                 del self.active_placements[request_id]
@@ -549,3 +565,55 @@ class SubstrateNetwork:
                 vnfs_count[node] += 1
 
         return vnfs_count
+
+    def is_node_hard_isolated(self, node_id: int) -> bool:
+        """
+        Check if a node is hard-isolated by another SFC.
+
+        Args:
+            node_id: The substrate node to check
+
+        Returns:
+            True if the node is reserved by a hard-isolated SFC
+        """
+        return node_id in self.hard_isolated_nodes
+
+    def get_hard_isolated_nodes_mask(self) -> np.ndarray:
+        """
+        Get a boolean mask of nodes that are hard-isolated.
+
+        Returns:
+            np.ndarray: Shape (num_nodes,) boolean vector where True means isolated
+        """
+        mask = np.zeros(self.num_nodes, dtype=bool)
+        for node_id in self.hard_isolated_nodes:
+            mask[node_id] = True
+        return mask
+
+    def has_any_sfc_on_node(self, node_id: int) -> bool:
+        """
+        Check if any SFC has a VNF placed on this node.
+
+        Args:
+            node_id: The substrate node to check
+
+        Returns:
+            True if at least one SFC is using this node
+        """
+        for info in self.active_placements.values():
+            if node_id in info["placement"]:
+                return True
+        return False
+
+    def get_nodes_with_sfcs_mask(self) -> np.ndarray:
+        """
+        Get a boolean mask of nodes that have any SFC placed on them.
+
+        Returns:
+            np.ndarray: Shape (num_nodes,) boolean vector where True means occupied
+        """
+        mask = np.zeros(self.num_nodes, dtype=bool)
+        for info in self.active_placements.values():
+            for node_id in info["placement"]:
+                mask[node_id] = True
+        return mask

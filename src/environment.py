@@ -94,6 +94,11 @@ class SFCPlacementEnv(gym.Env):
         self.episode_latency_violations = 0
         self.episode_rejections = 0
 
+        # Episode-level substrate metrics (sampled per request, reset each episode)
+        self.episode_sfc_tenancy_samples: list[float] = []
+        self.episode_vnf_tenancy_samples: list[float] = []
+        self.episode_substrate_utilization_samples: list[float] = []
+
         # Global statistics tracking (across all episodes)
         self.total_requests = 0
         self.accepted_requests = 0
@@ -168,6 +173,9 @@ class SFCPlacementEnv(gym.Env):
         self.episode_accepted = 0
         self.episode_latency_violations = 0
         self.episode_rejections = 0
+        self.episode_sfc_tenancy_samples = []
+        self.episode_vnf_tenancy_samples = []
+        self.episode_substrate_utilization_samples = []
         self.total_episodes += 1
 
         # Generate first SFC request for this episode
@@ -266,6 +274,9 @@ class SFCPlacementEnv(gym.Env):
         self.accepted_requests += 1
         self.episode_accepted += 1
 
+        # Sample substrate metrics after placement
+        self._sample_substrate_metrics()
+
         # Check if episode is complete
         terminated = self.episode_requests >= self.max_requests_per_episode
 
@@ -306,6 +317,9 @@ class SFCPlacementEnv(gym.Env):
                     self.current_request.min_bandwidth,
                 )
 
+        # Sample substrate metrics after rejection
+        self._sample_substrate_metrics()
+
         # Check if episode is complete
         terminated = self.episode_requests >= self.max_requests_per_episode
 
@@ -320,6 +334,32 @@ class SFCPlacementEnv(gym.Env):
         info["sfc_complete"] = True  # This SFC was completed (rejected)
 
         return observation, self.rejection_penalty, terminated, False, info
+
+    def _sample_substrate_metrics(self):
+        """Sample substrate tenancy and utilization metrics after each request."""
+        sfcs_per_node = self.substrate.get_sfcs_per_node()
+        vnfs_per_node = self.substrate.get_vnfs_per_node()
+
+        # Calculate average tenancy only on occupied nodes (nodes with count > 0)
+        occupied_sfc_nodes = [v for v in sfcs_per_node.values() if v > 0]
+        occupied_vnf_nodes = [v for v in vnfs_per_node.values() if v > 0]
+
+        if occupied_sfc_nodes:
+            self.episode_sfc_tenancy_samples.append(
+                sum(occupied_sfc_nodes) / len(occupied_sfc_nodes)
+            )
+        if occupied_vnf_nodes:
+            self.episode_vnf_tenancy_samples.append(
+                sum(occupied_vnf_nodes) / len(occupied_vnf_nodes)
+            )
+
+        # Substrate utilization: % of nodes being used
+        if sfcs_per_node:
+            nodes_in_use = len(occupied_sfc_nodes)
+            total_nodes = len(sfcs_per_node)
+            self.episode_substrate_utilization_samples.append(
+                nodes_in_use / total_nodes
+            )
 
     def _get_observation(self) -> np.ndarray:
         """Construct the observation vector."""
@@ -407,6 +447,26 @@ class SFCPlacementEnv(gym.Env):
             else 0.0
         )
 
+        # Calculate episode-level substrate metrics averages
+        episode_avg_sfc_tenancy = (
+            sum(self.episode_sfc_tenancy_samples)
+            / len(self.episode_sfc_tenancy_samples)
+            if self.episode_sfc_tenancy_samples
+            else 0.0
+        )
+        episode_avg_vnf_tenancy = (
+            sum(self.episode_vnf_tenancy_samples)
+            / len(self.episode_vnf_tenancy_samples)
+            if self.episode_vnf_tenancy_samples
+            else 0.0
+        )
+        episode_avg_substrate_util = (
+            sum(self.episode_substrate_utilization_samples)
+            / len(self.episode_substrate_utilization_samples)
+            if self.episode_substrate_utilization_samples
+            else 0.0
+        )
+
         return {
             "current_vnf_index": self.current_vnf_index,
             "total_vnfs": self.current_request.num_vnfs if self.current_request else 0,
@@ -422,6 +482,10 @@ class SFCPlacementEnv(gym.Env):
                 if self.episode_rejections > 0
                 else 0.0
             ),
+            # Episode-level substrate metrics
+            "episode_avg_sfc_tenancy": episode_avg_sfc_tenancy,
+            "episode_avg_vnf_tenancy": episode_avg_vnf_tenancy,
+            "episode_avg_substrate_util": episode_avg_substrate_util,
             # Global stats
             "total_requests": self.total_requests,
             "accepted_requests": self.accepted_requests,
@@ -447,6 +511,18 @@ class SFCPlacementEnv(gym.Env):
         ):
             return False
 
+        # Check hard isolation constraints
+        # 1. If node is hard-isolated by another SFC, we cannot use it
+        if self.substrate.is_node_hard_isolated(action):
+            return False
+
+        # 2. If this SFC requires hard isolation, node must not have any other SFC
+        if self.current_request.hard_isolation:
+            if self.substrate.has_any_sfc_on_node(action):
+                # Allow if it's our own placement from earlier in this SFC
+                if action not in self.current_placement:
+                    return False
+
         # Check bandwidth if not first VNF
         if self.current_placement:
             prev_node = self.current_placement[-1]
@@ -465,7 +541,9 @@ class SFCPlacementEnv(gym.Env):
         1. Node has sufficient resources (RAM, CPU, storage) for the VNF
         2. Node meets security requirements
         3. Path from previous node has sufficient bandwidth (if not first VNF)
-        4. Placing the VNF won't make latency violation inevitable (NEW)
+        4. Placing the VNF won't make latency violation inevitable
+        5. Node is not hard-isolated by another SFC
+        6. If this SFC requires hard isolation, node has no other SFCs
 
         This is used by MaskablePPO to prevent selecting invalid actions.
         """
@@ -483,6 +561,18 @@ class SFCPlacementEnv(gym.Env):
         # 1. Vectorized Resource Feasibility Check (O(1) relative to Python loop)
         feasible_mask = self.substrate.get_feasible_nodes(current_vnf, min_security)
 
+        # 2. Exclude hard-isolated nodes (nodes reserved by other SFCs)
+        hard_isolated_mask = self.substrate.get_hard_isolated_nodes_mask()
+        feasible_mask = feasible_mask & ~hard_isolated_mask
+
+        # 3. If this SFC requires hard isolation, exclude nodes with any other SFC
+        if self.current_request.hard_isolation:
+            occupied_mask = self.substrate.get_nodes_with_sfcs_mask()
+            # Allow nodes we've already placed VNFs on in current SFC
+            for node_id in self.current_placement:
+                occupied_mask[node_id] = False
+            feasible_mask = feasible_mask & ~occupied_mask
+
         # Calculate latency budget for remaining VNFs
         remaining_vnfs = self.current_request.num_vnfs - self.current_vnf_index - 1
         # Optimistic estimate: minimum possible latency for remaining hops
@@ -493,7 +583,7 @@ class SFCPlacementEnv(gym.Env):
             - min_remaining_latency
         )
 
-        # 2. Bandwidth Check and Latency Check (only for resource-feasible nodes)
+        # 4. Bandwidth Check and Latency Check (only for resource-feasible nodes)
         if self.current_placement:
             prev_node = self.current_placement[-1]
             min_bw = self.current_request.min_bandwidth

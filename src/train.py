@@ -20,6 +20,7 @@ from src.model import (
     AcceptanceRatioCallback,
     BestModelCallback,
     LatencyViolationCallback,
+    SubstrateMetricsCallback,
 )
 from stable_baselines3.common.callbacks import CallbackList
 
@@ -153,9 +154,19 @@ def train(
         save_path=rejection_plot_path, plot_freq=plot_freq, verbose=1
     )
 
+    # 4. Substrate Metrics Tracking and Plotting (SFC/node, VNF/node, utilization)
+    substrate_metrics_callback = SubstrateMetricsCallback(
+        save_dir=str(Path(save_path).parent), plot_freq=plot_freq, verbose=1
+    )
+
     # Combine callbacks
     callback = CallbackList(
-        [acceptance_callback, best_model_callback, latency_callback]
+        [
+            acceptance_callback,
+            best_model_callback,
+            latency_callback,
+            substrate_metrics_callback,
+        ]
     )
 
     # Start training

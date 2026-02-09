@@ -468,3 +468,192 @@ class LatencyViolationCallback(BaseCallback):
                 print(f"  Average Latency Violation Ratio: {avg_ratio:.4f}")
                 print(f"  Last {last_n} Episodes Avg: {recent_avg:.4f}")
                 print(f"  Rejection Ratio Plot saved to: {self.save_path}")
+
+
+class SubstrateMetricsCallback(BaseCallback):
+    """
+    Custom callback to track and plot substrate metrics during training.
+
+    Tracks per-episode averages of:
+    - SFC tenancy (avg SFCs per occupied node)
+    - VNF tenancy (avg VNFs per occupied node)
+    - Substrate utilization (% of nodes being used)
+    """
+
+    def __init__(
+        self,
+        save_dir: str = "models/",
+        plot_freq: int = 10000,
+        verbose: int = 0,
+    ):
+        super().__init__(verbose)
+        self.save_dir = save_dir
+        self.plot_freq = plot_freq
+
+        # Per-episode averages
+        self.episode_sfc_tenancy = []
+        self.episode_vnf_tenancy = []
+        self.episode_substrate_util = []
+        self.episodes = []
+
+    def _on_step(self) -> bool:
+        """Called after each step."""
+        infos = self.locals.get("infos", [])
+        dones = self.locals.get("dones", [])
+
+        for i, info in enumerate(infos):
+            # Only record at episode end (when terminated)
+            if dones[i] if isinstance(dones, (list, tuple)) else dones:
+                episode_num = info.get("total_episodes", len(self.episodes) + 1)
+
+                # Get episode-level substrate metrics
+                if "episode_avg_sfc_tenancy" in info:
+                    self.episode_sfc_tenancy.append(info["episode_avg_sfc_tenancy"])
+                    self.episode_vnf_tenancy.append(
+                        info.get("episode_avg_vnf_tenancy", 0)
+                    )
+                    self.episode_substrate_util.append(
+                        info.get("episode_avg_substrate_util", 0)
+                    )
+                    self.episodes.append(episode_num)
+
+                    # Log to TensorBoard if available
+                    if self.logger is not None:
+                        self.logger.record(
+                            "custom/episode_avg_sfc_tenancy",
+                            info["episode_avg_sfc_tenancy"],
+                        )
+                        self.logger.record(
+                            "custom/episode_avg_vnf_tenancy",
+                            info.get("episode_avg_vnf_tenancy", 0),
+                        )
+                        self.logger.record(
+                            "custom/episode_avg_substrate_util",
+                            info.get("episode_avg_substrate_util", 0),
+                        )
+
+        # Plot and save every plot_freq steps
+        if self.n_calls > 0 and self.n_calls % self.plot_freq == 0:
+            self._save_plots()
+
+        return True
+
+    def _save_plots(self):
+        """Generates and saves plots of substrate metrics per episode."""
+        if not self.episode_sfc_tenancy:
+            return
+
+        try:
+            import numpy as np
+
+            os.makedirs(self.save_dir, exist_ok=True)
+
+            # Define metrics to plot
+            metrics = [
+                (
+                    self.episode_sfc_tenancy,
+                    "Avg SFCs per Occupied Node",
+                    "sfc_per_node_training.png",
+                    "blue",
+                    "darkblue",
+                ),
+                (
+                    self.episode_vnf_tenancy,
+                    "Avg VNFs per Occupied Node",
+                    "vnf_per_node_training.png",
+                    "green",
+                    "darkgreen",
+                ),
+                (
+                    self.episode_substrate_util,
+                    "Substrate Utilization",
+                    "substrate_util_training.png",
+                    "purple",
+                    "indigo",
+                ),
+            ]
+
+            for data, title, filename, color, avg_color in metrics:
+                if not data:
+                    continue
+
+                plt.figure(figsize=(10, 6))
+                plt.plot(
+                    self.episodes,
+                    data,
+                    alpha=0.6,
+                    label=title,
+                    linewidth=0.5,
+                    color=color,
+                )
+
+                # Add moving average for smoother visualization
+                if len(data) > 10:
+                    window = min(50, len(data) // 5)
+                    if window > 1:
+                        moving_avg = np.convolve(
+                            data, np.ones(window) / window, mode="valid"
+                        )
+                        plt.plot(
+                            self.episodes[window - 1 :],
+                            moving_avg,
+                            label=f"Moving Avg ({window} episodes)",
+                            color=avg_color,
+                            linewidth=2,
+                        )
+
+                plt.title(f"{title} vs Episode Number")
+                plt.xlabel("Episode")
+                plt.ylabel(title)
+
+                # Format y-axis as percentage for substrate utilization
+                if "Utilization" in title:
+                    plt.ylim(0, 1.05)
+                    plt.gca().yaxis.set_major_formatter(
+                        plt.FuncFormatter(lambda y, _: f"{y:.0%}")
+                    )
+
+                plt.grid(True, linestyle="--", alpha=0.7)
+                plt.legend()
+                plt.tight_layout()
+
+                save_path = os.path.join(self.save_dir, filename)
+                plt.savefig(save_path)
+                plt.close()
+
+            if self.verbose > 1:
+                print(
+                    f"Substrate metrics plots saved to {self.save_dir} at step {self.num_timesteps}"
+                )
+        except Exception as e:
+            if self.verbose > 0:
+                print(f"Warning: Could not save substrate metrics plots: {e}")
+
+    def _on_training_end(self) -> None:
+        """Called at the end of training."""
+        self._save_plots()
+
+        if self.episode_sfc_tenancy:
+            import numpy as np
+
+            avg_sfc = np.mean(self.episode_sfc_tenancy)
+            avg_vnf = np.mean(self.episode_vnf_tenancy)
+            avg_util = np.mean(self.episode_substrate_util)
+
+            last_n = min(10, len(self.episode_sfc_tenancy))
+            recent_sfc = np.mean(self.episode_sfc_tenancy[-last_n:])
+            recent_vnf = np.mean(self.episode_vnf_tenancy[-last_n:])
+            recent_util = np.mean(self.episode_substrate_util[-last_n:])
+
+            if self.verbose > 0:
+                print("\nSubstrate Metrics Stats:")
+                print(
+                    f"  Avg SFC/Node: {avg_sfc:.2f} (Last {last_n}: {recent_sfc:.2f})"
+                )
+                print(
+                    f"  Avg VNF/Node: {avg_vnf:.2f} (Last {last_n}: {recent_vnf:.2f})"
+                )
+                print(
+                    f"  Avg Substrate Util: {avg_util:.2%} (Last {last_n}: {recent_util:.2%})"
+                )
+                print(f"  Substrate metrics plots saved to: {self.save_dir}")

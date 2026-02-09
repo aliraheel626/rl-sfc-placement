@@ -42,6 +42,7 @@ class BasePlacement(ABC):
         current_latency: float = 0.0,
         remaining_vnfs: int = 0,
         min_link_latency: float = 1.0,
+        current_placement: Optional[list[int]] = None,
     ) -> list[int]:
         """
         Get list of valid nodes for placing a VNF.
@@ -70,6 +71,17 @@ class BasePlacement(ABC):
                 node_id, vnf, request.min_security_score
             ):
                 continue
+
+            # Check hard isolation: skip nodes isolated by other SFCs
+            if substrate.is_node_hard_isolated(node_id):
+                continue
+
+            # If this SFC requires hard isolation, skip nodes with other SFCs
+            if request.hard_isolation:
+                if substrate.has_any_sfc_on_node(node_id):
+                    # Allow if it's our own placement from earlier in this SFC
+                    if current_placement is None or node_id not in current_placement:
+                        continue
 
             # Check bandwidth from previous node
             if prev_node is not None:
@@ -142,6 +154,15 @@ class ViterbiPlacement(BasePlacement):
                     curr_node, vnf, request.min_security_score
                 ):
                     continue
+
+                # Check hard isolation: skip nodes isolated by other SFCs
+                if substrate.is_node_hard_isolated(curr_node):
+                    continue
+
+                # If this SFC requires hard isolation, skip nodes with other SFCs
+                if request.hard_isolation:
+                    if substrate.has_any_sfc_on_node(curr_node):
+                        continue
 
                 # Try all previous nodes
                 for prev_node in range(num_nodes):
@@ -220,6 +241,7 @@ class FirstFitPlacement(BasePlacement):
                 current_latency,
                 remaining_vnfs,
                 min_link_latency,
+                current_placement=placement,
             )
 
             if not valid_nodes:
@@ -266,6 +288,7 @@ class BestFitPlacement(BasePlacement):
                 current_latency,
                 remaining_vnfs,
                 min_link_latency,
+                current_placement=placement,
             )
 
             if not valid_nodes:

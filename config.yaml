@@ -3,8 +3,8 @@
 # Substrate Network Configuration
 substrate:
   num_nodes: 200
-  mesh_connectivity: 0.3  # Probability of edge between any two nodes
-  
+  mesh_connectivity: 0.3 # Probability of edge between any two nodes
+
   # Node resource ranges (uniform random)
   resources:
     ram:
@@ -19,7 +19,7 @@ substrate:
     security_score:
       min: 1
       max: 5
-  
+
   # Link attribute ranges
   links:
     bandwidth:
@@ -35,7 +35,7 @@ sfc:
   vnf_count:
     min: 2
     max: 6
-  
+
   # VNF resource demands (should be smaller than substrate)
   vnf_resources:
     ram:
@@ -47,7 +47,7 @@ sfc:
     storage:
       min: 10
       max: 200
-  
+
   # SFC-level constraints
   constraints:
     security_score:
@@ -59,11 +59,15 @@ sfc:
     min_bandwidth:
       min: 50
       max: 500
-  
+
   # Time to live range
   ttl:
     min: 10
     max: 100
+
+  # Probability of generating a hard isolation requirement (0.0 to 1.0)
+  # Hard isolation prevents SFC from sharing substrate nodes with other SFCs
+  hard_isolation_probability: 0.1
 
 # Training Configuration
 training:
@@ -73,9 +77,9 @@ training:
   batch_size: 256
   n_epochs: 10
   gamma: 0.99
-  max_requests_per_episode: 250  # Number of SFC requests before episode ends and network resets
-  randomize_topology: true  # Generate new random graph for each episode
-  
+  max_requests_per_episode: 250 # Number of SFC requests before episode ends and network resets
+  randomize_topology: true # Generate new random graph for each episode
+
 # Reward Configuration
 rewards:
   acceptance: 10.0

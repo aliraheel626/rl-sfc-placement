@@ -40,6 +40,8 @@ class SFCRequest:
         min_bandwidth: Minimum bandwidth required between consecutive VNFs
         ttl: Time to live (number of timesteps before resources are released)
         request_id: Unique identifier for this request
+        hard_isolation: If True, this SFC cannot share substrate nodes with
+            other SFCs, and other SFCs cannot share nodes with it
     """
 
     vnfs: list[VNF]
@@ -48,6 +50,7 @@ class SFCRequest:
     min_bandwidth: float
     ttl: int
     request_id: int = 0
+    hard_isolation: bool = False
 
     @property
     def num_vnfs(self) -> int:
@@ -69,6 +72,7 @@ class RequestGenerator:
         self.vnf_resources = config["vnf_resources"]
         self.constraints = config["constraints"]
         self.ttl_range = (config["ttl"]["min"], config["ttl"]["max"])
+        self.hard_isolation_probability = config.get("hard_isolation_probability", 0.0)
 
         self.next_request_id = 0
 
@@ -112,6 +116,9 @@ class RequestGenerator:
         # Generate TTL
         ttl = random.randint(*self.ttl_range)
 
+        # Generate hard isolation requirement
+        hard_isolation = random.random() < self.hard_isolation_probability
+
         request = SFCRequest(
             vnfs=vnfs,
             min_security_score=min_security,
@@ -119,6 +126,7 @@ class RequestGenerator:
             min_bandwidth=min_bandwidth,
             ttl=ttl,
             request_id=self.next_request_id,
+            hard_isolation=hard_isolation,
         )
 
         self.next_request_id += 1

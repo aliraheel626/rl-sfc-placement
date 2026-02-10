@@ -1,94 +1,87 @@
 """
 Custom GNN Policy using PyTorch Geometric for SFC Placement.
 
-This module provides a custom Actor-Critic policy that uses Graph Neural Networks
-to process the substrate network topology for better VNF placement decisions.
+This module provides a topology-agnostic GNN feature extractor that consumes
+Dict observations (node_features, global_context, placement_mask, node_mask).
+The GNN processes only real nodes (determined by node_mask), making it
+portable across topologies with different num_nodes (up to max_nodes).
 """
 
-from typing import Callable, Dict, List, Optional, Tuple, Type, Union, Any
+from typing import Callable, Dict
 
 import gymnasium as gym
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from stable_baselines3.common.policies import ActorCriticPolicy
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
-from stable_baselines3.common.type_aliases import Schedule
 
 # PyTorch Geometric imports
 from torch_geometric.nn import (
     GCNConv,
     GATConv,
     SAGEConv,
-    global_mean_pool,
-    global_add_pool,
 )
-from torch_geometric.data import Data, Batch
-from torch_geometric.utils import from_networkx, dense_to_sparse
+from torch_geometric.utils import dense_to_sparse
 
 
 class GNNFeaturesExtractor(BaseFeaturesExtractor):
     """
     Graph Neural Network Feature Extractor using PyTorch Geometric.
 
-    Processes the observation by:
-    1. Reconstructing node features from the flattened observation
-    2. Building a graph using the edge index from the substrate network
+    Topology-agnostic: infers max_nodes from the Dict observation space and
+    uses node_mask to determine real vs padded nodes at runtime. Edge topology
+    is fetched dynamically via edge_getter.
+
+    Processes the Dict observation by:
+    1. Extracting node features, global context, placement mask, and node mask
+    2. Slicing to real nodes only (no GNN compute on padding)
     3. Applying GNN layers (configurable: GCN, GAT, GraphSAGE)
-    4. Aggregating node embeddings and concatenating with global context
+    4. Attention-weighted aggregation of node embeddings (masked)
+    5. Fusion with global context MLP output
     """
 
     def __init__(
         self,
-        observation_space: gym.Space,
-        num_nodes: int,
-        edge_index: torch.Tensor,
+        observation_space: gym.spaces.Dict,
+        edge_getter: Callable[[], torch.Tensor],
         node_feat_dim: int = 6,
         hidden_dim: int = 64,
         features_dim: int = 256,
         gnn_type: str = "gcn",
         num_gnn_layers: int = 3,
-        use_edge_attr: bool = False,
-        edge_getter: Optional[Callable] = None,
         dropout: float = 0.1,
     ):
         """
         Initialize the GNN Feature Extractor.
 
         Args:
-            observation_space: The observation space of the environment
-            num_nodes: Number of nodes in the substrate network
-            edge_index: Edge index tensor (2, num_edges) for the graph
-            node_feat_dim: Dimension of node features (default: 6)
+            observation_space: Dict observation space from the environment
+            edge_getter: Callable that returns current edge_index (2, num_edges)
+            node_feat_dim: Dimension of per-node features (default: 6)
             hidden_dim: Hidden dimension for GNN layers
             features_dim: Output dimension of the feature extractor
             gnn_type: Type of GNN layer ("gcn", "gat", "sage")
             num_gnn_layers: Number of GNN layers
-            use_edge_attr: Whether to use edge attributes
-            edge_getter: Callable to get current edge index (for dynamic topology)
             dropout: Dropout rate for GNN layers
         """
         super().__init__(observation_space, features_dim)
 
-        self.num_nodes = num_nodes
+        # Infer max_nodes from the observation space (topology-agnostic)
+        self.max_nodes = observation_space["node_features"].shape[0]
         self.node_feat_dim = node_feat_dim
         self.hidden_dim = hidden_dim
         self.gnn_type = gnn_type
         self.num_gnn_layers = num_gnn_layers
-        self.use_edge_attr = use_edge_attr
         self.edge_getter = edge_getter
         self.dropout = dropout
-
-        # Register edge index as buffer (for static topology)
-        self.register_buffer("edge_index", edge_index)
 
         # Input dimension: node features + placement mask
         input_dim = self.node_feat_dim + 1
 
-        # Build GNN layers
+        # Build GNN layers with LayerNorm (avoids padding-induced BatchNorm skew)
         self.gnn_layers = nn.ModuleList()
-        self.batch_norms = nn.ModuleList()
+        self.layer_norms = nn.ModuleList()
 
         for i in range(num_gnn_layers):
             in_dim = input_dim if i == 0 else hidden_dim
@@ -113,28 +106,25 @@ class GNNFeaturesExtractor(BaseFeaturesExtractor):
             else:
                 raise ValueError(f"Unknown GNN type: {gnn_type}")
 
-            self.batch_norms.append(nn.BatchNorm1d(out_dim))
+            self.layer_norms.append(nn.LayerNorm(out_dim))
 
-        # Global context processing
-        # Global dims: 3 (vnf) + 3 (sfc) + 1 (progress) = 7
-        global_input_dim = 7
+        # Global context processing: 3 (vnf) + 3 (sfc) + 1 (progress) = 7
         self.global_mlp = nn.Sequential(
-            nn.Linear(global_input_dim, 64),
+            nn.Linear(7, 64),
             nn.ReLU(),
             nn.Dropout(dropout),
             nn.Linear(64, 64),
             nn.ReLU(),
         )
 
-        # Attention-based node aggregation (instead of simple mean pooling)
+        # Attention-based node aggregation
         self.attention_weights = nn.Sequential(
             nn.Linear(hidden_dim, 64),
             nn.Tanh(),
             nn.Linear(64, 1),
         )
 
-        # Fusion layer
-        # Input: Aggregated node embeddings (hidden_dim) + Global embeddings (64)
+        # Fusion: aggregated node embeddings (hidden_dim) + global embeddings (64)
         fusion_input_dim = hidden_dim + 64
         self.fusion = nn.Sequential(
             nn.Linear(fusion_input_dim, features_dim),
@@ -144,47 +134,8 @@ class GNNFeaturesExtractor(BaseFeaturesExtractor):
             nn.ReLU(),
         )
 
-    def _parse_observation(
-        self, observations: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """
-        Parse the flattened observation into components.
-
-        Args:
-            observations: Flattened observations (batch_size, obs_dim)
-
-        Returns:
-            Tuple of (node_features, global_context, placement_mask)
-        """
-        batch_size = observations.shape[0]
-        N = self.num_nodes
-        num_feats = self.node_feat_dim
-
-        # 1. Extract Node Features [0 : N*6]
-        node_feats_flat = observations[:, : N * num_feats]
-        node_feats = node_feats_flat.view(batch_size, N, num_feats)
-
-        # 2. Extract Global Context [N*6 : N*6 + 7]
-        global_context_start = N * num_feats
-        global_context_end = global_context_start + 7
-        global_context = observations[:, global_context_start:global_context_end]
-
-        # 3. Extract Placement Mask [N*6 + 7 : ]
-        placement_mask = observations[:, global_context_end:]
-        placement_mask = placement_mask.view(batch_size, N, 1)
-
-        return node_feats, global_context, placement_mask
-
     def _get_edge_index(self, device: torch.device) -> torch.Tensor:
-        """
-        Get the current edge index, either from the getter or the buffer.
-
-        Args:
-            device: Device to place the tensor on
-
-        Returns:
-            Edge index tensor (2, num_edges)
-        """
+        """Get current edge index from edge_getter."""
         if self.edge_getter is not None:
             try:
                 edge_index = self.edge_getter()
@@ -193,177 +144,99 @@ class GNNFeaturesExtractor(BaseFeaturesExtractor):
                 return edge_index
             except Exception:
                 pass
+        # Fallback: no edges (isolated nodes)
+        return torch.zeros((2, 0), dtype=torch.long, device=device)
 
-        return self.edge_index
-
-    def forward(self, observations: torch.Tensor) -> torch.Tensor:
+    def forward(self, observations: Dict[str, torch.Tensor]) -> torch.Tensor:
         """
         Forward pass through the GNN feature extractor.
 
         Args:
-            observations: Flattened observations (batch_size, obs_dim)
+            observations: Dict with keys:
+                - node_features:  (batch, max_nodes, 6)
+                - global_context: (batch, 7)
+                - placement_mask: (batch, max_nodes)
+                - node_mask:      (batch, max_nodes)
 
         Returns:
-            Feature embeddings (batch_size, features_dim)
+            Feature embeddings (batch, features_dim)
         """
-        batch_size = observations.shape[0]
-        device = observations.device
+        device = observations["node_features"].device
+        batch_size = observations["node_features"].shape[0]
 
-        # Parse observation
-        node_feats, global_context, placement_mask = self._parse_observation(
-            observations
-        )
+        node_feats = observations["node_features"]  # (B, M, 6)
+        global_context = observations["global_context"]  # (B, 7)
+        placement_mask = observations["placement_mask"]  # (B, M)
+        node_mask = observations["node_mask"]  # (B, M)
 
-        # Combine node features with placement mask -> (batch_size, N, node_feat_dim + 1)
-        x = torch.cat([node_feats, placement_mask], dim=2)
+        # Determine N_real from node_mask (same for all batch items within a run)
+        N_real = int(node_mask[0].sum().item())
+        if N_real == 0:
+            # Edge case: no real nodes — return zeros
+            global_emb = self.global_mlp(global_context)
+            zeros = torch.zeros(batch_size, self.hidden_dim, device=device)
+            combined = torch.cat([zeros, global_emb], dim=1)
+            return self.fusion(combined)
 
-        # Get edge index
+        # Slice to real nodes only — no GNN compute on padding
+        node_feats_real = node_feats[:, :N_real, :]  # (B, N_real, 6)
+        placement_real = placement_mask[:, :N_real].unsqueeze(2)  # (B, N_real, 1)
+
+        # Combine node features with placement mask → (B, N_real, 7)
+        x = torch.cat([node_feats_real, placement_real], dim=2)
+
+        # Get edge index (for real nodes, indices are in [0, N_real))
         edge_index = self._get_edge_index(device)
 
-        # Process each sample in the batch through GNN
-        # We need to create a batched graph for PyG
+        # Build PyG batched graph
         batch_node_features = []
         batch_list = []
 
         for b in range(batch_size):
-            # Node features for this sample: (N, input_dim)
-            node_feat_b = x[b]  # (N, input_dim)
-            batch_node_features.append(node_feat_b)
-            batch_list.append(
-                torch.full((self.num_nodes,), b, dtype=torch.long, device=device)
-            )
+            batch_node_features.append(x[b])  # (N_real, input_dim)
+            batch_list.append(torch.full((N_real,), b, dtype=torch.long, device=device))
 
-        # Stack all node features: (batch_size * N, input_dim)
+        # Stack: (batch_size * N_real, input_dim)
         x_batched = torch.cat(batch_node_features, dim=0)
         batch_indices = torch.cat(batch_list, dim=0)
 
-        # Expand edge index for the batch
-        # For PyG batching, we need to offset node indices
+        # Expand edge index for the batch (offset node indices per sample)
         edge_indices_list = []
         for b in range(batch_size):
-            offset = b * self.num_nodes
+            offset = b * N_real
             edge_indices_list.append(edge_index + offset)
         edge_index_batched = torch.cat(edge_indices_list, dim=1)
 
-        # Apply GNN layers
+        # Apply GNN layers with LayerNorm
         h = x_batched
-        for i, (gnn_layer, bn) in enumerate(zip(self.gnn_layers, self.batch_norms)):
+        for i, (gnn_layer, ln) in enumerate(zip(self.gnn_layers, self.layer_norms)):
             h = gnn_layer(h, edge_index_batched)
-            h = bn(h)
+            h = ln(h)
             h = F.relu(h)
             if i < len(self.gnn_layers) - 1:
                 h = F.dropout(h, p=self.dropout, training=self.training)
 
-        # Attention-weighted aggregation
-        # h shape: (batch_size * N, hidden_dim)
-        attention_scores = self.attention_weights(h)  # (batch_size * N, 1)
-        attention_scores = attention_scores.view(batch_size, self.num_nodes, 1)
+        # Reshape back: (B, N_real, hidden_dim)
+        h_reshaped = h.view(batch_size, N_real, self.hidden_dim)
 
-        # Apply softmax across nodes for each batch
-        attention_weights = F.softmax(attention_scores, dim=1)  # (batch_size, N, 1)
+        # Attention-weighted aggregation over real nodes
+        attention_scores = self.attention_weights(h)  # (B * N_real, 1)
+        attention_scores = attention_scores.view(batch_size, N_real, 1)
 
-        # Reshape h back to (batch_size, N, hidden_dim)
-        h_reshaped = h.view(batch_size, self.num_nodes, self.hidden_dim)
+        # Softmax across real nodes only (no padding in this slice)
+        attention_w = F.softmax(attention_scores, dim=1)  # (B, N_real, 1)
 
-        # Weighted sum: (batch_size, hidden_dim)
-        graph_embedding = (attention_weights * h_reshaped).sum(dim=1)
+        # Weighted sum → graph embedding: (B, hidden_dim)
+        graph_embedding = (attention_w * h_reshaped).sum(dim=1)
 
         # Process global context
-        global_embedding = self.global_mlp(global_context)  # (batch_size, 64)
+        global_embedding = self.global_mlp(global_context)  # (B, 64)
 
         # Fuse graph and global embeddings
         combined = torch.cat([graph_embedding, global_embedding], dim=1)
-        output = self.fusion(combined)  # (batch_size, features_dim)
+        output = self.fusion(combined)  # (B, features_dim)
 
         return output
-
-
-class GNNActorCriticPolicy(ActorCriticPolicy):
-    """
-    Custom Actor-Critic Policy using GNN for SFC Placement.
-
-    This policy uses a GNN-based feature extractor to process the substrate
-    network topology and make informed VNF placement decisions.
-    """
-
-    def __init__(
-        self,
-        observation_space: gym.spaces.Space,
-        action_space: gym.spaces.Space,
-        lr_schedule: Schedule,
-        # GNN specific parameters
-        num_nodes: int = 200,
-        edge_index: Optional[torch.Tensor] = None,
-        node_feat_dim: int = 6,
-        hidden_dim: int = 64,
-        gnn_features_dim: int = 256,
-        gnn_type: str = "gcn",
-        num_gnn_layers: int = 3,
-        edge_getter: Optional[Callable] = None,
-        dropout: float = 0.1,
-        # Standard policy parameters
-        net_arch: Optional[Union[List[int], Dict[str, List[int]]]] = None,
-        activation_fn: Type[nn.Module] = nn.ReLU,
-        ortho_init: bool = True,
-        use_sde: bool = False,
-        log_std_init: float = 0.0,
-        full_std: bool = True,
-        use_expln: bool = False,
-        squash_output: bool = False,
-        features_extractor_class: Type[BaseFeaturesExtractor] = GNNFeaturesExtractor,
-        features_extractor_kwargs: Optional[Dict[str, Any]] = None,
-        share_features_extractor: bool = True,
-        normalize_images: bool = True,
-        optimizer_class: Type[torch.optim.Optimizer] = torch.optim.Adam,
-        optimizer_kwargs: Optional[Dict[str, Any]] = None,
-    ):
-        """
-        Initialize the GNN Actor-Critic Policy.
-        """
-        # Prepare features extractor kwargs
-        if features_extractor_kwargs is None:
-            features_extractor_kwargs = {}
-
-        # Add GNN-specific parameters
-        features_extractor_kwargs.update(
-            {
-                "num_nodes": num_nodes,
-                "edge_index": edge_index
-                if edge_index is not None
-                else torch.zeros((2, 0), dtype=torch.long),
-                "node_feat_dim": node_feat_dim,
-                "hidden_dim": hidden_dim,
-                "features_dim": gnn_features_dim,
-                "gnn_type": gnn_type,
-                "num_gnn_layers": num_gnn_layers,
-                "edge_getter": edge_getter,
-                "dropout": dropout,
-            }
-        )
-
-        # Default network architecture for actor and critic
-        if net_arch is None:
-            net_arch = [128, 128]
-
-        super().__init__(
-            observation_space=observation_space,
-            action_space=action_space,
-            lr_schedule=lr_schedule,
-            net_arch=net_arch,
-            activation_fn=activation_fn,
-            ortho_init=ortho_init,
-            use_sde=use_sde,
-            log_std_init=log_std_init,
-            full_std=full_std,
-            use_expln=use_expln,
-            squash_output=squash_output,
-            features_extractor_class=features_extractor_class,
-            features_extractor_kwargs=features_extractor_kwargs,
-            share_features_extractor=share_features_extractor,
-            normalize_images=normalize_images,
-            optimizer_class=optimizer_class,
-            optimizer_kwargs=optimizer_kwargs,
-        )
 
 
 def get_edge_index_from_adj(adjacency_matrix: np.ndarray) -> torch.Tensor:

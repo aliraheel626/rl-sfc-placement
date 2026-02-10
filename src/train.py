@@ -17,11 +17,11 @@ import argparse
 import shutil
 from pathlib import Path
 
-from sb3_contrib import MaskablePPO
 from src.requests import load_config
 from src.model import (
     create_masked_env,
     create_maskable_ppo,
+    load_model,
     AcceptanceRatioCallback,
     BestModelCallback,
     LatencyViolationCallback,
@@ -111,13 +111,8 @@ def train(
         # Start with a dummy learning rate, it will be overwritten by the saved model's schedule
         # unless custom_objects is used, but usually we want to continue with the saved state.
         # However, we must ensure the env is attached.
-        model = MaskablePPO.load(
-            load_path,
-            env=env,
-            tensorboard_log=log_path,
-            # We can optionally update hyperparameters here if needed using custom_objects
-            # or kwargs, but simply loading is usually what's expected for resuming.
-        )
+        model = load_model(load_path, env=env)
+        model.tensorboard_log = log_path
         reset_timesteps = False
     else:
         print("Creating MaskablePPO model...")

@@ -2,7 +2,8 @@
 
 # Substrate Network Configuration
 substrate:
-  num_nodes: 100
+  num_nodes: 300
+  max_nodes: 1000 # Fixed upper bound for obs/action space shapes
   mesh_connectivity: 0.25 # Moderate connectivity
 
   # Node resource ranges (adequate for individual placements)

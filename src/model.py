@@ -12,12 +12,10 @@ import matplotlib.pyplot as plt
 from sb3_contrib import MaskablePPO
 from sb3_contrib.common.wrappers import ActionMasker
 from stable_baselines3.common.callbacks import BaseCallback
-import networkx as nx
 
 from src.environment import SFCPlacementEnv
 from src.gnn_policy import (
     GNNFeaturesExtractor,
-    get_edge_index_from_adj,
     create_edge_getter,
 )
 
@@ -87,45 +85,35 @@ def create_maskable_ppo(
     policy_kwargs = kwargs.pop("policy_kwargs", {})
 
     if use_gnn:
-        # Extract graph from environment
-        # ActionMasker -> SFCPlacementEnv
+        # Create edge getter for dynamic topology support
+        edge_getter = create_edge_getter(env)
+
+        policy_kwargs["features_extractor_class"] = GNNFeaturesExtractor
+        policy_kwargs["features_extractor_kwargs"] = {
+            "edge_getter": edge_getter,
+            "node_feat_dim": 6,  # [RAM, CPU, Storage, Security, AvgBW, DistToPrev]
+            "hidden_dim": gnn_hidden_dim,
+            "features_dim": gnn_features_dim,
+            "gnn_type": gnn_type,
+            "num_gnn_layers": num_gnn_layers,
+            "dropout": 0.1,
+        }
+
+        # Smaller MLP on top of GNN features
+        if "net_arch" not in policy_kwargs:
+            policy_kwargs["net_arch"] = [128, 128]
+
         base_env = env.unwrapped
+        print(
+            f"Using PyG GNN Feature Extractor ({gnn_type.upper()}) "
+            f"with {base_env.num_nodes} real nodes (max_nodes={base_env.max_nodes})."
+        )
 
-        if hasattr(base_env, "substrate") and hasattr(base_env.substrate, "graph"):
-            graph = base_env.substrate.graph
-            adj = nx.to_numpy_array(graph)
-
-            # Convert adjacency matrix to edge index format for PyTorch Geometric
-            edge_index = get_edge_index_from_adj(adj)
-
-            # Create edge getter for dynamic topology support
-            edge_getter = create_edge_getter(env)
-
-            policy_kwargs["features_extractor_class"] = GNNFeaturesExtractor
-            policy_kwargs["features_extractor_kwargs"] = {
-                "num_nodes": base_env.num_nodes,
-                "edge_index": edge_index,
-                "node_feat_dim": 6,  # [RAM, CPU, Storage, Security, AvgBW, DistToPrev]
-                "hidden_dim": gnn_hidden_dim,
-                "features_dim": gnn_features_dim,
-                "gnn_type": gnn_type,
-                "num_gnn_layers": num_gnn_layers,
-                "edge_getter": edge_getter,
-                "dropout": 0.1,
-            }
-
-            # Smaller MLP on top of GNN features
-            if "net_arch" not in policy_kwargs:
-                policy_kwargs["net_arch"] = [128, 128]
-
-            print(
-                f"Using PyG GNN Feature Extractor ({gnn_type.upper()}) with {base_env.num_nodes} nodes, {edge_index.shape[1]} edges."
-            )
-        else:
-            print("Warning: Could not extract graph for GNN. Falling back to MLP.")
+    # Use MultiInputPolicy for Dict observation space
+    policy_name = "MultiInputPolicy"
 
     model = MaskablePPO(
-        "MlpPolicy",
+        policy_name,
         env,
         learning_rate=learning_rate,
         n_steps=n_steps,
@@ -145,6 +133,9 @@ def load_model(path: str, env: Optional[ActionMasker] = None) -> MaskablePPO:
     """
     Load a trained MaskablePPO model.
 
+    Handles GNN models by injecting a fresh edge_getter from the new env
+    (the saved edge_getter closure is not portable across environments).
+
     Args:
         path: Path to the saved model
         env: Optional environment to attach to the model
@@ -152,7 +143,36 @@ def load_model(path: str, env: Optional[ActionMasker] = None) -> MaskablePPO:
     Returns:
         Loaded MaskablePPO model
     """
-    return MaskablePPO.load(path, env=env)
+    import io
+    import pickle
+    import zipfile
+
+    custom_objects = {}
+
+    if env is not None:
+        # Peek at saved data to check if GNN was used
+        try:
+            model_path = path if path.endswith(".zip") else path + ".zip"
+            with zipfile.ZipFile(model_path, "r") as zf:
+                if "data" in zf.namelist():
+                    with zf.open("data") as f:
+                        data = pickle.load(io.BytesIO(f.read()))
+                    policy_kwargs = data.get("policy_kwargs", {})
+                    extractor_kwargs = policy_kwargs.get(
+                        "features_extractor_kwargs", {}
+                    )
+                    if "edge_getter" in extractor_kwargs:
+                        # Inject fresh edge_getter for the new env
+                        edge_getter = create_edge_getter(env)
+                        extractor_kwargs["edge_getter"] = edge_getter
+                        policy_kwargs["features_extractor_kwargs"] = extractor_kwargs
+                        custom_objects["policy_kwargs"] = policy_kwargs
+        except Exception:
+            pass  # Not a GNN model or can't peek -- load normally
+
+    return MaskablePPO.load(
+        path, env=env, custom_objects=custom_objects if custom_objects else None
+    )
 
 
 class AcceptanceRatioCallback(BaseCallback):

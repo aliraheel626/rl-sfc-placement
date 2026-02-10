@@ -28,22 +28,19 @@ class SFCPlacementEnv(gym.Env):
     placement, resources are allocated. When all VNFs are placed, the
     latency constraint is validated.
 
-    Observation Space:
-        - Substrate node resources: (num_nodes, 4) - normalized [RAM, CPU, Storage, Security]
-        - Current VNF requirements: (3,) - normalized [RAM, CPU, Storage]
-        - SFC constraints: (3,) - [min_security, max_latency, min_bandwidth] (normalized)
-        - Current VNF index: (1,) - progress indicator
-        - Placement mask: (num_nodes,) - which nodes have been used
+    Observation Space (Dict):
+        - node_features: (max_nodes, 6) - [RAM, CPU, Storage, Security, AvgBW, DistToPrev]
+        - global_context: (7,) - [VNF_RAM, VNF_CPU, VNF_Storage, SFC_Sec, SFC_Lat, SFC_BW, VNF_Progress]
+        - placement_mask: (max_nodes,) - which nodes are used in current SFC
+        - node_mask: (max_nodes,) - 1.0 for real nodes, 0.0 for padding
 
     Action Space:
-        - Discrete(num_nodes): Select a substrate node for the current VNF
-        - Masked to prevent invalid placements
+        - Discrete(max_nodes): Select a substrate node for the current VNF
+        - Masked to prevent invalid placements (padded nodes always masked)
 
     Reward:
         - +acceptance_reward for successfully placing entire SFC
         - +rejection_penalty (negative) for failed placement
-        - +0.5 per step for successful VNF placement (dense reward)
-        - -0.1 * (normalized_latency) per step to encourage locality
     """
 
     metadata = {"render_modes": ["human"]}
@@ -114,24 +111,24 @@ class SFCPlacementEnv(gym.Env):
 
         # Define action and observation spaces
         self.num_nodes = self.substrate.num_nodes
-        self.action_space = spaces.Discrete(self.num_nodes)
-
-        # Observation space components
-        # 1. Node resources: (num_nodes, 6) -> [RAM, CPU, Storage, Security, AvgBW, DistToPrev]
-        # 2. Current VNF: (3,)
-        # 3. SFC constraints: (3,)
-        # 4. VNF index: (1,)
-        # 5. Placement mask: (num_nodes,)
-        obs_dim = (
-            self.num_nodes * 6  # Node resources + Connectivity + Distance
-            + 3  # Current VNF requirements
-            + 3  # SFC constraints
-            + 1  # Current VNF index (normalized)
-            + self.num_nodes  # Placement mask
+        self.max_nodes = self.config["substrate"].get("max_nodes", self.num_nodes)
+        assert self.num_nodes <= self.max_nodes, (
+            f"num_nodes ({self.num_nodes}) must be <= max_nodes ({self.max_nodes})"
         )
+        self.action_space = spaces.Discrete(self.max_nodes)
 
-        self.observation_space = spaces.Box(
-            low=0.0, high=1.0, shape=(obs_dim,), dtype=np.float32
+        # Dict observation space — shapes are fixed at max_nodes for topology agnosticism
+        self.observation_space = spaces.Dict(
+            {
+                "node_features": spaces.Box(
+                    0.0, 1.0, (self.max_nodes, 6), dtype=np.float32
+                ),
+                "global_context": spaces.Box(0.0, 1.0, (7,), dtype=np.float32),
+                "placement_mask": spaces.Box(
+                    0.0, 1.0, (self.max_nodes,), dtype=np.float32
+                ),
+                "node_mask": spaces.Box(0.0, 1.0, (self.max_nodes,), dtype=np.float32),
+            }
         )
 
         # Max VNFs for normalization
@@ -361,9 +358,12 @@ class SFCPlacementEnv(gym.Env):
                 nodes_in_use / total_nodes
             )
 
-    def _get_observation(self) -> np.ndarray:
-        """Construct the observation vector."""
-        # 1. Node Feature Matrix Construction
+    def _get_observation(self) -> dict[str, np.ndarray]:
+        """Construct the Dict observation with max_nodes padding."""
+        N = self.num_nodes
+        M = self.max_nodes
+
+        # 1. Node Feature Matrix: (num_nodes, 6) → padded to (max_nodes, 6)
         # a. Basic Resources: (num_nodes, 4) [RAM, CPU, Storage, Security]
         base_resources = self.substrate.get_all_node_resources()
 
@@ -373,70 +373,61 @@ class SFCPlacementEnv(gym.Env):
         # c. Distance from previous node: (num_nodes, 1)
         if self.current_placement:
             prev_node = self.current_placement[-1]
-
-            # Vectorized retrieval (O(1) with matrix)
             raw_distances = self.substrate.get_all_path_latencies(prev_node)
-
-            # Handle unreachable nodes (inf)
-            # Replace inf with penalty (max_latency * 2)
             raw_distances = np.where(
                 np.isinf(raw_distances), self.max_latency * 2, raw_distances
             )
-
-            # Normalize
             distances = np.minimum(raw_distances / self.max_latency, 1.0).reshape(-1, 1)
         else:
-            distances = np.zeros((self.num_nodes, 1), dtype=np.float32)
+            distances = np.zeros((N, 1), dtype=np.float32)
 
-        # Combine node features: (num_nodes, 6)
-        node_features = np.concatenate(
+        # Combine real node features: (num_nodes, 6)
+        real_node_features = np.concatenate(
             [base_resources, connectivity, distances], axis=1
         )
-        node_features_flat = node_features.flatten()
 
-        # 2. Current VNF requirements (normalized)
+        # Pad to (max_nodes, 6)
+        node_features = np.zeros((M, 6), dtype=np.float32)
+        node_features[:N] = np.clip(real_node_features, 0.0, 1.0)
+
+        # 2. Global context: (7,)
         if self.current_vnf_index < self.current_request.num_vnfs:
             current_vnf = self.current_request.vnfs[self.current_vnf_index]
-            vnf_obs = np.array(
-                [
-                    current_vnf.ram / self.max_vnf_ram,
-                    current_vnf.cpu / self.max_vnf_cpu,
-                    current_vnf.storage / self.max_vnf_storage,
-                ],
-                dtype=np.float32,
-            )
+            vnf_obs = [
+                current_vnf.ram / self.max_vnf_ram,
+                current_vnf.cpu / self.max_vnf_cpu,
+                current_vnf.storage / self.max_vnf_storage,
+            ]
         else:
-            vnf_obs = np.zeros(3, dtype=np.float32)
+            vnf_obs = [0.0, 0.0, 0.0]
 
-        # 3. SFC constraints (normalized)
-        sfc_constraints = np.array(
-            [
+        global_context = np.array(
+            vnf_obs
+            + [
                 self.current_request.min_security_score / self.max_security,
                 self.current_request.max_latency / self.max_latency,
                 self.current_request.min_bandwidth / self.max_bandwidth,
+                self.current_vnf_index / self.max_vnfs,
             ],
             dtype=np.float32,
         )
+        global_context = np.clip(global_context, 0.0, 1.0)
 
-        # 4. Current VNF index (normalized)
-        vnf_progress = np.array(
-            [self.current_vnf_index / self.max_vnfs], dtype=np.float32
-        )
-
-        # 5. Placement mask (which nodes are currently used in this SFC)
-        placement_mask = np.zeros(self.num_nodes, dtype=np.float32)
+        # 3. Placement mask: (max_nodes,)
+        placement_mask = np.zeros(M, dtype=np.float32)
         for node_id in self.current_placement:
             placement_mask[node_id] = 1.0
 
-        # Concatenate all components
-        observation = np.concatenate(
-            [node_features_flat, vnf_obs, sfc_constraints, vnf_progress, placement_mask]
-        ).astype(np.float32)
+        # 4. Node mask: 1.0 for real nodes, 0.0 for padding
+        node_mask = np.zeros(M, dtype=np.float32)
+        node_mask[:N] = 1.0
 
-        # Clip to [0, 1] range
-        observation = np.clip(observation, 0.0, 1.0)
-
-        return observation
+        return {
+            "node_features": node_features,
+            "global_context": global_context,
+            "placement_mask": placement_mask,
+            "node_mask": node_mask,
+        }
 
     def _get_info(self) -> dict:
         """Get additional info about the current state."""
@@ -501,7 +492,7 @@ class SFCPlacementEnv(gym.Env):
     def _is_valid_action(self, action: int) -> bool:
         """Check if an action is valid for the current state."""
         if action < 0 or action >= self.num_nodes:
-            return False
+            return False  # Padded nodes or out-of-range
 
         current_vnf = self.current_request.vnfs[self.current_vnf_index]
 
@@ -547,7 +538,8 @@ class SFCPlacementEnv(gym.Env):
 
         This is used by MaskablePPO to prevent selecting invalid actions.
         """
-        mask = np.zeros(self.num_nodes, dtype=bool)
+        # Mask is max_nodes long — padded positions are always False
+        mask = np.zeros(self.max_nodes, dtype=bool)
 
         if self.current_request is None:
             return mask
@@ -558,7 +550,7 @@ class SFCPlacementEnv(gym.Env):
         current_vnf = self.current_request.vnfs[self.current_vnf_index]
         min_security = self.current_request.min_security_score
 
-        # 1. Vectorized Resource Feasibility Check (O(1) relative to Python loop)
+        # 1. Vectorized Resource Feasibility Check (only real nodes)
         feasible_mask = self.substrate.get_feasible_nodes(current_vnf, min_security)
 
         # 2. Exclude hard-isolated nodes (nodes reserved by other SFCs)
@@ -575,7 +567,6 @@ class SFCPlacementEnv(gym.Env):
 
         # Calculate latency budget for remaining VNFs
         remaining_vnfs = self.current_request.num_vnfs - self.current_vnf_index - 1
-        # Optimistic estimate: minimum possible latency for remaining hops
         min_remaining_latency = remaining_vnfs * self.min_link_latency
         latency_budget = (
             self.current_request.max_latency
@@ -588,21 +579,18 @@ class SFCPlacementEnv(gym.Env):
             prev_node = self.current_placement[-1]
             min_bw = self.current_request.min_bandwidth
 
-            # Get indices of feasible nodes
             feasible_indices = np.where(feasible_mask)[0]
 
             for node_id in feasible_indices:
-                # Check bandwidth
                 if not self.substrate.check_bandwidth(prev_node, node_id, min_bw):
                     continue
 
-                # Check if this node would violate latency budget
                 hop_latency = self.substrate.get_path_latency(prev_node, node_id)
                 if hop_latency <= latency_budget:
                     mask[node_id] = True
         else:
             # First VNF: no bandwidth/latency constraints yet
-            mask = feasible_mask
+            mask[: self.num_nodes] = feasible_mask
 
         return mask
 

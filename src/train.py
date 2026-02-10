@@ -8,6 +8,11 @@ This script handles the training loop for the RL agent, including:
 - Model saving
 """
 
+# Use non-interactive backend for thread-safe plotting (must be before other imports)
+import matplotlib
+
+matplotlib.use("Agg")
+
 import argparse
 import shutil
 from pathlib import Path

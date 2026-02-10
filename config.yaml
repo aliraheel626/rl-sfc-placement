@@ -2,72 +2,71 @@
 
 # Substrate Network Configuration
 substrate:
-  num_nodes: 200
-  mesh_connectivity: 0.3 # Probability of edge between any two nodes
+  num_nodes: 100
+  mesh_connectivity: 0.25 # Moderate connectivity
 
-  # Node resource ranges (uniform random)
+  # Node resource ranges (adequate for individual placements)
   resources:
     ram:
       min: 8
-      max: 64
+      max: 48
     cpu:
       min: 4
-      max: 32
+      max: 24
     storage:
       min: 100
-      max: 1000
+      max: 600
     security_score:
       min: 1
       max: 5
 
-  # Link attribute ranges
+  # Link attribute ranges (sufficient bandwidth)
   links:
     bandwidth:
       min: 100
-      max: 1000
+      max: 500
     latency:
-      min: 1
-      max: 50
+      min: 5
+      max: 60
 
 # SFC Request Configuration
 sfc:
   # Number of VNFs per chain
   vnf_count:
-    min: 2
-    max: 6
+    min: 3
+    max: 7
 
-  # VNF resource demands (should be smaller than substrate)
+  # VNF resource demands (reasonable - fits on nodes individually)
   vnf_resources:
     ram:
-      min: 1
+      min: 2
       max: 16
     cpu:
       min: 1
       max: 8
     storage:
-      min: 10
-      max: 200
+      min: 20
+      max: 150
 
-  # SFC-level constraints
+  # SFC-level constraints (achievable but require good placement)
   constraints:
     security_score:
       min: 1
-      max: 5
+      max: 4
     max_latency:
-      min: 50
-      max: 200
+      min: 40
+      max: 150
     min_bandwidth:
       min: 50
-      max: 500
+      max: 250
 
-  # Time to live range
+  # Time to live range (long TTLs create congestion over time)
   ttl:
-    min: 10
-    max: 100
+    min: 150
+    max: 500
 
-  # Probability of generating a hard isolation requirement (0.0 to 1.0)
-  # Hard isolation prevents SFC from sharing substrate nodes with other SFCs
-  hard_isolation_probability: 0.1
+  # Moderate isolation probability
+  hard_isolation_probability: 0.25
 
 # Training Configuration
 training:
@@ -77,8 +76,8 @@ training:
   batch_size: 256
   n_epochs: 10
   gamma: 0.99
-  max_requests_per_episode: 250 # Number of SFC requests before episode ends and network resets
-  randomize_topology: true # Generate new random graph for each episode
+  max_requests_per_episode: 600 # Enough to fill network gradually
+  randomize_topology: true
 
 # Reward Configuration
 rewards:

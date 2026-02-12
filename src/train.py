@@ -39,7 +39,6 @@ def train(
     save_freq: int = 50000,
     seed: int = 42,
     load_path: str = None,
-    use_gnn: bool = False,
     gnn_type: str = "gcn",
     gnn_hidden_dim: int = 64,
     gnn_features_dim: int = 256,
@@ -57,7 +56,6 @@ def train(
         save_freq: Frequency (in steps) to save the model
         seed: Random seed for reproducibility
         load_path: Path to a checkpoint to load and continue training from
-        use_gnn: Whether to use GNN feature extractor (PyTorch Geometric)
         gnn_type: Type of GNN layer ("gcn", "gat", "sage")
         gnn_hidden_dim: Hidden dimension for GNN layers
         gnn_features_dim: Output dimension of GNN feature extractor
@@ -83,7 +81,7 @@ def train(
     Path(log_path).mkdir(parents=True, exist_ok=True)
 
     print("=" * 50)
-    print("SFC Placement Training with Maskable PPO")
+    print("SFC Placement Training with Maskable PPO (GNN compulsory)")
     print("=" * 50)
     print(f"Config: {config_path}")
     print(f"Total Timesteps: {total_timesteps}")
@@ -91,11 +89,10 @@ def train(
     print(f"Log path: {log_path}")
     print(f"Plot frequency: every {plot_freq} steps")
     print(f"Save frequency: every {save_freq} steps")
-    if use_gnn:
-        print(f"GNN Type: {gnn_type.upper()}")
-        print(
-            f"GNN Layers: {num_gnn_layers}, Hidden: {gnn_hidden_dim}, Features: {gnn_features_dim}"
-        )
+    print(f"GNN Type: {gnn_type.upper()}")
+    print(
+        f"GNN Layers: {num_gnn_layers}, Hidden: {gnn_hidden_dim}, Features: {gnn_features_dim}"
+    )
     if load_path:
         print(f"Resuming training from: {load_path}")
     print("=" * 50)
@@ -127,7 +124,6 @@ def train(
             verbose=1,
             tensorboard_log=log_path,
             seed=seed,
-            use_gnn=use_gnn,
             gnn_type=gnn_type,
             gnn_hidden_dim=gnn_hidden_dim,
             gnn_features_dim=gnn_features_dim,
@@ -247,12 +243,8 @@ def main():
     parser.add_argument(
         "--resume",
         nargs="?",
-        help="Resume training. Defaults to save_path if no path provided.",
-    )
-    parser.add_argument(
-        "--gnn",
-        action="store_true",
-        help="Use GNN Feature Extractor (PyTorch Geometric)",
+        const="DEFAULT",
+        help="Resume training. Defaults to last checkpoint if no path provided.",
     )
     parser.add_argument(
         "--gnn-type",
@@ -305,7 +297,6 @@ def main():
         plot_freq=args.plot_freq,
         seed=args.seed,
         load_path=load_path,
-        use_gnn=args.gnn,
         gnn_type=args.gnn_type,
         gnn_hidden_dim=args.gnn_hidden_dim,
         gnn_features_dim=args.gnn_features_dim,

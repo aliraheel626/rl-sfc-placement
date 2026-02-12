@@ -52,7 +52,6 @@ def create_maskable_ppo(
     gamma: float = 0.99,
     verbose: int = 1,
     tensorboard_log: Optional[str] = None,
-    use_gnn: bool = False,
     gnn_type: str = "gcn",  # Options: "gcn", "gat", "sage"
     gnn_hidden_dim: int = 64,
     gnn_features_dim: int = 256,
@@ -60,7 +59,7 @@ def create_maskable_ppo(
     **kwargs,
 ) -> MaskablePPO:
     """
-    Create a MaskablePPO agent configured for SFC placement.
+    Create a MaskablePPO agent configured for SFC placement with GNN.
 
     Args:
         env: ActionMasker-wrapped SFC placement environment
@@ -71,7 +70,6 @@ def create_maskable_ppo(
         gamma: Discount factor
         verbose: Verbosity level
         tensorboard_log: Path for TensorBoard logs
-        use_gnn: Whether to use GNN feature extractor (PyTorch Geometric)
         gnn_type: Type of GNN layer ("gcn", "gat", "sage")
         gnn_hidden_dim: Hidden dimension for GNN layers
         gnn_features_dim: Output dimension of GNN feature extractor
@@ -79,35 +77,34 @@ def create_maskable_ppo(
         **kwargs: Additional arguments passed to MaskablePPO
 
     Returns:
-        Configured MaskablePPO model
+        Configured MaskablePPO model with GNN
     """
 
     policy_kwargs = kwargs.pop("policy_kwargs", {})
 
-    if use_gnn:
-        # Create edge getter for dynamic topology support
-        edge_getter = create_edge_getter(env)
+    # Create edge getter for dynamic topology support
+    edge_getter = create_edge_getter(env)
 
-        policy_kwargs["features_extractor_class"] = GNNFeaturesExtractor
-        policy_kwargs["features_extractor_kwargs"] = {
-            "edge_getter": edge_getter,
-            "node_feat_dim": 6,  # [RAM, CPU, Storage, Security, AvgBW, DistToPrev]
-            "hidden_dim": gnn_hidden_dim,
-            "features_dim": gnn_features_dim,
-            "gnn_type": gnn_type,
-            "num_gnn_layers": num_gnn_layers,
-            "dropout": 0.1,
-        }
+    policy_kwargs["features_extractor_class"] = GNNFeaturesExtractor
+    policy_kwargs["features_extractor_kwargs"] = {
+        "edge_getter": edge_getter,
+        "node_feat_dim": 6,  # [RAM, CPU, Storage, Security, AvgBW, DistToPrev]
+        "hidden_dim": gnn_hidden_dim,
+        "features_dim": gnn_features_dim,
+        "gnn_type": gnn_type,
+        "num_gnn_layers": num_gnn_layers,
+        "dropout": 0.1,
+    }
 
-        # Smaller MLP on top of GNN features
-        if "net_arch" not in policy_kwargs:
-            policy_kwargs["net_arch"] = [128, 128]
+    # Smaller MLP on top of GNN features
+    if "net_arch" not in policy_kwargs:
+        policy_kwargs["net_arch"] = [128, 128]
 
-        base_env = env.unwrapped
-        print(
-            f"Using PyG GNN Feature Extractor ({gnn_type.upper()}) "
-            f"with {base_env.num_nodes} real nodes (max_nodes={base_env.max_nodes})."
-        )
+    base_env = env.unwrapped
+    print(
+        f"Using PyG GNN Feature Extractor ({gnn_type.upper()}) "
+        f"with {base_env.num_nodes} real nodes (max_nodes={base_env.max_nodes})."
+    )
 
     # Use MultiInputPolicy for Dict observation space
     policy_name = "MultiInputPolicy"
@@ -123,6 +120,7 @@ def create_maskable_ppo(
         verbose=verbose,
         tensorboard_log=tensorboard_log,
         policy_kwargs=policy_kwargs,
+        device="auto",  # Use CUDA if available, else CPU
         **kwargs,
     )
 

@@ -51,6 +51,10 @@ class SubstrateNetwork:
         # Maps node_id -> request_id of the SFC that isolated it
         self.hard_isolated_nodes: dict[int, int] = {}
 
+        # Topology version counter — incremented every time the graph changes.
+        # Used by the GNN edge cache to avoid redundant conversions.
+        self.topology_version: int = 0
+
         self._generate_topology()
 
     def _generate_topology(self):
@@ -127,6 +131,9 @@ class SubstrateNetwork:
             self.bandwidth_matrix[v, u] = bw
 
         self._precompute_latencies()
+
+        # Bump topology version so GNN edge cache knows to refresh
+        self.topology_version += 1
 
     def _precompute_latencies(self):
         """Precompute paths and latencies for all pairs of nodes."""

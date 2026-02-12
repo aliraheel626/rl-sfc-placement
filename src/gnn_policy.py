@@ -7,7 +7,7 @@ The GNN processes only real nodes (determined by node_mask), making it
 portable across topologies with different num_nodes (up to max_nodes).
 """
 
-from typing import Callable, Dict
+from typing import Callable, Dict, Optional, Tuple
 
 import gymnasium as gym
 import numpy as np
@@ -134,13 +134,31 @@ class GNNFeaturesExtractor(BaseFeaturesExtractor):
             nn.ReLU(),
         )
 
+        # Edge-index cache: avoids recomputing on every forward pass.
+        # Invalidated when the topology version changes.
+        self._cached_edge_index: Optional[torch.Tensor] = None
+        self._cached_topo_version: int = -1
+
     def _get_edge_index(self, device: torch.device) -> torch.Tensor:
-        """Get current edge index from edge_getter."""
+        """Get current edge index, using cache when topology hasn't changed."""
         if self.edge_getter is not None:
             try:
-                edge_index = self.edge_getter()
+                edge_index, topo_version = self.edge_getter()
+
+                # Return cached tensor if topology hasn't changed
+                if (
+                    self._cached_edge_index is not None
+                    and topo_version == self._cached_topo_version
+                    and self._cached_edge_index.device == device
+                ):
+                    return self._cached_edge_index
+
                 if edge_index.device != device:
                     edge_index = edge_index.to(device)
+
+                # Update cache
+                self._cached_edge_index = edge_index
+                self._cached_topo_version = topo_version
                 return edge_index
             except Exception:
                 pass
@@ -150,6 +168,9 @@ class GNNFeaturesExtractor(BaseFeaturesExtractor):
     def forward(self, observations: Dict[str, torch.Tensor]) -> torch.Tensor:
         """
         Forward pass through the GNN feature extractor.
+
+        Uses vectorized batch construction (no Python for-loops) and cached
+        edge indices for significantly faster PPO updates.
 
         Args:
             observations: Dict with keys:
@@ -188,24 +209,25 @@ class GNNFeaturesExtractor(BaseFeaturesExtractor):
         # Get edge index (for real nodes, indices are in [0, N_real))
         edge_index = self._get_edge_index(device)
 
-        # Build PyG batched graph
-        batch_node_features = []
-        batch_list = []
+        # --- Vectorized batch construction (no Python for-loops) ---
+        # Flatten node features: (B, N_real, input_dim) → (B*N_real, input_dim)
+        x_batched = x.reshape(batch_size * N_real, -1)
 
-        for b in range(batch_size):
-            batch_node_features.append(x[b])  # (N_real, input_dim)
-            batch_list.append(torch.full((N_real,), b, dtype=torch.long, device=device))
+        # Batch indices (for PyG scatter ops if needed)
+        batch_indices = torch.arange(
+            batch_size, device=device
+        ).repeat_interleave(N_real)
 
-        # Stack: (batch_size * N_real, input_dim)
-        x_batched = torch.cat(batch_node_features, dim=0)
-        batch_indices = torch.cat(batch_list, dim=0)
-
-        # Expand edge index for the batch (offset node indices per sample)
-        edge_indices_list = []
-        for b in range(batch_size):
-            offset = b * N_real
-            edge_indices_list.append(edge_index + offset)
-        edge_index_batched = torch.cat(edge_indices_list, dim=1)
+        # Expand edge index for the batch with vectorized offsets
+        # offsets: [0, N_real, 2*N_real, ...] shaped (batch_size, 1)
+        offsets = (
+            torch.arange(batch_size, device=device) * N_real
+        ).unsqueeze(1)  # (B, 1)
+        # Repeat edge_index B times along dim-1, then add per-sample offsets
+        num_edges = edge_index.size(1)
+        edge_index_batched = edge_index.repeat(1, batch_size) + offsets.repeat(
+            1, num_edges
+        ).reshape(1, -1)
 
         # Apply GNN layers with LayerNorm
         h = x_batched
@@ -254,27 +276,51 @@ def get_edge_index_from_adj(adjacency_matrix: np.ndarray) -> torch.Tensor:
     return edge_index
 
 
-def create_edge_getter(env) -> Callable[[], torch.Tensor]:
+def get_edge_index_from_graph_fast(graph) -> torch.Tensor:
     """
-    Create a callable that returns the current edge index from the environment.
+    Convert a NetworkX graph to edge index using the edge list directly.
 
-    This is useful for dynamic topologies where the graph changes between episodes.
+    This is O(E) instead of O(N^2) — much faster for sparse graphs.
+
+    Args:
+        graph: NetworkX Graph
+
+    Returns:
+        Edge index tensor (2, 2*num_edges) with both directions
+    """
+    edges = list(graph.edges())
+    if not edges:
+        return torch.zeros((2, 0), dtype=torch.long)
+
+    # Build undirected edge index: both (u,v) and (v,u)
+    src = [u for u, v in edges] + [v for u, v in edges]
+    dst = [v for u, v in edges] + [u for u, v in edges]
+    edge_index = torch.tensor([src, dst], dtype=torch.long)
+    return edge_index
+
+
+def create_edge_getter(env) -> Callable[[], Tuple[torch.Tensor, int]]:
+    """
+    Create a callable that returns the current edge index and topology version.
+
+    The GNN feature extractor caches the edge index and only recomputes when
+    the topology version changes (i.e. on topology regeneration).
 
     Args:
         env: The SFCPlacementEnv or wrapped environment
 
     Returns:
-        Callable that returns edge index tensor
+        Callable that returns (edge_index tensor, topology_version)
     """
-    import networkx as nx
 
-    def edge_getter() -> torch.Tensor:
+    def edge_getter() -> Tuple[torch.Tensor, int]:
         base_env = env.unwrapped if hasattr(env, "unwrapped") else env
         if hasattr(base_env, "substrate") and hasattr(base_env.substrate, "graph"):
-            graph = base_env.substrate.graph
-            adj = nx.to_numpy_array(graph)
-            return get_edge_index_from_adj(adj)
+            substrate = base_env.substrate
+            topo_version = getattr(substrate, "topology_version", 0)
+            edge_index = get_edge_index_from_graph_fast(substrate.graph)
+            return edge_index, topo_version
         # Return empty edge index as fallback
-        return torch.zeros((2, 0), dtype=torch.long)
+        return torch.zeros((2, 0), dtype=torch.long), -1
 
     return edge_getter

@@ -39,7 +39,7 @@ def train(
     save_freq: int = 50000,
     seed: int = 42,
     load_path: str = None,
-    gnn_type: str = "gcn",
+    gnn_type: str = "sage",
     gnn_hidden_dim: int = 64,
     gnn_features_dim: int = 256,
     num_gnn_layers: int = 3,
@@ -249,9 +249,9 @@ def main():
     parser.add_argument(
         "--gnn-type",
         type=str,
-        default="gcn",
+        default="sage",
         choices=["gcn", "gat", "sage"],
-        help="Type of GNN layer: gcn, gat, or sage (default: gcn)",
+        help="Type of GNN layer: gcn, gat, or sage (default: sage)",
     )
     parser.add_argument(
         "--gnn-hidden-dim",

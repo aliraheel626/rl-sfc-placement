@@ -48,7 +48,7 @@ class GNNFeaturesExtractor(BaseFeaturesExtractor):
         node_feat_dim: int = 6,
         hidden_dim: int = 64,
         features_dim: int = 256,
-        gnn_type: str = "gcn",
+        gnn_type: str = "sage",
         num_gnn_layers: int = 3,
         dropout: float = 0.1,
     ):
@@ -214,15 +214,15 @@ class GNNFeaturesExtractor(BaseFeaturesExtractor):
         x_batched = x.reshape(batch_size * N_real, -1)
 
         # Batch indices (for PyG scatter ops if needed)
-        batch_indices = torch.arange(
-            batch_size, device=device
-        ).repeat_interleave(N_real)
+        batch_indices = torch.arange(batch_size, device=device).repeat_interleave(
+            N_real
+        )
 
         # Expand edge index for the batch with vectorized offsets
         # offsets: [0, N_real, 2*N_real, ...] shaped (batch_size, 1)
-        offsets = (
-            torch.arange(batch_size, device=device) * N_real
-        ).unsqueeze(1)  # (B, 1)
+        offsets = (torch.arange(batch_size, device=device) * N_real).unsqueeze(
+            1
+        )  # (B, 1)
         # Repeat edge_index B times along dim-1, then add per-sample offsets
         num_edges = edge_index.size(1)
         edge_index_batched = edge_index.repeat(1, batch_size) + offsets.repeat(

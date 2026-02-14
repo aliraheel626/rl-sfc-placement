@@ -52,7 +52,7 @@ def create_maskable_ppo(
     gamma: float = 0.99,
     verbose: int = 1,
     tensorboard_log: Optional[str] = None,
-    gnn_type: str = "gcn",  # Options: "gcn", "gat", "sage"
+    gnn_type: str = "sage",  # Options: "gcn", "gat", "sage"
     gnn_hidden_dim: int = 64,
     gnn_features_dim: int = 256,
     num_gnn_layers: int = 3,

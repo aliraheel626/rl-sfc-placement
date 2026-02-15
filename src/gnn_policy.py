@@ -108,9 +108,10 @@ class GNNFeaturesExtractor(BaseFeaturesExtractor):
 
             self.layer_norms.append(nn.LayerNorm(out_dim))
 
-        # Global context processing: 3 (vnf) + 3 (sfc) + 1 (progress) = 7
+        # Global context processing (dimension inferred from observation space)
+        global_context_dim = observation_space["global_context"].shape[0]
         self.global_mlp = nn.Sequential(
-            nn.Linear(7, 64),
+            nn.Linear(global_context_dim, 64),
             nn.ReLU(),
             nn.Dropout(dropout),
             nn.Linear(64, 64),

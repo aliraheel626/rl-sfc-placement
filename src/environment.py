@@ -30,7 +30,7 @@ class SFCPlacementEnv(gym.Env):
 
     Observation Space (Dict):
         - node_features: (max_nodes, 6) - [RAM, CPU, Storage, Security, AvgBW, DistToPrev]
-        - global_context: (7,) - [VNF_RAM, VNF_CPU, VNF_Storage, SFC_Sec, SFC_Lat, SFC_BW, VNF_Progress]
+        - global_context: (9,) - [VNF_RAM, VNF_CPU, VNF_Storage, SFC_Sec, SFC_Lat, SFC_BW, VNF_Progress, HardIsolation, LatencyProgress]
         - placement_mask: (max_nodes,) - which nodes are used in current SFC
         - node_mask: (max_nodes,) - 1.0 for real nodes, 0.0 for padding
 
@@ -39,6 +39,7 @@ class SFCPlacementEnv(gym.Env):
         - Masked to prevent invalid placements (padded nodes always masked)
 
     Reward:
+        - +0.5 per intermediate VNF step (minus latency penalty for locality)
         - +acceptance_reward for successfully placing entire SFC
         - +rejection_penalty (negative) for failed placement
     """
@@ -123,7 +124,7 @@ class SFCPlacementEnv(gym.Env):
                 "node_features": spaces.Box(
                     0.0, 1.0, (self.max_nodes, 6), dtype=np.float32
                 ),
-                "global_context": spaces.Box(0.0, 1.0, (7,), dtype=np.float32),
+                "global_context": spaces.Box(0.0, 1.0, (9,), dtype=np.float32),
                 "placement_mask": spaces.Box(
                     0.0, 1.0, (self.max_nodes,), dtype=np.float32
                 ),
@@ -252,16 +253,16 @@ class SFCPlacementEnv(gym.Env):
         observation = self._get_observation()
         info = self._get_info()
 
-        # Intermediate reward for progress
-        reward = 0
+        # Intermediate reward: small positive for each successful VNF placement
+        reward = 0.5
 
-        # # Penalty for latency/distance (encourage locality)
-        # if self.current_placement and len(self.current_placement) > 1:
-        #     prev_node = self.current_placement[-2]
-        #     curr_node = self.current_placement[-1]
-        #     latency = self.substrate.get_path_latency(prev_node, curr_node)
-        #     norm_latency = min(latency / self.max_latency, 1.0)
-        #     reward -= 0.1 * norm_latency
+        # Penalty for latency consumption (encourage locality)
+        if len(self.current_placement) > 1:
+            prev_node = self.current_placement[-2]
+            curr_node = self.current_placement[-1]
+            hop_latency = self.substrate.get_path_latency(prev_node, curr_node)
+            norm_latency = min(hop_latency / self.current_request.max_latency, 1.0)
+            reward -= 0.5 * norm_latency
 
         return observation, reward, False, False, info
 
@@ -401,6 +402,13 @@ class SFCPlacementEnv(gym.Env):
         else:
             vnf_obs = [0.0, 0.0, 0.0]
 
+        # Latency progress: fraction of budget consumed so far
+        latency_progress = (
+            self.current_latency / self.current_request.max_latency
+            if self.current_request.max_latency > 0
+            else 0.0
+        )
+
         global_context = np.array(
             vnf_obs
             + [
@@ -408,6 +416,8 @@ class SFCPlacementEnv(gym.Env):
                 self.current_request.max_latency / self.max_latency,
                 self.current_request.min_bandwidth / self.max_bandwidth,
                 self.current_vnf_index / self.max_vnfs,
+                1.0 if self.current_request.hard_isolation else 0.0,
+                latency_progress,
             ],
             dtype=np.float32,
         )
@@ -565,14 +575,10 @@ class SFCPlacementEnv(gym.Env):
                 occupied_mask[node_id] = False
             feasible_mask = feasible_mask & ~occupied_mask
 
-        # Calculate latency budget for remaining VNFs
-        remaining_vnfs = self.current_request.num_vnfs - self.current_vnf_index - 1
-        min_remaining_latency = remaining_vnfs * self.min_link_latency
-        latency_budget = (
-            self.current_request.max_latency
-            - self.current_latency
-            - min_remaining_latency
-        )
+        # Calculate latency budget for remaining VNFs.
+        # min_remaining_latency is 0 because co-located VNFs have 0 hop latency,
+        # so we must not pessimistically reserve budget for future hops.
+        latency_budget = self.current_request.max_latency - self.current_latency
 
         # 4. Bandwidth Check and Latency Check (only for resource-feasible nodes)
         if self.current_placement:

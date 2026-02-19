@@ -18,19 +18,32 @@ from src.gnn_policy import (
     GNNFeaturesExtractor,
     create_edge_getter,
 )
+from src.requests import RequestGenerator
+from src.substrate import SubstrateNetwork
 
 
-def create_masked_env(config_path: str = "config.yaml") -> ActionMasker:
+def create_masked_env(
+    config_path: str = "config.yaml",
+    *,
+    substrate: Optional[SubstrateNetwork] = None,
+    request_generator: Optional[RequestGenerator] = None,
+) -> ActionMasker:
     """
     Create an environment wrapped with ActionMasker for MaskablePPO.
 
     Args:
         config_path: Path to the configuration file
+        substrate: Optional substrate to use (for fair comparison with baselines)
+        request_generator: Optional request generator (required if substrate is provided)
 
     Returns:
         ActionMasker-wrapped environment
     """
-    env = SFCPlacementEnv(config_path=config_path)
+    env = SFCPlacementEnv(
+        config_path=config_path,
+        substrate=substrate,
+        request_generator=request_generator,
+    )
     return ActionMasker(env, lambda e: e.action_masks())
 
 

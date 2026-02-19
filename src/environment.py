@@ -47,7 +47,12 @@ class SFCPlacementEnv(gym.Env):
     metadata = {"render_modes": ["human"]}
 
     def __init__(
-        self, config_path: str = "config.yaml", render_mode: Optional[str] = None
+        self,
+        config_path: str = "config.yaml",
+        render_mode: Optional[str] = None,
+        *,
+        substrate: Optional[SubstrateNetwork] = None,
+        request_generator: Optional[RequestGenerator] = None,
     ):
         super().__init__()
 
@@ -55,16 +60,19 @@ class SFCPlacementEnv(gym.Env):
         self.config = load_config(config_path)
         self.render_mode = render_mode
 
-        # Initialize substrate network and request generator
-        self.substrate = SubstrateNetwork(self.config["substrate"])
-        self.request_generator = RequestGenerator(self.config["sfc"])
-
-        # Topology configuration
-        self.randomize_topology = self.config.get("training", {}).get(
-            "randomize_topology", False
-        )
-        if self.randomize_topology:
-            print("INFO: Topology randomization enabled (new graph per episode).")
+        # Use provided substrate/request_generator (e.g. for fair comparison) or create new
+        if substrate is not None and request_generator is not None:
+            self.substrate = substrate
+            self.request_generator = request_generator
+            self.randomize_topology = False
+        else:
+            self.substrate = SubstrateNetwork(self.config["substrate"])
+            self.request_generator = RequestGenerator(self.config["sfc"])
+            self.randomize_topology = self.config.get("training", {}).get(
+                "randomize_topology", False
+            )
+            if self.randomize_topology:
+                print("INFO: Topology randomization enabled (new graph per episode).")
 
         # Reward configuration
         self.acceptance_reward = self.config["rewards"]["acceptance"]

@@ -186,7 +186,13 @@ def evaluate_baseline(
 
 
 def evaluate_rl_agent(
-    model_path: str, config_path: str, num_requests: int, verbose: bool = False
+    model_path: str,
+    config_path: str,
+    num_requests: int,
+    verbose: bool = False,
+    *,
+    substrate: Optional[SubstrateNetwork] = None,
+    request_generator: Optional[RequestGenerator] = None,
 ) -> dict:
     """
     Evaluate a trained RL agent.
@@ -194,14 +200,20 @@ def evaluate_rl_agent(
     Args:
         model_path: Path to the trained model
         config_path: Path to configuration file
-        num_episodes: Number of episodes to process
+        num_requests: Number of requests to process
         verbose: Whether to print progress
+        substrate: Optional substrate (use same as baselines for fair comparison)
+        request_generator: Optional request generator (required if substrate provided)
 
     Returns:
         Dictionary with evaluation metrics
     """
-    # Create masked environment
-    env = create_masked_env(config_path)
+    # Create masked environment (optionally on same substrate as baselines)
+    env = create_masked_env(
+        config_path,
+        substrate=substrate,
+        request_generator=request_generator,
+    )
 
     # Load model
     model = load_model(model_path, env)
@@ -398,13 +410,19 @@ def compare_all(
         )
         results[result["algorithm"]] = result
 
-    # Evaluate RL agent if model path provided
+    # Evaluate RL agent if model path provided (on same substrate as baselines)
     if model_path and Path(model_path).exists():
         if verbose:
             print("\nEvaluating RL Agent...")
-
+        substrate.reset()
+        request_generator.reset()
         result = evaluate_rl_agent(
-            model_path, config_path, num_requests=num_requests, verbose=verbose
+            model_path,
+            config_path,
+            num_requests=num_requests,
+            verbose=verbose,
+            substrate=substrate,
+            request_generator=request_generator,
         )
         results[result["algorithm"]] = result
     elif model_path:

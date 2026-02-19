@@ -5,7 +5,7 @@ This module provides functions to create and configure the Maskable PPO
 agent from sb3-contrib for use with the SFC placement environment.
 """
 
-from typing import Optional, Any
+from typing import Optional
 
 import os
 import matplotlib.pyplot as plt
@@ -20,15 +20,6 @@ from src.gnn_policy import (
 )
 
 
-def mask_fn(env: SFCPlacementEnv) -> Any:
-    """
-    Mask function for ActionMasker wrapper.
-
-    Returns the action mask from the environment.
-    """
-    return env.action_masks()
-
-
 def create_masked_env(config_path: str = "config.yaml") -> ActionMasker:
     """
     Create an environment wrapped with ActionMasker for MaskablePPO.
@@ -40,7 +31,7 @@ def create_masked_env(config_path: str = "config.yaml") -> ActionMasker:
         ActionMasker-wrapped environment
     """
     env = SFCPlacementEnv(config_path=config_path)
-    return ActionMasker(env, mask_fn)
+    return ActionMasker(env, lambda e: e.action_masks())
 
 
 def create_maskable_ppo(

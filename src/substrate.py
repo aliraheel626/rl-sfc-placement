@@ -32,7 +32,17 @@ class SubstrateNetwork:
             config: Dictionary containing substrate network parameters
         """
         self.config = config
-        self.num_nodes = config["num_nodes"]
+        num_nodes_cfg = config["num_nodes"]
+        if isinstance(num_nodes_cfg, dict):
+            self._num_nodes_range = (num_nodes_cfg["min"], num_nodes_cfg["max"])
+            self.max_nodes = config.get("max_nodes", self._num_nodes_range[1])
+            self.num_nodes = min(
+                random.randint(*self._num_nodes_range), self.max_nodes
+            )
+        else:
+            self._num_nodes_range = None
+            self.max_nodes = config.get("max_nodes", num_nodes_cfg)
+            self.num_nodes = num_nodes_cfg
         self.mesh_connectivity = config["mesh_connectivity"]
         self.resource_config = config["resources"]
         self.link_config = config["links"]
@@ -59,6 +69,10 @@ class SubstrateNetwork:
 
     def _generate_topology(self):
         """Generate a random mesh topology with resource attributes."""
+        if self._num_nodes_range is not None:
+            self.num_nodes = min(
+                random.randint(*self._num_nodes_range), self.max_nodes
+            )
         # Create random mesh graph
         self.graph = nx.erdos_renyi_graph(self.num_nodes, self.mesh_connectivity)
 

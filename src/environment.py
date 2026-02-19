@@ -161,6 +161,7 @@ class SFCPlacementEnv(gym.Env):
         # Reset substrate network to full capacity for new episode
         if self.randomize_topology:
             self.substrate.regenerate_topology()
+            self.num_nodes = self.substrate.num_nodes
         else:
             self.substrate.reset()
 

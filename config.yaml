@@ -5,8 +5,8 @@ substrate:
   # Fixed size: num_nodes: 300
   # Random size per topology (when randomize_topology: true):
   num_nodes:
-    min: 200
-    max: 400
+    min: 300
+    max: 300
   max_nodes: 1000 # Fixed upper bound for obs/action space shapes
   mesh_connectivity: 0.25 # Moderate connectivity
 

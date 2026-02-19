@@ -30,7 +30,7 @@ class SFCPlacementEnv(gym.Env):
 
     Observation Space (Dict):
         - node_features: (max_nodes, 6) - [RAM, CPU, Storage, Security, AvgBW, DistToPrev]
-        - global_context: (9,) - [VNF_RAM, VNF_CPU, VNF_Storage, SFC_Sec, SFC_Lat, SFC_BW, VNF_Progress, HardIsolation, LatencyProgress]
+        - global_context: (10,) - [VNF_RAM, VNF_CPU, VNF_Storage, SFC_Sec, SFC_Lat, SFC_BW, VNF_Progress, HardIsolation, LatencyProgress, TTL]
         - placement_mask: (max_nodes,) - which nodes are used in current SFC
         - node_mask: (max_nodes,) - 1.0 for real nodes, 0.0 for padding
 
@@ -132,7 +132,7 @@ class SFCPlacementEnv(gym.Env):
                 "node_features": spaces.Box(
                     0.0, 1.0, (self.max_nodes, 6), dtype=np.float32
                 ),
-                "global_context": spaces.Box(0.0, 1.0, (9,), dtype=np.float32),
+                "global_context": spaces.Box(0.0, 1.0, (10,), dtype=np.float32),
                 "placement_mask": spaces.Box(
                     0.0, 1.0, (self.max_nodes,), dtype=np.float32
                 ),
@@ -149,6 +149,8 @@ class SFCPlacementEnv(gym.Env):
         ]
         self.max_latency = self.config["sfc"]["constraints"]["max_latency"]["max"]
         self.max_bandwidth = self.config["sfc"]["constraints"]["min_bandwidth"]["max"]
+        self.max_ttl = self.config["sfc"]["ttl"]["max"]
+        self.min_ttl = self.config["sfc"]["ttl"]["min"]
 
         # Normalization constants for VNF resources
         self.max_vnf_ram = self.config["sfc"]["vnf_resources"]["ram"]["max"]
@@ -418,6 +420,14 @@ class SFCPlacementEnv(gym.Env):
             else 0.0
         )
 
+        # TTL normalized to [0, 1] (short TTL -> 0, long TTL -> 1)
+        ttl_span = self.max_ttl - self.min_ttl
+        ttl_norm = (
+            (self.current_request.ttl - self.min_ttl) / ttl_span
+            if ttl_span > 0
+            else 0.0
+        )
+
         global_context = np.array(
             vnf_obs
             + [
@@ -427,6 +437,7 @@ class SFCPlacementEnv(gym.Env):
                 self.current_vnf_index / self.max_vnfs,
                 1.0 if self.current_request.hard_isolation else 0.0,
                 latency_progress,
+                ttl_norm,
             ],
             dtype=np.float32,
         )

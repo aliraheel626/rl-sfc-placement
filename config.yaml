@@ -82,7 +82,7 @@ training:
   n_epochs: 4
   gamma: 0.99
   max_requests_per_episode: 25 # Reduced to lower pressure on 25-node substrate
-  randomize_topology: false
+  randomize_topology: true
 
 # Reward Configuration
 rewards:

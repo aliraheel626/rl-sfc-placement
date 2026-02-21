@@ -267,18 +267,18 @@ class SFCPlacementEnv(gym.Env):
         observation = self._get_observation()
         info = self._get_info()
 
-        # Intermediate reward: small positive for each successful VNF placement
-        reward = 0.5
+        # # Intermediate reward: small positive for each successful VNF placement
+        # reward = 0.5
 
-        # Penalty for latency consumption (encourage locality)
-        if len(self.current_placement) > 1:
-            prev_node = self.current_placement[-2]
-            curr_node = self.current_placement[-1]
-            hop_latency = self.substrate.get_path_latency(prev_node, curr_node)
-            norm_latency = min(hop_latency / self.current_request.max_latency, 1.0)
-            reward -= 0.5 * norm_latency
+        # # Penalty for latency consumption (encourage locality)
+        # if len(self.current_placement) > 1:
+        #     prev_node = self.current_placement[-2]
+        #     curr_node = self.current_placement[-1]
+        #     hop_latency = self.substrate.get_path_latency(prev_node, curr_node)
+        #     norm_latency = min(hop_latency / self.current_request.max_latency, 1.0)
+        #     reward -= 0.5 * norm_latency
 
-        return observation, reward, False, False, info
+        return observation, 0, False, False, info
 
     def _handle_acceptance(self) -> tuple[np.ndarray, float, bool, bool, dict]:
         """Handle successful SFC placement."""

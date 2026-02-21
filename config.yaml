@@ -2,13 +2,12 @@
 
 # Substrate Network Configuration
 substrate:
-  # Fixed size: num_nodes: 300
-  # Random size per topology (when randomize_topology: true):
+  # Fixed size: 25 nodes (smaller network, difficulty preserved via scaled SFC/load)
   num_nodes:
-    min: 300
-    max: 300
-  max_nodes: 1000 # Fixed upper bound for obs/action space shapes
-  mesh_connectivity: 0.25 # Moderate connectivity
+    min: 25
+    max: 25
+  max_nodes: 25 # Fixed upper bound for obs/action space shapes
+  mesh_connectivity: 0.35 # Slightly higher connectivity for small graph (paths exist)
 
   # Node resource ranges (adequate for individual placements)
   resources:
@@ -34,24 +33,24 @@ substrate:
       min: 5
       max: 60
 
-# SFC Request Configuration
+# SFC Request Configuration (scaled for 25-node substrate; difficulty preserved)
 sfc:
-  # Number of VNFs per chain
+  # Number of VNFs per chain (smaller chains so multiple fit in 25 nodes)
   vnf_count:
-    min: 4
-    max: 10
+    min: 2
+    max: 6
 
-  # VNF resource demands (reasonable - fits on nodes individually)
+  # VNF resource demands (fits on nodes; similar relative load vs capacity)
   vnf_resources:
     ram:
       min: 2
-      max: 16
+      max: 12
     cpu:
       min: 1
-      max: 8
+      max: 6
     storage:
       min: 20
-      max: 150
+      max: 120
 
   # SFC-level constraints (achievable but require good placement)
   constraints:
@@ -59,19 +58,21 @@ sfc:
       min: 1
       max: 5
     max_latency:
-      min: 40
-      max: 150
+      min: 35
+      max: 120
     min_bandwidth:
       min: 50
       max: 250
 
-  # Time to live range (long TTLs create congestion over time)
+  # Time to live (truncated exponential on [min, max] via inverse CDF; mean = underlying exponential)
   ttl:
-    min: 200
-    max: 600
+    distribution: exponential
+    mean: 50
+    min: 1
+    max: 150
 
-  # Moderate isolation probability
-  hard_isolation_probability: 0.4
+  # Lower isolation probability to reduce pressure
+  hard_isolation_probability: 0.1
 
 # Training Configuration
 training:
@@ -81,8 +82,8 @@ training:
   batch_size: 256
   n_epochs: 4
   gamma: 0.99
-  max_requests_per_episode: 600 # Enough to fill network gradually
-  randomize_topology: true
+  max_requests_per_episode: 25 # Reduced to lower pressure on 25-node substrate
+  randomize_topology: false
 
 # Reward Configuration
 rewards:

@@ -27,6 +27,7 @@ def create_masked_env(
     *,
     substrate: Optional[SubstrateNetwork] = None,
     request_generator: Optional[RequestGenerator] = None,
+    max_requests_per_episode: Optional[int] = None,
 ) -> ActionMasker:
     """
     Create an environment wrapped with ActionMasker for MaskablePPO.
@@ -35,6 +36,7 @@ def create_masked_env(
         config_path: Path to the configuration file
         substrate: Optional substrate to use (for fair comparison with baselines)
         request_generator: Optional request generator (required if substrate is provided)
+        max_requests_per_episode: Override episode length (e.g. for eval: one long episode)
 
     Returns:
         ActionMasker-wrapped environment
@@ -43,6 +45,7 @@ def create_masked_env(
         config_path=config_path,
         substrate=substrate,
         request_generator=request_generator,
+        max_requests_per_episode=max_requests_per_episode,
     )
     return ActionMasker(env, lambda e: e.action_masks())
 

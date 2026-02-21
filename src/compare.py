@@ -208,11 +208,13 @@ def evaluate_rl_agent(
     Returns:
         Dictionary with evaluation metrics
     """
-    # Create masked environment (optionally on same substrate as baselines)
+    # Create masked environment (optionally on same substrate as baselines).
+    # Use one long episode (no resets) so utilization / VNF-per-node match baseline semantics.
     env = create_masked_env(
         config_path,
         substrate=substrate,
         request_generator=request_generator,
+        max_requests_per_episode=num_requests,
     )
 
     # Load model

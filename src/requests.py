@@ -96,9 +96,13 @@ class RequestGenerator:
         ttl_cfg = config["ttl"]
         self.ttl_distribution = ttl_cfg.get("distribution", "uniform")
         if self.ttl_distribution == "exponential":
-            self.ttl_mean = float(ttl_cfg["mean"])
             self.ttl_min = float(ttl_cfg["min"])
             self.ttl_max = float(ttl_cfg["max"])
+            # Default mean to midpoint of [min, max] if omitted
+            if "mean" in ttl_cfg:
+                self.ttl_mean = float(ttl_cfg["mean"])
+            else:
+                self.ttl_mean = (self.ttl_min + self.ttl_max) / 2.0
         else:
             self.ttl_range = (ttl_cfg["min"], ttl_cfg["max"])
         self.hard_isolation_probability = config.get("hard_isolation_probability", 0.0)

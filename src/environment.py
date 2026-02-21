@@ -53,6 +53,7 @@ class SFCPlacementEnv(gym.Env):
         *,
         substrate: Optional[SubstrateNetwork] = None,
         request_generator: Optional[RequestGenerator] = None,
+        max_requests_per_episode: Optional[int] = None,
     ):
         super().__init__()
 
@@ -81,10 +82,12 @@ class SFCPlacementEnv(gym.Env):
         # Link latency bounds for latency-aware masking
         self.min_link_latency = self.config["substrate"]["links"]["latency"]["min"]
 
-        # Episode configuration - how many requests per episode
+        # Episode configuration - how many requests per episode (override for eval: single long episode)
         training_config = self.config.get("training", {})
-        self.max_requests_per_episode = training_config.get(
-            "max_requests_per_episode", 100
+        self.max_requests_per_episode = (
+            max_requests_per_episode
+            if max_requests_per_episode is not None
+            else training_config.get("max_requests_per_episode", 100)
         )
 
         # Environment state

@@ -64,10 +64,9 @@ sfc:
       min: 50
       max: 250
 
-  # Time to live (truncated exponential on [min, max] via inverse CDF; mean = underlying exponential)
+  # Time to live (truncated exponential on [min, max] via inverse CDF; optional mean, default = midpoint)
   ttl:
     distribution: exponential
-    mean: 50
     min: 1
     max: 150
 

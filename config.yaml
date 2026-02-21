@@ -73,21 +73,27 @@ sfc:
   # Lower isolation probability to reduce pressure
   hard_isolation_probability: 0.1
 
-# Training Configuration
+# Training Configuration (PPO tuning for create_maskable_ppo)
 training:
   total_timesteps: 100000
-  learning_rate: 0.0003
-  n_steps: 2048
-  batch_size: 256
-  n_epochs: 4
+  # Learning rate: constant 1e-4, or linear decay from 3e-4 (set use_linear_lr_schedule: true)
+  learning_rate: 0.0001   # 1e-4 (final value when using schedule)
+  use_linear_lr_schedule: false
+  lr_initial: 0.0003      # 3e-4 (start value when use_linear_lr_schedule is true)
+  n_steps: 4096
+  batch_size: 512
+  n_epochs: 10
   gamma: 0.99
+  ent_coef: 0.01          # entropy coefficient (decay later if desired)
+  gae_lambda: 0.97
+  clip_range: 0.2
   max_requests_per_episode: 25 # Reduced to lower pressure on 25-node substrate
   randomize_topology: true
 
 # Reward Configuration
 rewards:
-  acceptance: 10.0
-  rejection: -5.0
+  acceptance: 1
+  rejection: -1
 
 # Evaluation Configuration
 evaluation:

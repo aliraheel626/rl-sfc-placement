@@ -114,13 +114,23 @@ def train(
     else:
         print("Creating MaskablePPO model...")
         n_steps = training_config.get("n_steps", 2048)
+        lr = training_config.get("learning_rate", 1e-4)
+        if training_config.get("use_linear_lr_schedule", False):
+            lr_initial = training_config.get("lr_initial", 3e-4)
+            # progress_remaining: 1 -> 0 over training; LR goes lr_initial -> lr
+            def lr_schedule(progress_remaining: float) -> float:
+                return lr + (lr_initial - lr) * progress_remaining
+            lr = lr_schedule
         model = create_maskable_ppo(
             env,
-            learning_rate=training_config.get("learning_rate", 3e-4),
+            learning_rate=lr,
             n_steps=n_steps,
-            batch_size=training_config.get("batch_size", 64),
+            batch_size=training_config.get("batch_size", 512),
             n_epochs=training_config.get("n_epochs", 10),
             gamma=training_config.get("gamma", 0.99),
+            ent_coef=training_config.get("ent_coef", 0.01),
+            gae_lambda=training_config.get("gae_lambda", 0.97),
+            clip_range=training_config.get("clip_range", 0.2),
             verbose=1,
             tensorboard_log=log_path,
             seed=seed,

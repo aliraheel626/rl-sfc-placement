@@ -9,17 +9,17 @@ substrate:
   max_nodes: 25 # Fixed upper bound for obs/action space shapes
   mesh_connectivity: 0.35 # Slightly higher connectivity for small graph (paths exist)
 
-  # Node resource ranges (adequate for individual placements)
+  # Node resource ranges (scaled up for ~70% placement)
   resources:
     ram:
-      min: 8
-      max: 48
+      min: 20
+      max: 120
     cpu:
-      min: 4
-      max: 24
+      min: 10
+      max: 60
     storage:
-      min: 100
-      max: 600
+      min: 250
+      max: 1500
     security_score:
       min: 1
       max: 5
@@ -68,14 +68,14 @@ sfc:
   ttl:
     distribution: exponential
     min: 1
-    max: 150
+    max: 25
 
   # Lower isolation probability to reduce pressure
   hard_isolation_probability: 0.1
 
 # Training Configuration (PPO tuning for create_maskable_ppo)
 training:
-  total_timesteps: 100000
+  total_timesteps: 1000000
   # Learning rate: constant 1e-4, or linear decay from 3e-4 (set use_linear_lr_schedule: true)
   learning_rate: 0.0001   # 1e-4 (final value when using schedule)
   use_linear_lr_schedule: false
@@ -87,7 +87,7 @@ training:
   ent_coef: 0.01          # entropy coefficient (decay later if desired)
   gae_lambda: 0.97
   clip_range: 0.2
-  max_requests_per_episode: 25 # Reduced to lower pressure on 25-node substrate
+  max_requests_per_episode: 3000 
   randomize_topology: true
 
 # Reward Configuration
@@ -97,4 +97,4 @@ rewards:
 
 # Evaluation Configuration
 evaluation:
-  num_episodes: 10
+  num_requests: 1000

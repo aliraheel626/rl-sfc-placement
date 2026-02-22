@@ -165,12 +165,16 @@ def evaluate_baseline(
         else 0.0
     )
 
+    # Baselines do not track rejection reason; use 0 for latency violation ratio
+    latency_violation_ratio = 0.0
+
     return {
         "algorithm": algorithm.__class__.__name__,
         "total_requests": total,
         "accepted": accepted,
         "rejected": rejected,
         "acceptance_ratio": acceptance_ratio,
+        "latency_violation_ratio": latency_violation_ratio,
         "avg_latency": avg_latency,
         "avg_time_ms": avg_time_per_request,
         "avg_sec_margin": avg_sec_margin,
@@ -191,6 +195,7 @@ def evaluate_rl_agent(
     num_requests: int,
     verbose: bool = False,
     *,
+    model=None,
     substrate: Optional[SubstrateNetwork] = None,
     request_generator: Optional[RequestGenerator] = None,
 ) -> dict:
@@ -198,10 +203,11 @@ def evaluate_rl_agent(
     Evaluate a trained RL agent.
 
     Args:
-        model_path: Path to the trained model
+        model_path: Path to the trained model (ignored if model is provided)
         config_path: Path to configuration file
         num_requests: Number of requests to process
         verbose: Whether to print progress
+        model: In-memory model to use (if provided, model_path is optional)
         substrate: Optional substrate (use same as baselines for fair comparison)
         request_generator: Optional request generator (required if substrate provided)
 
@@ -217,11 +223,14 @@ def evaluate_rl_agent(
         max_requests_per_episode=num_requests,
     )
 
-    # Load model
-    model = load_model(model_path, env)
+    if model is not None:
+        pass  # Use provided in-memory model
+    else:
+        model = load_model(model_path, env)
 
     accepted = 0
     rejected = 0
+    latency_violations = 0  # Rejections due to latency constraint
     total_latency = 0.0
     latencies = []
     security_margins = []  # Track security margins for each accepted request
@@ -269,12 +278,7 @@ def evaluate_rl_agent(
                 # Calculate security margin for this placement
                 if placement:
                     placement_margins = []
-                    min_security = (
-                        env.unwrapped.current_request.min_security_score
-                        if hasattr(env.unwrapped, "current_request")
-                        and env.unwrapped.current_request
-                        else 0
-                    )
+                    min_security = info.get("request_min_security", 0)
                     for node_id in placement:
                         node_security = env.unwrapped.substrate.node_resources[node_id][
                             "security_score"
@@ -289,6 +293,8 @@ def evaluate_rl_agent(
                     security_margins.append(avg_placement_margin)
             else:
                 rejected += 1
+                if info.get("rejection_reason") == "latency_violation":
+                    latency_violations += 1
 
             # Sample tenancy metrics after each request
             sfcs_per_node = env.unwrapped.substrate.get_sfcs_per_node()
@@ -323,6 +329,9 @@ def evaluate_rl_agent(
     total = accepted + rejected
     elapsed_time = time.perf_counter() - start_time
     acceptance_ratio = accepted / total if total > 0 else 0.0
+    latency_violation_ratio = (
+        latency_violations / rejected if rejected > 0 else 0.0
+    )
     avg_latency = total_latency / accepted if accepted > 0 else 0.0
     avg_time_per_request = (elapsed_time / total * 1000) if total > 0 else 0.0  # ms
     avg_sec_margin = (
@@ -350,6 +359,7 @@ def evaluate_rl_agent(
         "accepted": accepted,
         "rejected": rejected,
         "acceptance_ratio": acceptance_ratio,
+        "latency_violation_ratio": latency_violation_ratio,
         "avg_latency": avg_latency,
         "avg_time_ms": avg_time_per_request,
         "avg_sec_margin": avg_sec_margin,
@@ -362,6 +372,63 @@ def evaluate_rl_agent(
         "vnf_tenancy_samples": vnf_tenancy_samples,
         "substrate_utilization_samples": substrate_utilization_samples,
     }
+
+
+def run_episode_eval(
+    config_path: str,
+    model,
+    num_requests: int = 1000,
+    verbose: bool = False,
+) -> dict:
+    """
+    Run a 1000-request evaluation for the current RL model and all baselines.
+    Uses the same substrate and request stream (reset before each algorithm) for fairness.
+
+    Args:
+        config_path: Path to configuration file
+        model: In-memory RL model (e.g. current training checkpoint)
+        num_requests: Number of requests per evaluation
+        verbose: Whether to print progress
+
+    Returns:
+        Dictionary mapping algorithm name -> result dict (acceptance_ratio,
+        latency_violation_ratio, avg_sfc_tenancy, avg_vnf_tenancy, avg_substrate_utilization, etc.)
+    """
+    config = load_config(config_path)
+    substrate = SubstrateNetwork(config["substrate"])
+    request_generator = RequestGenerator(config["sfc"])
+
+    results = {}
+    baselines = [
+        ViterbiPlacement(),
+        FirstFitPlacement(),
+        BestFitPlacement(),
+    ]
+
+    for algorithm in baselines:
+        result = evaluate_baseline(
+            substrate,
+            request_generator,
+            algorithm,
+            num_requests=num_requests,
+            verbose=verbose,
+        )
+        results[result["algorithm"]] = result
+
+    substrate.reset()
+    request_generator.reset()
+    result = evaluate_rl_agent(
+        model_path="",  # unused when model is provided
+        config_path=config_path,
+        num_requests=num_requests,
+        verbose=verbose,
+        model=model,
+        substrate=substrate,
+        request_generator=request_generator,
+    )
+    results[result["algorithm"]] = result
+
+    return results
 
 
 def compare_all(

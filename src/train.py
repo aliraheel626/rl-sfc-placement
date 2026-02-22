@@ -22,10 +22,9 @@ from src.model import (
     create_masked_env,
     create_maskable_ppo,
     load_model,
-    AcceptanceRatioCallback,
     BestModelCallback,
-    LatencyViolationCallback,
-    SubstrateMetricsCallback,
+    RewardPerStepCallback,
+    TrainingEvalCallback,
 )
 from stable_baselines3.common.callbacks import CallbackList
 
@@ -141,37 +140,39 @@ def train(
         )
 
     # Setup callbacks
-    plot_path = str(Path(save_path).with_suffix("")) + "_acceptance_ratio.png"
+    save_dir = str(Path(save_path).parent)
+    eval_requests = config.get("evaluation", {}).get("num_requests", 1000)
 
-    # 1. Acceptance Ratio Tracking and Plotting
-    acceptance_callback = AcceptanceRatioCallback(
-        save_path=plot_path, plot_freq=plot_freq, verbose=1
+    # 1. Eval at end of each episode (1000 requests) + all baselines; plot acceptance, rejection, substrate, sfc/node, vnf/node
+    training_eval_callback = TrainingEvalCallback(
+        config_path=config_path,
+        save_dir=save_dir,
+        num_requests=eval_requests,
+        plot_freq=plot_freq,
+        verbose=1,
     )
 
-    # 2. Save Best Model
+    # 2. Reward per unit step visualization
+    reward_plot_path = str(Path(save_path).parent / "reward_per_step.png")
+    reward_per_step_callback = RewardPerStepCallback(
+        save_path=reward_plot_path,
+        plot_freq=plot_freq,
+        step_interval=200,
+        verbose=1,
+    )
+
+    # 3. Save Best Model
     best_model_path = str(Path(save_path).parent / "sfc_ppo_best.zip")
     best_model_callback = BestModelCallback(
         save_path=best_model_path, check_freq=5000, verbose=1
     )
 
-    # 3. Latency Violation Tracking and Plotting
-    rejection_plot_path = str(Path(save_path).parent / "sfc_ppo_rejection_ratio.png")
-    latency_callback = LatencyViolationCallback(
-        save_path=rejection_plot_path, plot_freq=plot_freq, verbose=1
-    )
-
-    # 4. Substrate Metrics Tracking and Plotting (SFC/node, VNF/node, utilization)
-    substrate_metrics_callback = SubstrateMetricsCallback(
-        save_dir=str(Path(save_path).parent), plot_freq=plot_freq, verbose=1
-    )
-
     # Combine callbacks
     callback = CallbackList(
         [
-            acceptance_callback,
+            training_eval_callback,
+            reward_per_step_callback,
             best_model_callback,
-            latency_callback,
-            substrate_metrics_callback,
         ]
     )
 

@@ -140,6 +140,8 @@ def load_model(path: str, env: Optional[ActionMasker] = None) -> MaskablePPO:
 
     Handles GNN models by injecting a fresh edge_getter from the new env
     (the saved edge_getter closure is not portable across environments).
+    SB3 stores "data" as JSON (with cloudpickle for non-JSON values), so we
+    parse JSON and optionally deserialize policy_kwargs to replace edge_getter.
 
     Args:
         path: Path to the saved model
@@ -148,36 +150,141 @@ def load_model(path: str, env: Optional[ActionMasker] = None) -> MaskablePPO:
     Returns:
         Loaded MaskablePPO model
     """
-    import io
-    import pickle
+    import base64
+    import json
     import zipfile
+
+    try:
+        import cloudpickle
+    except ImportError:
+        cloudpickle = None
 
     custom_objects = {}
 
     if env is not None:
-        # Peek at saved data to check if GNN was used
+        # Peek at saved data (JSON format) to check if GNN was used and inject edge_getter
         try:
             model_path = path if path.endswith(".zip") else path + ".zip"
             with zipfile.ZipFile(model_path, "r") as zf:
-                if "data" in zf.namelist():
-                    with zf.open("data") as f:
-                        data = pickle.load(io.BytesIO(f.read()))
-                    policy_kwargs = data.get("policy_kwargs", {})
-                    extractor_kwargs = policy_kwargs.get(
-                        "features_extractor_kwargs", {}
-                    )
-                    if "edge_getter" in extractor_kwargs:
-                        # Inject fresh edge_getter for the new env
-                        edge_getter = create_edge_getter(env)
-                        extractor_kwargs["edge_getter"] = edge_getter
-                        policy_kwargs["features_extractor_kwargs"] = extractor_kwargs
-                        custom_objects["policy_kwargs"] = policy_kwargs
+                if "data" not in zf.namelist():
+                    raise ValueError("No 'data' in zip")
+                json_str = zf.read("data").decode()
+            data = json.loads(json_str)
+            policy_kwargs_item = data.get("policy_kwargs")
+            if not isinstance(policy_kwargs_item, dict):
+                raise ValueError("policy_kwargs not a dict")
+            if ":serialized:" in policy_kwargs_item:
+                if cloudpickle is None:
+                    raise ImportError("cloudpickle required to load GNN model")
+                raw = base64.b64decode(policy_kwargs_item[":serialized:"].encode())
+                policy_kwargs = cloudpickle.loads(raw)
+            else:
+                policy_kwargs = policy_kwargs_item
+            extractor_kwargs = policy_kwargs.get("features_extractor_kwargs", {})
+            if "edge_getter" in extractor_kwargs:
+                edge_getter = create_edge_getter(env)
+                extractor_kwargs = dict(extractor_kwargs)
+                extractor_kwargs["edge_getter"] = edge_getter
+                policy_kwargs = dict(policy_kwargs)
+                policy_kwargs["features_extractor_kwargs"] = extractor_kwargs
+                custom_objects["policy_kwargs"] = policy_kwargs
         except Exception:
             pass  # Not a GNN model or can't peek -- load normally
 
     return MaskablePPO.load(
         path, env=env, custom_objects=custom_objects if custom_objects else None
     )
+
+
+class RewardPerStepCallback(BaseCallback):
+    """
+    Track reward per environment step and plot reward (aggregated per unit steps) vs step.
+    """
+
+    def __init__(
+        self,
+        save_path: str = "models/reward_per_step.png",
+        plot_freq: int = 10000,
+        step_interval: int = 200,
+        verbose: int = 0,
+    ):
+        super().__init__(verbose)
+        self.save_path = save_path
+        self.plot_freq = plot_freq
+        self.step_interval = step_interval
+        self.steps = []
+        self.reward_means = []
+        self._reward_buffer = []
+
+    def _on_step(self) -> bool:
+        rewards = self.locals.get("rewards", 0)
+        if hasattr(rewards, "__len__") and not isinstance(rewards, (str, bytes)):
+            try:
+                for r in rewards:
+                    self._reward_buffer.append(float(r))
+            except TypeError:
+                self._reward_buffer.append(float(rewards))
+        else:
+            self._reward_buffer.append(float(rewards))
+
+        while len(self._reward_buffer) >= self.step_interval:
+            chunk = self._reward_buffer[: self.step_interval]
+            self._reward_buffer = self._reward_buffer[self.step_interval :]
+            # Step at end of this bucket (current timestep)
+            step = self.num_timesteps
+            self.steps.append(step)
+            self.reward_means.append(sum(chunk) / len(chunk))
+
+        if self.n_calls > 0 and self.n_calls % self.plot_freq == 0:
+            self._save_plot()
+        return True
+
+    def _save_plot(self):
+        if not self.steps:
+            return
+        try:
+            import numpy as np
+
+            os.makedirs(os.path.dirname(self.save_path) or ".", exist_ok=True)
+            steps = np.array(self.steps)
+            rewards = np.array(self.reward_means)
+
+            plt.figure(figsize=(10, 6))
+            plt.plot(steps, rewards, alpha=0.6, label="Reward (mean per step)", linewidth=0.8)
+
+            if len(rewards) > 20:
+                window = min(50, len(rewards) // 5)
+                if window > 1:
+                    k = np.ones(window) / window
+                    smooth = np.convolve(rewards, k, mode="valid")
+                    plt.plot(
+                        steps[window - 1 :],
+                        smooth,
+                        color="orange",
+                        linewidth=2,
+                        label=f"Moving Avg ({window} bins)",
+                    )
+
+            plt.title("Reward per Unit Step vs Training Step")
+            plt.xlabel("Training Step")
+            plt.ylabel("Reward (mean per {} steps)".format(self.step_interval))
+            plt.grid(True, linestyle="--", alpha=0.7)
+            plt.legend()
+            plt.tight_layout()
+            plt.savefig(self.save_path)
+            plt.close()
+            if self.verbose > 1:
+                print(f"Reward-per-step plot saved to {self.save_path}")
+        except Exception as e:
+            if self.verbose > 0:
+                print(f"Warning: Could not save reward-per-step plot: {e}")
+
+    def _on_training_end(self) -> None:
+        if self._reward_buffer:
+            step = self.steps[-1] + self.step_interval if self.steps else self.step_interval
+            self.steps.append(step)
+            self.reward_means.append(sum(self._reward_buffer) / len(self._reward_buffer))
+        self._save_plot()
 
 
 class AcceptanceRatioCallback(BaseCallback):
@@ -682,3 +789,289 @@ class SubstrateMetricsCallback(BaseCallback):
                     f"  Avg Substrate Util: {avg_util:.2%} (Last {last_n}: {recent_util:.2%})"
                 )
                 print(f"  Substrate metrics plots saved to: {self.save_dir}")
+
+
+class TrainingEvalCallback(BaseCallback):
+    """
+    At the end of each episode, run a 1000-request evaluation for the current
+    model and all baselines (like src.compare). Each plotted point is from this
+    eval. Plots include lines for all baselines.
+    """
+
+    def __init__(
+        self,
+        config_path: str,
+        save_dir: str = "models/",
+        num_requests: int = 1000,
+        plot_freq: int = 10000,
+        verbose: int = 0,
+    ):
+        super().__init__(verbose)
+        self.config_path = config_path
+        self.save_dir = save_dir
+        self.num_requests = num_requests
+        self.plot_freq = plot_freq
+        self.episodes = []
+        # algorithm_name -> list of values per episode
+        self.by_algo = {}
+
+    def _on_step(self) -> bool:
+        infos = self.locals.get("infos", [])
+        dones = self.locals.get("dones", [])
+
+        for i, info in enumerate(infos):
+            if dones[i] if isinstance(dones, (list, tuple)) else dones:
+                if "episode_acceptance_ratio" not in info:
+                    continue
+                episode_num = info.get("total_episodes", len(self.episodes) + 1)
+
+                from src.compare import run_episode_eval
+
+                results = run_episode_eval(
+                    self.config_path,
+                    self.model,
+                    num_requests=self.num_requests,
+                    verbose=False,
+                )
+
+                self.episodes.append(episode_num)
+                for algo_name, res in results.items():
+                    if algo_name not in self.by_algo:
+                        self.by_algo[algo_name] = {
+                            "acceptance_ratio": [],
+                            "latency_violation_ratio": [],
+                            "avg_sfc_tenancy": [],
+                            "avg_vnf_tenancy": [],
+                            "avg_substrate_utilization": [],
+                        }
+                    self.by_algo[algo_name]["acceptance_ratio"].append(
+                        res["acceptance_ratio"]
+                    )
+                    self.by_algo[algo_name]["latency_violation_ratio"].append(
+                        res.get("latency_violation_ratio", 0.0)
+                    )
+                    self.by_algo[algo_name]["avg_sfc_tenancy"].append(
+                        res.get("avg_sfc_tenancy", 0.0)
+                    )
+                    self.by_algo[algo_name]["avg_vnf_tenancy"].append(
+                        res.get("avg_vnf_tenancy", 0.0)
+                    )
+                    self.by_algo[algo_name]["avg_substrate_utilization"].append(
+                        res.get("avg_substrate_utilization", 0.0)
+                    )
+
+                if self.logger is not None:
+                    ppo = results.get("MaskablePPO", {})
+                    if ppo:
+                        self.logger.record(
+                            "custom/eval_acceptance_ratio", ppo["acceptance_ratio"]
+                        )
+
+        if self.n_calls > 0 and self.n_calls % self.plot_freq == 0:
+            self._save_plots()
+        return True
+
+    def _save_plots(self):
+        if not self.episodes or not self.by_algo:
+            return
+        import numpy as np
+
+        os.makedirs(self.save_dir, exist_ok=True)
+        algos = list(self.by_algo.keys())
+        colors = plt.cm.tab10(np.linspace(0, 1, max(len(algos), 10)))[: len(algos)]
+        color_map = dict(zip(algos, colors))
+
+        def moving_avg(y, window):
+            if len(y) < window or window < 2:
+                return None, None
+            k = np.ones(window) / window
+            ma = np.convolve(y, k, mode="valid")
+            x = self.episodes[window - 1 :]
+            return x, ma
+
+        # 1) Acceptance ratio
+        fig, ax = plt.subplots(figsize=(10, 6))
+        for algo in algos:
+            vals = self.by_algo[algo]["acceptance_ratio"]
+            ax.plot(
+                self.episodes,
+                vals,
+                alpha=0.6,
+                label=algo,
+                linewidth=0.5,
+                color=color_map[algo],
+            )
+            if algo == "MaskablePPO" and len(vals) > 10:
+                window = min(50, len(vals) // 5)
+                if window > 1:
+                    x_ma, y_ma = moving_avg(vals, window)
+                    if x_ma is not None:
+                        ax.plot(
+                            x_ma,
+                            y_ma,
+                            color="orange",
+                            linewidth=2,
+                            label=f"Moving Avg ({window} ep)",
+                        )
+        ax.set_title("Episode Acceptance Ratio vs Episode Number (eval 1000 req/episode)")
+        ax.set_xlabel("Episode")
+        ax.set_ylabel("Acceptance Ratio (per episode)")
+        ax.set_ylim(0, 1.05)
+        ax.grid(True, linestyle="--", alpha=0.7)
+        ax.legend()
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.save_dir, "sfc_ppo_acceptance_ratio.png"))
+        plt.close()
+
+        # 2) Latency violation ratio
+        fig, ax = plt.subplots(figsize=(10, 6))
+        for algo in algos:
+            vals = self.by_algo[algo]["latency_violation_ratio"]
+            ax.plot(
+                self.episodes,
+                vals,
+                alpha=0.6,
+                label=algo,
+                linewidth=0.5,
+                color=color_map[algo],
+            )
+            if algo == "MaskablePPO" and len(vals) > 10:
+                window = min(50, len(vals) // 5)
+                if window > 1:
+                    x_ma, y_ma = moving_avg(vals, window)
+                    if x_ma is not None:
+                        ax.plot(
+                            x_ma,
+                            y_ma,
+                            color="darkred",
+                            linewidth=2,
+                            label=f"Moving Avg ({window} ep)",
+                        )
+        ax.set_title(
+            "Latency Violation % of Rejections vs Episode (eval 1000 req/episode)"
+        )
+        ax.set_xlabel("Episode")
+        ax.set_ylabel("Latency Violations / Total Rejections")
+        ax.set_ylim(0, 1.05)
+        ax.grid(True, linestyle="--", alpha=0.7)
+        ax.legend()
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.save_dir, "sfc_ppo_rejection_ratio.png"))
+        plt.close()
+
+        # 3) Substrate utilization
+        fig, ax = plt.subplots(figsize=(10, 6))
+        for algo in algos:
+            vals = self.by_algo[algo]["avg_substrate_utilization"]
+            ax.plot(
+                self.episodes,
+                vals,
+                alpha=0.6,
+                label=algo,
+                linewidth=0.5,
+                color=color_map[algo],
+            )
+            if algo == "MaskablePPO" and len(vals) > 10:
+                window = min(50, len(vals) // 5)
+                if window > 1:
+                    x_ma, y_ma = moving_avg(vals, window)
+                    if x_ma is not None:
+                        ax.plot(
+                            x_ma,
+                            y_ma,
+                            color="indigo",
+                            linewidth=2,
+                            label=f"Moving Avg ({window} ep)",
+                        )
+        ax.set_title(
+            "Substrate Utilization vs Episode Number (eval 1000 req/episode)"
+        )
+        ax.set_xlabel("Episode")
+        ax.set_ylabel("Substrate Utilization")
+        ax.set_ylim(0, 1.05)
+        ax.yaxis.set_major_formatter(
+            plt.FuncFormatter(lambda y, _: f"{y:.0%}")
+        )
+        ax.grid(True, linestyle="--", alpha=0.7)
+        ax.legend()
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.save_dir, "substrate_util_training.png"))
+        plt.close()
+
+        # 4) SFC per node
+        fig, ax = plt.subplots(figsize=(10, 6))
+        for algo in algos:
+            vals = self.by_algo[algo]["avg_sfc_tenancy"]
+            ax.plot(
+                self.episodes,
+                vals,
+                alpha=0.6,
+                label=algo,
+                linewidth=0.5,
+                color=color_map[algo],
+            )
+            if algo == "MaskablePPO" and len(vals) > 10:
+                window = min(50, len(vals) // 5)
+                if window > 1:
+                    x_ma, y_ma = moving_avg(vals, window)
+                    if x_ma is not None:
+                        ax.plot(
+                            x_ma,
+                            y_ma,
+                            color="darkblue",
+                            linewidth=2,
+                            label=f"Moving Avg ({window} ep)",
+                        )
+        ax.set_title(
+            "Avg SFCs per Occupied Node vs Episode Number (eval 1000 req/episode)"
+        )
+        ax.set_xlabel("Episode")
+        ax.set_ylabel("Avg SFCs per Occupied Node")
+        ax.grid(True, linestyle="--", alpha=0.7)
+        ax.legend()
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.save_dir, "sfc_per_node_training.png"))
+        plt.close()
+
+        # 5) VNF per node
+        fig, ax = plt.subplots(figsize=(10, 6))
+        for algo in algos:
+            vals = self.by_algo[algo]["avg_vnf_tenancy"]
+            ax.plot(
+                self.episodes,
+                vals,
+                alpha=0.6,
+                label=algo,
+                linewidth=0.5,
+                color=color_map[algo],
+            )
+            if algo == "MaskablePPO" and len(vals) > 10:
+                window = min(50, len(vals) // 5)
+                if window > 1:
+                    x_ma, y_ma = moving_avg(vals, window)
+                    if x_ma is not None:
+                        ax.plot(
+                            x_ma,
+                            y_ma,
+                            color="darkgreen",
+                            linewidth=2,
+                            label=f"Moving Avg ({window} ep)",
+                        )
+        ax.set_title(
+            "Avg VNFs per Occupied Node vs Episode Number (eval 1000 req/episode)"
+        )
+        ax.set_xlabel("Episode")
+        ax.set_ylabel("Avg VNFs per Occupied Node")
+        ax.grid(True, linestyle="--", alpha=0.7)
+        ax.legend()
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.save_dir, "vnf_per_node_training.png"))
+        plt.close()
+
+        if self.verbose > 1:
+            print(
+                f"Eval plots saved to {self.save_dir} at step {self.num_timesteps}"
+            )
+
+    def _on_training_end(self) -> None:
+        self._save_plots()

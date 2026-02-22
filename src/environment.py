@@ -282,6 +282,10 @@ class SFCPlacementEnv(gym.Env):
 
     def _handle_acceptance(self) -> tuple[np.ndarray, float, bool, bool, dict]:
         """Handle successful SFC placement."""
+        # Capture completed-request data before potentially advancing to the next request.
+        completed_placement = self.current_placement.copy()
+        completed_min_security = self.current_request.min_security_score
+
         self.substrate.register_placement(self.current_request, self.current_placement)
         self.accepted_requests += 1
         self.episode_accepted += 1
@@ -299,7 +303,8 @@ class SFCPlacementEnv(gym.Env):
         observation = self._get_observation()
         info = self._get_info()
         info["success"] = True
-        info["placement"] = self.current_placement.copy()
+        info["placement"] = completed_placement
+        info["request_min_security"] = completed_min_security
         info["sfc_complete"] = True  # This SFC was completed
 
         return observation, self.acceptance_reward, terminated, False, info

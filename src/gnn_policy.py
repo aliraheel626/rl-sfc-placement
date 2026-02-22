@@ -176,7 +176,7 @@ class GNNFeaturesExtractor(BaseFeaturesExtractor):
         Args:
             observations: Dict with keys:
                 - node_features:  (batch, max_nodes, 6)
-                - global_context: (batch, 7)
+                - global_context: (batch, global_context_dim)
                 - placement_mask: (batch, max_nodes)
                 - node_mask:      (batch, max_nodes)
 
@@ -187,7 +187,7 @@ class GNNFeaturesExtractor(BaseFeaturesExtractor):
         batch_size = observations["node_features"].shape[0]
 
         node_feats = observations["node_features"]  # (B, M, 6)
-        global_context = observations["global_context"]  # (B, 7)
+        global_context = observations["global_context"]  # (B, global_context_dim)
         placement_mask = observations["placement_mask"]  # (B, M)
         node_mask = observations["node_mask"]  # (B, M)
 

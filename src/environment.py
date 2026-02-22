@@ -30,7 +30,9 @@ class SFCPlacementEnv(gym.Env):
 
     Observation Space (Dict):
         - node_features: (max_nodes, 6) - [RAM, CPU, Storage, Security, AvgBW, DistToPrev]
-        - global_context: (10,) - [VNF_RAM, VNF_CPU, VNF_Storage, SFC_Sec, SFC_Lat, SFC_BW, VNF_Progress, HardIsolation, LatencyProgress, TTL]
+        - global_context: (14,) - [VNF_RAM, VNF_CPU, VNF_Storage, SFC_Sec, SFC_Lat, SFC_BW,
+          VNF_Progress, HardIsolation, LatencyProgress, TTL,
+          RemainingVNFs, RemainingRAM, RemainingCPU, RemainingStorage]
         - placement_mask: (max_nodes,) - which nodes are used in current SFC
         - node_mask: (max_nodes,) - 1.0 for real nodes, 0.0 for padding
 
@@ -39,7 +41,6 @@ class SFCPlacementEnv(gym.Env):
         - Masked to prevent invalid placements (padded nodes always masked)
 
     Reward:
-        - +0.5 per intermediate VNF step (minus latency penalty for locality)
         - +acceptance_reward for successfully placing entire SFC
         - +rejection_penalty (negative) for failed placement
     """
@@ -135,7 +136,7 @@ class SFCPlacementEnv(gym.Env):
                 "node_features": spaces.Box(
                     0.0, 1.0, (self.max_nodes, 6), dtype=np.float32
                 ),
-                "global_context": spaces.Box(0.0, 1.0, (10,), dtype=np.float32),
+                "global_context": spaces.Box(0.0, 1.0, (14,), dtype=np.float32),
                 "placement_mask": spaces.Box(
                     0.0, 1.0, (self.max_nodes,), dtype=np.float32
                 ),
@@ -410,7 +411,8 @@ class SFCPlacementEnv(gym.Env):
         node_features = np.zeros((M, 6), dtype=np.float32)
         node_features[:N] = np.clip(real_node_features, 0.0, 1.0)
 
-        # 2. Global context: (7,)
+        # 2. Global context: (14,)
+        # [0-2]  Current VNF demands (RAM, CPU, Storage)
         if self.current_vnf_index < self.current_request.num_vnfs:
             current_vnf = self.current_request.vnfs[self.current_vnf_index]
             vnf_obs = [
@@ -420,6 +422,21 @@ class SFCPlacementEnv(gym.Env):
             ]
         else:
             vnf_obs = [0.0, 0.0, 0.0]
+
+        # [10-13] Future-chain features: remaining VNF count + aggregate demand
+        remaining_start = self.current_vnf_index + 1
+        remaining_vnfs_list = self.current_request.vnfs[remaining_start:]
+        remaining_count = len(remaining_vnfs_list)
+        remaining_count_norm = remaining_count / self.max_vnfs if self.max_vnfs > 0 else 0.0
+        if remaining_vnfs_list:
+            remaining_ram = sum(v.ram for v in remaining_vnfs_list)
+            remaining_cpu = sum(v.cpu for v in remaining_vnfs_list)
+            remaining_storage = sum(v.storage for v in remaining_vnfs_list)
+        else:
+            remaining_ram = remaining_cpu = remaining_storage = 0.0
+        remaining_ram_norm = remaining_ram / (self.max_vnfs * self.max_vnf_ram)
+        remaining_cpu_norm = remaining_cpu / (self.max_vnfs * self.max_vnf_cpu)
+        remaining_storage_norm = remaining_storage / (self.max_vnfs * self.max_vnf_storage)
 
         # Latency progress: fraction of budget consumed so far
         latency_progress = (
@@ -437,15 +454,19 @@ class SFCPlacementEnv(gym.Env):
         )
 
         global_context = np.array(
-            vnf_obs
+            vnf_obs  # [0-2] current VNF demands
             + [
-                self.current_request.min_security_score / self.max_security,
-                self.current_request.max_latency / self.max_latency,
-                self.current_request.min_bandwidth / self.max_bandwidth,
-                self.current_vnf_index / self.max_vnfs,
-                1.0 if self.current_request.hard_isolation else 0.0,
-                latency_progress,
-                ttl_norm,
+                self.current_request.min_security_score / self.max_security,  # [3]
+                self.current_request.max_latency / self.max_latency,          # [4]
+                self.current_request.min_bandwidth / self.max_bandwidth,      # [5]
+                self.current_vnf_index / self.max_vnfs,                       # [6]
+                1.0 if self.current_request.hard_isolation else 0.0,          # [7]
+                latency_progress,                                             # [8]
+                ttl_norm,                                                     # [9]
+                remaining_count_norm,                                         # [10]
+                remaining_ram_norm,                                           # [11]
+                remaining_cpu_norm,                                           # [12]
+                remaining_storage_norm,                                       # [13]
             ],
             dtype=np.float32,
         )
@@ -603,10 +624,17 @@ class SFCPlacementEnv(gym.Env):
                 occupied_mask[node_id] = False
             feasible_mask = feasible_mask & ~occupied_mask
 
-        # Calculate latency budget for remaining VNFs.
-        # min_remaining_latency is 0 because co-located VNFs have 0 hop latency,
-        # so we must not pessimistically reserve budget for future hops.
-        latency_budget = self.current_request.max_latency - self.current_latency
+        # Reserve latency for remaining hops (matching baseline pruning).
+        # min_link_latency=1.0 is a small optimistic estimate: same-node hops
+        # cost 0 so the agent is not blocked from co-locating, but far-away
+        # nodes that would leave zero budget for subsequent hops are pruned.
+        remaining_vnfs = self.current_request.num_vnfs - self.current_vnf_index - 1
+        min_remaining_latency = remaining_vnfs * 1.0
+        latency_budget = (
+            self.current_request.max_latency
+            - self.current_latency
+            - min_remaining_latency
+        )
 
         # 4. Bandwidth Check and Latency Check (only for resource-feasible nodes)
         if self.current_placement:

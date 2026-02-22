@@ -315,7 +315,13 @@ class AcceptanceRatioCallback(BaseCallback):
 
         for i, info in enumerate(infos):
             # Only record at episode end (when terminated)
-            if dones[i] if isinstance(dones, (list, tuple)) else dones:
+            if isinstance(dones, (list, tuple)) or (
+                hasattr(dones, "__getitem__") and hasattr(dones, "__len__")
+            ):
+                done_i = dones[i] if i < len(dones) else False
+            else:
+                done_i = dones if i == 0 else False
+            if done_i:
                 if "episode_acceptance_ratio" in info:
                     ratio = info["episode_acceptance_ratio"]
                     episode_num = info.get("total_episodes", len(self.episodes) + 1)
@@ -441,7 +447,13 @@ class BestModelCallback(BaseCallback):
 
         for i, info in enumerate(infos):
             # Only check at episode end
-            if dones[i] if isinstance(dones, (list, tuple)) else dones:
+            if isinstance(dones, (list, tuple)) or (
+                hasattr(dones, "__getitem__") and hasattr(dones, "__len__")
+            ):
+                done_i = dones[i] if i < len(dones) else False
+            else:
+                done_i = dones if i == 0 else False
+            if done_i:
                 if "episode_acceptance_ratio" in info:
                     self.recent_ratios.append(info["episode_acceptance_ratio"])
 
@@ -498,7 +510,13 @@ class LatencyViolationCallback(BaseCallback):
 
         for i, info in enumerate(infos):
             # Only record at episode end (when terminated)
-            if dones[i] if isinstance(dones, (list, tuple)) else dones:
+            if isinstance(dones, (list, tuple)) or (
+                hasattr(dones, "__getitem__") and hasattr(dones, "__len__")
+            ):
+                done_i = dones[i] if i < len(dones) else False
+            else:
+                done_i = dones if i == 0 else False
+            if done_i:
                 if "episode_latency_violation_ratio" in info:
                     ratio = info["episode_latency_violation_ratio"]
                     episode_num = info.get("total_episodes", len(self.episodes) + 1)
@@ -635,7 +653,13 @@ class SubstrateMetricsCallback(BaseCallback):
 
         for i, info in enumerate(infos):
             # Only record at episode end (when terminated)
-            if dones[i] if isinstance(dones, (list, tuple)) else dones:
+            if isinstance(dones, (list, tuple)) or (
+                hasattr(dones, "__getitem__") and hasattr(dones, "__len__")
+            ):
+                done_i = dones[i] if i < len(dones) else False
+            else:
+                done_i = dones if i == 0 else False
+            if done_i:
                 episode_num = info.get("total_episodes", len(self.episodes) + 1)
 
                 # Get episode-level substrate metrics
@@ -820,7 +844,13 @@ class TrainingEvalCallback(BaseCallback):
         dones = self.locals.get("dones", [])
 
         for i, info in enumerate(infos):
-            if dones[i] if isinstance(dones, (list, tuple)) else dones:
+            if isinstance(dones, (list, tuple)) or (
+                hasattr(dones, "__getitem__") and hasattr(dones, "__len__")
+            ):
+                done_i = dones[i] if i < len(dones) else False
+            else:
+                done_i = dones if i == 0 else False
+            if done_i:
                 if "episode_acceptance_ratio" not in info:
                     continue
                 episode_num = info.get("total_episodes", len(self.episodes) + 1)
@@ -843,6 +873,7 @@ class TrainingEvalCallback(BaseCallback):
                             "avg_sfc_tenancy": [],
                             "avg_vnf_tenancy": [],
                             "avg_substrate_utilization": [],
+                            "avg_risk_score": [],
                         }
                     self.by_algo[algo_name]["acceptance_ratio"].append(
                         res["acceptance_ratio"]
@@ -859,12 +890,18 @@ class TrainingEvalCallback(BaseCallback):
                     self.by_algo[algo_name]["avg_substrate_utilization"].append(
                         res.get("avg_substrate_utilization", 0.0)
                     )
+                    self.by_algo[algo_name]["avg_risk_score"].append(
+                        res.get("avg_risk_score", 0.0)
+                    )
 
                 if self.logger is not None:
                     ppo = results.get("MaskablePPO", {})
                     if ppo:
                         self.logger.record(
                             "custom/eval_acceptance_ratio", ppo["acceptance_ratio"]
+                        )
+                        self.logger.record(
+                            "custom/eval_risk_score", ppo.get("avg_risk_score", 0.0)
                         )
 
         if self.n_calls > 0 and self.n_calls % self.plot_freq == 0:
@@ -923,7 +960,40 @@ class TrainingEvalCallback(BaseCallback):
         plt.savefig(os.path.join(self.save_dir, "sfc_ppo_acceptance_ratio.png"))
         plt.close()
 
-        # 2) Latency violation ratio
+        # 2) Risk score
+        fig, ax = plt.subplots(figsize=(10, 6))
+        for algo in algos:
+            vals = self.by_algo[algo]["avg_risk_score"]
+            ax.plot(
+                self.episodes,
+                vals,
+                alpha=0.6,
+                label=algo,
+                linewidth=0.5,
+                color=color_map[algo],
+            )
+            if algo == "MaskablePPO" and len(vals) > 10:
+                window = min(50, len(vals) // 5)
+                if window > 1:
+                    x_ma, y_ma = moving_avg(vals, window)
+                    if x_ma is not None:
+                        ax.plot(
+                            x_ma,
+                            y_ma,
+                            color="purple",
+                            linewidth=2,
+                            label=f"Moving Avg ({window} ep)",
+                        )
+        ax.set_title("Avg Risk Score vs Episode Number (eval 1000 req/episode)")
+        ax.set_xlabel("Episode")
+        ax.set_ylabel("Risk Score (lower is better)")
+        ax.grid(True, linestyle="--", alpha=0.7)
+        ax.legend()
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.save_dir, "sfc_risk_training.png"))
+        plt.close()
+
+        # 3) Latency violation ratio
         fig, ax = plt.subplots(figsize=(10, 6))
         for algo in algos:
             vals = self.by_algo[algo]["latency_violation_ratio"]
@@ -959,7 +1029,7 @@ class TrainingEvalCallback(BaseCallback):
         plt.savefig(os.path.join(self.save_dir, "sfc_ppo_rejection_ratio.png"))
         plt.close()
 
-        # 3) Substrate utilization
+        # 4) Substrate utilization
         fig, ax = plt.subplots(figsize=(10, 6))
         for algo in algos:
             vals = self.by_algo[algo]["avg_substrate_utilization"]
@@ -998,7 +1068,7 @@ class TrainingEvalCallback(BaseCallback):
         plt.savefig(os.path.join(self.save_dir, "substrate_util_training.png"))
         plt.close()
 
-        # 4) SFC per node
+        # 5) SFC per node
         fig, ax = plt.subplots(figsize=(10, 6))
         for algo in algos:
             vals = self.by_algo[algo]["avg_sfc_tenancy"]
@@ -1033,7 +1103,7 @@ class TrainingEvalCallback(BaseCallback):
         plt.savefig(os.path.join(self.save_dir, "sfc_per_node_training.png"))
         plt.close()
 
-        # 5) VNF per node
+        # 6) VNF per node
         fig, ax = plt.subplots(figsize=(10, 6))
         for algo in algos:
             vals = self.by_algo[algo]["avg_vnf_tenancy"]

@@ -41,6 +41,7 @@ class SFCPlacementEnv(gym.Env):
         - Masked to prevent invalid placements (padded nodes always masked)
 
     Reward:
+        - +0.1 per intermediate VNF step (minus latency penalty for locality)
         - +acceptance_reward for successfully placing entire SFC
         - +rejection_penalty (negative) for failed placement
     """
@@ -79,6 +80,20 @@ class SFCPlacementEnv(gym.Env):
         # Reward configuration
         self.acceptance_reward = self.config["rewards"]["acceptance"]
         self.rejection_penalty = self.config["rewards"]["rejection"]
+        risk_cfg = self.config.get("risk", {})
+        self.risk_enabled = risk_cfg.get("enabled", False)
+        self.risk_lambda = float(risk_cfg.get("lambda", 0.0))
+        self.risk_weights = {
+            "vnf_tenancy": float(risk_cfg.get("w_vnf_tenancy", 0.25)),
+            "sfc_tenancy": float(risk_cfg.get("w_sfc_tenancy", 0.25)),
+            "inverse_security": float(risk_cfg.get("w_inverse_security", 0.25)),
+            "incidents": float(risk_cfg.get("w_incidents", 0.25)),
+        }
+        self.vnf_tenancy_cap = float(risk_cfg.get("vnf_tenancy_cap", 8.0))
+        self.sfc_tenancy_cap = float(risk_cfg.get("sfc_tenancy_cap", 4.0))
+        self.incident_base_p = float(risk_cfg.get("incident_base_p", 0.05))
+        self.incident_alpha = float(risk_cfg.get("incident_alpha", 1.5))
+        self.incident_beta = float(risk_cfg.get("incident_beta", 0.5))
 
         # Link latency bounds for latency-aware masking
         self.min_link_latency = self.config["substrate"]["links"]["latency"]["min"]
@@ -108,11 +123,14 @@ class SFCPlacementEnv(gym.Env):
         self.episode_sfc_tenancy_samples: list[float] = []
         self.episode_vnf_tenancy_samples: list[float] = []
         self.episode_substrate_utilization_samples: list[float] = []
+        self.episode_risk_scores: list[float] = []
+        self.episode_incidents: list[float] = []
 
         # Global statistics tracking (across all episodes)
         self.total_requests = 0
         self.accepted_requests = 0
         self.total_episodes = 0
+        self.total_incidents: float = 0.0
 
         # Rejection reason tracking
         self.rejection_reasons = {
@@ -189,6 +207,8 @@ class SFCPlacementEnv(gym.Env):
         self.episode_sfc_tenancy_samples = []
         self.episode_vnf_tenancy_samples = []
         self.episode_substrate_utilization_samples = []
+        self.episode_risk_scores = []
+        self.episode_incidents = []
         self.total_episodes += 1
 
         # Generate first SFC request for this episode
@@ -268,18 +288,20 @@ class SFCPlacementEnv(gym.Env):
         observation = self._get_observation()
         info = self._get_info()
 
-        # # Intermediate reward: small positive for each successful VNF placement
-        # reward = 0.5
+        # Intermediate reward shaping: small signal per VNF step so the agent
+        # can learn which placement decisions are good before the terminal
+        # accept/reject arrives.  Kept smaller than terminal reward (+1 / -1).
+        reward = 0.1  # progress bonus for each feasible VNF placement
 
-        # # Penalty for latency consumption (encourage locality)
-        # if len(self.current_placement) > 1:
-        #     prev_node = self.current_placement[-2]
-        #     curr_node = self.current_placement[-1]
-        #     hop_latency = self.substrate.get_path_latency(prev_node, curr_node)
-        #     norm_latency = min(hop_latency / self.current_request.max_latency, 1.0)
-        #     reward -= 0.5 * norm_latency
+        # Latency penalty: encourage locality / co-location
+        if len(self.current_placement) > 1:
+            prev_node = self.current_placement[-2]
+            curr_node = self.current_placement[-1]
+            hop_latency = self.substrate.get_path_latency(prev_node, curr_node)
+            norm_latency = min(hop_latency / self.current_request.max_latency, 1.0)
+            reward -= 0.3 * norm_latency
 
-        return observation, 0, False, False, info
+        return observation, reward, False, False, info
 
     def _handle_acceptance(self) -> tuple[np.ndarray, float, bool, bool, dict]:
         """Handle successful SFC placement."""
@@ -294,11 +316,19 @@ class SFCPlacementEnv(gym.Env):
         # Sample substrate metrics after placement
         self._sample_substrate_metrics()
 
+        # Compute risk before tick(): with TTL=1, tick() can release this placement,
+        # so risk must be computed while the placement is still registered.
+        risk_score, incidents = self._compute_request_risk(completed_placement)
+        self.episode_risk_scores.append(risk_score)
+        self.episode_incidents.append(incidents)
+        self.total_incidents += incidents
+        reward = self.acceptance_reward - self.risk_lambda * risk_score
+
         # Check if episode is complete
         terminated = self.episode_requests >= self.max_requests_per_episode
 
         if not terminated:
-            # Move to next request within the same episode
+            # Move to next request within the same episode (calls substrate.tick())
             self._start_new_request()
 
         observation = self._get_observation()
@@ -307,13 +337,21 @@ class SFCPlacementEnv(gym.Env):
         info["placement"] = completed_placement
         info["request_min_security"] = completed_min_security
         info["sfc_complete"] = True  # This SFC was completed
-
-        return observation, self.acceptance_reward, terminated, False, info
+        info["request_risk_score"] = risk_score
+        info["request_incidents"] = incidents
+        return observation, reward, terminated, False, info
 
     def _handle_rejection(
         self, reason: str, release_resources: bool = False
     ) -> tuple[np.ndarray, float, bool, bool, dict]:
         """Handle SFC rejection."""
+        # Rejected requests get risk 0 (consistent with compare.py). We must assign
+        # before releasing resources so risk is never computed from substrate state
+        # after release, which would be wrong and inconsistent with baselines.
+        risk_score, incidents = 0.0, 0.0
+        self.episode_risk_scores.append(risk_score)
+        self.episode_incidents.append(incidents)
+
         # Track rejection reason
         self.episode_rejections += 1
         if reason in self.rejection_reasons:
@@ -350,8 +388,71 @@ class SFCPlacementEnv(gym.Env):
         info["success"] = False
         info["rejection_reason"] = reason
         info["sfc_complete"] = True  # This SFC was completed (rejected)
+        info["request_risk_score"] = risk_score
+        info["request_incidents"] = incidents
 
-        return observation, self.rejection_penalty, terminated, False, info
+        reward = self.rejection_penalty - self.risk_lambda * risk_score
+        return observation, reward, terminated, False, info
+
+    def _compute_request_risk(self, placement: list[int]) -> tuple[float, float]:
+        """Compute risk score and expected incidents for one processed request (deterministic, matches evaluation)."""
+        if not self.risk_enabled or not placement:
+            return 0.0, 0.0
+
+        sfcs_per_node = self.substrate.get_sfcs_per_node()
+        vnfs_per_node = self.substrate.get_vnfs_per_node()
+        occupied_sfc_nodes = [v for v in sfcs_per_node.values() if v > 0]
+        occupied_vnf_nodes = [v for v in vnfs_per_node.values() if v > 0]
+
+        avg_sfc_tenancy = (
+            sum(occupied_sfc_nodes) / len(occupied_sfc_nodes)
+            if occupied_sfc_nodes
+            else 0.0
+        )
+        avg_vnf_tenancy = (
+            sum(occupied_vnf_nodes) / len(occupied_vnf_nodes)
+            if occupied_vnf_nodes
+            else 0.0
+        )
+        sfc_tenancy_risk = min(avg_sfc_tenancy / max(self.sfc_tenancy_cap, 1e-6), 1.0)
+        vnf_tenancy_risk = min(avg_vnf_tenancy / max(self.vnf_tenancy_cap, 1e-6), 1.0)
+
+        if placement:
+            inverse_security_risk = float(
+                np.mean(
+                    [
+                        1.0
+                        - (
+                            self.substrate.node_resources[node_id]["security_score"]
+                            / max(self.max_security, 1e-6)
+                        )
+                        for node_id in placement
+                    ]
+                )
+            )
+        else:
+            inverse_security_risk = 0.0
+
+        expected_incidents = 0.0
+        for node_id in placement:
+            node_security = self.substrate.node_resources[node_id]["security_score"]
+            security_norm = min(max(node_security / max(self.max_security, 1e-6), 0.0), 1.0)
+            load_norm = min(
+                max(vnfs_per_node.get(node_id, 0) / max(self.vnf_tenancy_cap, 1e-6), 0.0),
+                1.0,
+            )
+            p_incident = self.incident_base_p * ((1.0 - security_norm) ** self.incident_alpha)
+            p_incident *= 1.0 + self.incident_beta * load_norm
+            expected_incidents += min(max(p_incident, 0.0), 1.0)
+        incident_risk = min(expected_incidents / max(len(placement), 1), 1.0)
+
+        risk_score = (
+            self.risk_weights["vnf_tenancy"] * vnf_tenancy_risk
+            + self.risk_weights["sfc_tenancy"] * sfc_tenancy_risk
+            + self.risk_weights["inverse_security"] * inverse_security_risk
+            + self.risk_weights["incidents"] * incident_risk
+        )
+        return float(max(risk_score, 0.0)), float(expected_incidents)
 
     def _sample_substrate_metrics(self):
         """Sample substrate tenancy and utilization metrics after each request."""
@@ -434,9 +535,12 @@ class SFCPlacementEnv(gym.Env):
             remaining_storage = sum(v.storage for v in remaining_vnfs_list)
         else:
             remaining_ram = remaining_cpu = remaining_storage = 0.0
-        remaining_ram_norm = remaining_ram / (self.max_vnfs * self.max_vnf_ram)
-        remaining_cpu_norm = remaining_cpu / (self.max_vnfs * self.max_vnf_cpu)
-        remaining_storage_norm = remaining_storage / (self.max_vnfs * self.max_vnf_storage)
+        denom_ram = self.max_vnfs * self.max_vnf_ram
+        denom_cpu = self.max_vnfs * self.max_vnf_cpu
+        denom_storage = self.max_vnfs * self.max_vnf_storage
+        remaining_ram_norm = remaining_ram / denom_ram if denom_ram > 0 else 0.0
+        remaining_cpu_norm = remaining_cpu / denom_cpu if denom_cpu > 0 else 0.0
+        remaining_storage_norm = remaining_storage / denom_storage if denom_storage > 0 else 0.0
 
         # Latency progress: fraction of budget consumed so far
         latency_progress = (
@@ -516,6 +620,16 @@ class SFCPlacementEnv(gym.Env):
             if self.episode_substrate_utilization_samples
             else 0.0
         )
+        episode_avg_risk_score = (
+            sum(self.episode_risk_scores) / len(self.episode_risk_scores)
+            if self.episode_risk_scores
+            else 0.0
+        )
+        episode_avg_incidents = (
+            sum(self.episode_incidents) / len(self.episode_incidents)
+            if self.episode_incidents
+            else 0.0
+        )
 
         return {
             "current_vnf_index": self.current_vnf_index,
@@ -536,10 +650,13 @@ class SFCPlacementEnv(gym.Env):
             "episode_avg_sfc_tenancy": episode_avg_sfc_tenancy,
             "episode_avg_vnf_tenancy": episode_avg_vnf_tenancy,
             "episode_avg_substrate_util": episode_avg_substrate_util,
+            "episode_avg_risk_score": episode_avg_risk_score,
+            "episode_avg_incidents": episode_avg_incidents,
             # Global stats
             "total_requests": self.total_requests,
             "accepted_requests": self.accepted_requests,
             "total_episodes": self.total_episodes,
+            "total_incidents": self.total_incidents,
             "acceptance_ratio": (
                 self.accepted_requests / self.total_requests
                 if self.total_requests > 0
@@ -625,16 +742,17 @@ class SFCPlacementEnv(gym.Env):
             feasible_mask = feasible_mask & ~occupied_mask
 
         # Reserve latency for remaining hops (matching baseline pruning).
-        # min_link_latency=1.0 is a small optimistic estimate: same-node hops
-        # cost 0 so the agent is not blocked from co-locating, but far-away
-        # nodes that would leave zero budget for subsequent hops are pruned.
         remaining_vnfs = self.current_request.num_vnfs - self.current_vnf_index - 1
-        min_remaining_latency = remaining_vnfs * 1.0
-        latency_budget = (
+        min_remaining_latency = remaining_vnfs * self.min_link_latency
+        raw_budget = (
             self.current_request.max_latency
             - self.current_latency
             - min_remaining_latency
         )
+        # Clamp to non-negative: if we're over budget, only zero-latency hops are
+        # allowed; a negative budget would make hop_latency <= budget impossible
+        # and incorrectly mask out all actions, forcing the fallback to action 0.
+        latency_budget = max(0.0, raw_budget)
 
         # 4. Bandwidth Check and Latency Check (only for resource-feasible nodes)
         if self.current_placement:
@@ -653,6 +771,12 @@ class SFCPlacementEnv(gym.Env):
         else:
             # First VNF: no bandwidth/latency constraints yet
             mask[: self.num_nodes] = feasible_mask
+
+        # Safety: if no valid action exists, enable action 0 so MaskablePPO
+        # can still sample.  step() will catch it via _is_valid_action and
+        # auto-reject the SFC.
+        if not mask.any():
+            mask[0] = True
 
         return mask
 

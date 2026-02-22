@@ -88,12 +88,26 @@ training:
   gae_lambda: 0.97
   clip_range: 0.2
   max_requests_per_episode: 1000 
-  randomize_topology: true
+  randomize_topology: false
 
 # Reward Configuration
 rewards:
   acceptance: 1
   rejection: -1
+
+# Risk-aware objective (used in training/eval when enabled)
+risk:
+  enabled: true
+  lambda: 0.35               # Penalty multiplier: reward -= lambda * risk_score
+  w_vnf_tenancy: 0.25
+  w_sfc_tenancy: 0.20
+  w_inverse_security: 0.25
+  w_incidents: 0.30
+  vnf_tenancy_cap: 8.0       # Normalization cap for avg VNFs per occupied node
+  sfc_tenancy_cap: 4.0       # Normalization cap for avg SFCs per occupied node
+  incident_base_p: 0.05      # Base per-node incident probability
+  incident_alpha: 1.5        # Sensitivity to inverse security
+  incident_beta: 0.5         # Amplification from node load
 
 # Evaluation Configuration
 evaluation:

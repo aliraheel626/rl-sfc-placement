@@ -116,9 +116,10 @@ def train(
         lr = training_config.get("learning_rate", 1e-4)
         if training_config.get("use_linear_lr_schedule", False):
             lr_initial = training_config.get("lr_initial", 3e-4)
-            # progress_remaining: 1 -> 0 over training; LR goes lr_initial -> lr
+            lr_final = lr  # capture so closure doesn't see lr reassigned to lr_schedule
+            # progress_remaining: 1 -> 0 over training; LR goes lr_initial -> lr_final
             def lr_schedule(progress_remaining: float) -> float:
-                return lr + (lr_initial - lr) * progress_remaining
+                return lr_final + (lr_initial - lr_final) * progress_remaining
             lr = lr_schedule
         model = create_maskable_ppo(
             env,

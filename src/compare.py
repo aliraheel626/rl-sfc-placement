@@ -11,6 +11,7 @@ import argparse
 from typing import Optional
 from pathlib import Path
 import copy
+import random
 import time
 
 import numpy as np
@@ -28,11 +29,89 @@ from src.baselines import (
 )
 
 
+def _build_risk_config(config: dict) -> dict:
+    """Build risk configuration with defaults."""
+    risk = config.get("risk", {})
+    return {
+        "enabled": bool(risk.get("enabled", False)),
+        "w_vnf_tenancy": float(risk.get("w_vnf_tenancy", 0.25)),
+        "w_sfc_tenancy": float(risk.get("w_sfc_tenancy", 0.25)),
+        "w_inverse_security": float(risk.get("w_inverse_security", 0.25)),
+        "w_incidents": float(risk.get("w_incidents", 0.25)),
+        "vnf_tenancy_cap": float(risk.get("vnf_tenancy_cap", 8.0)),
+        "sfc_tenancy_cap": float(risk.get("sfc_tenancy_cap", 4.0)),
+        "incident_base_p": float(risk.get("incident_base_p", 0.05)),
+        "incident_alpha": float(risk.get("incident_alpha", 1.5)),
+        "incident_beta": float(risk.get("incident_beta", 0.5)),
+    }
+
+
+def _compute_risk_metrics(
+    substrate: SubstrateNetwork, placement: list[int], risk_cfg: dict, max_security: float
+) -> tuple[float, float]:
+    """Compute deterministic risk score and expected incidents for one request."""
+    if not risk_cfg.get("enabled", False) or not placement:
+        return 0.0, 0.0
+
+    sfcs_per_node = substrate.get_sfcs_per_node()
+    vnfs_per_node = substrate.get_vnfs_per_node()
+    occupied_sfc_nodes = [v for v in sfcs_per_node.values() if v > 0]
+    occupied_vnf_nodes = [v for v in vnfs_per_node.values() if v > 0]
+    avg_sfc_tenancy = (
+        sum(occupied_sfc_nodes) / len(occupied_sfc_nodes)
+        if occupied_sfc_nodes
+        else 0.0
+    )
+    avg_vnf_tenancy = (
+        sum(occupied_vnf_nodes) / len(occupied_vnf_nodes)
+        if occupied_vnf_nodes
+        else 0.0
+    )
+    sfc_tenancy_risk = min(avg_sfc_tenancy / max(risk_cfg["sfc_tenancy_cap"], 1e-6), 1.0)
+    vnf_tenancy_risk = min(avg_vnf_tenancy / max(risk_cfg["vnf_tenancy_cap"], 1e-6), 1.0)
+
+    inverse_security_risk = float(
+        np.mean(
+            [
+                1.0
+                - (
+                    substrate.node_resources[node_id]["security_score"]
+                    / max(max_security, 1e-6)
+                )
+                for node_id in placement
+            ]
+        )
+    )
+
+    expected_incidents = 0.0
+    for node_id in placement:
+        node_security = substrate.node_resources[node_id]["security_score"]
+        security_norm = min(max(node_security / max(max_security, 1e-6), 0.0), 1.0)
+        load_norm = min(
+            max(vnfs_per_node.get(node_id, 0) / max(risk_cfg["vnf_tenancy_cap"], 1e-6), 0.0),
+            1.0,
+        )
+        p_incident = risk_cfg["incident_base_p"] * ((1.0 - security_norm) ** risk_cfg["incident_alpha"])
+        p_incident *= 1.0 + risk_cfg["incident_beta"] * load_norm
+        expected_incidents += min(max(p_incident, 0.0), 1.0)
+    incident_risk = min(expected_incidents / max(len(placement), 1), 1.0)
+
+    risk_score = (
+        risk_cfg["w_vnf_tenancy"] * vnf_tenancy_risk
+        + risk_cfg["w_sfc_tenancy"] * sfc_tenancy_risk
+        + risk_cfg["w_inverse_security"] * inverse_security_risk
+        + risk_cfg["w_incidents"] * incident_risk
+    )
+    return float(max(risk_score, 0.0)), float(expected_incidents)
+
+
 def evaluate_baseline(
     substrate: SubstrateNetwork,
     request_generator: RequestGenerator,
     algorithm: BasePlacement,
     num_requests: int,
+    risk_cfg: dict,
+    max_security: float,
     verbose: bool = False,
 ) -> dict:
     """
@@ -61,6 +140,8 @@ def evaluate_baseline(
     sfc_tenancy_samples = []  # Track SFC tenancy per occupied node over time
     vnf_tenancy_samples = []  # Track VNF tenancy per occupied node over time
     substrate_utilization_samples = []  # Track % of nodes being used over time
+    risk_score_samples = []  # Per-request risk score
+    total_expected_incidents = 0.0
 
     start_time = time.perf_counter()
 
@@ -113,6 +194,11 @@ def evaluate_baseline(
 
             # Register for TTL tracking
             substrate_copy.register_placement(request, placement)
+            risk_score, expected_incidents = _compute_risk_metrics(
+                substrate_copy, placement, risk_cfg, max_security
+            )
+            risk_score_samples.append(risk_score)
+            total_expected_incidents += expected_incidents
 
         # Sample tenancy metrics after each request (regardless of accept/reject)
         sfcs_per_node = substrate_copy.get_sfcs_per_node()
@@ -139,6 +225,8 @@ def evaluate_baseline(
 
         if placement is None:
             rejected += 1
+            # Rejected: no placement; risk 0 (consistent with env and RL eval)
+            risk_score_samples.append(0.0)
 
     # Compute metrics
     total = accepted + rejected
@@ -164,6 +252,8 @@ def evaluate_baseline(
         if substrate_utilization_samples
         else 0.0
     )
+    avg_risk_score = sum(risk_score_samples) / len(risk_score_samples) if risk_score_samples else 0.0
+    avg_expected_incidents = total_expected_incidents / total if total > 0 else 0.0
 
     # Baselines do not track rejection reason; use 0 for latency violation ratio
     latency_violation_ratio = 0.0
@@ -181,11 +271,14 @@ def evaluate_baseline(
         "avg_sfc_tenancy": avg_sfc_tenancy,
         "avg_vnf_tenancy": avg_vnf_tenancy,
         "avg_substrate_utilization": avg_substrate_utilization,
+        "avg_risk_score": avg_risk_score,
+        "avg_expected_incidents": avg_expected_incidents,
         "latencies": latencies,
         # Per-request samples for rolling average plots
         "sfc_tenancy_samples": sfc_tenancy_samples,
         "vnf_tenancy_samples": vnf_tenancy_samples,
         "substrate_utilization_samples": substrate_utilization_samples,
+        "risk_score_samples": risk_score_samples,
     }
 
 
@@ -214,6 +307,8 @@ def evaluate_rl_agent(
     Returns:
         Dictionary with evaluation metrics
     """
+    config = load_config(config_path)
+
     # Create masked environment (optionally on same substrate as baselines).
     # Use one long episode (no resets) so utilization / VNF-per-node match baseline semantics.
     env = create_masked_env(
@@ -237,6 +332,8 @@ def evaluate_rl_agent(
     sfc_tenancy_samples = []  # Track SFC tenancy per occupied node over time
     vnf_tenancy_samples = []  # Track VNF tenancy per occupied node over time
     substrate_utilization_samples = []  # Track % of nodes being used over time
+    risk_score_samples = []  # Per-request risk score
+    total_expected_incidents = 0.0
 
     # Reset environment once
     obs, info = env.reset()
@@ -291,10 +388,18 @@ def evaluate_rl_agent(
                         else 0.0
                     )
                     security_margins.append(avg_placement_margin)
+                # Use risk from env info (computed before tick()); recomputing after step()
+                # would use post-tick substrate state and disagree with training rewards.
+                risk_score = info.get("request_risk_score", 0.0)
+                expected_incidents = info.get("request_incidents", 0.0)
+                risk_score_samples.append(risk_score)
+                total_expected_incidents += expected_incidents
             else:
                 rejected += 1
                 if info.get("rejection_reason") == "latency_violation":
                     latency_violations += 1
+                # Rejected: use env's risk from info (0) for consistency with training.
+                risk_score_samples.append(info.get("request_risk_score", 0.0))
 
             # Sample tenancy metrics after each request
             sfcs_per_node = env.unwrapped.substrate.get_sfcs_per_node()
@@ -352,6 +457,8 @@ def evaluate_rl_agent(
         if substrate_utilization_samples
         else 0.0
     )
+    avg_risk_score = sum(risk_score_samples) / len(risk_score_samples) if risk_score_samples else 0.0
+    avg_expected_incidents = total_expected_incidents / total if total > 0 else 0.0
 
     return {
         "algorithm": "MaskablePPO",
@@ -366,11 +473,14 @@ def evaluate_rl_agent(
         "avg_sfc_tenancy": avg_sfc_tenancy,
         "avg_vnf_tenancy": avg_vnf_tenancy,
         "avg_substrate_utilization": avg_substrate_utilization,
+        "avg_risk_score": avg_risk_score,
+        "avg_expected_incidents": avg_expected_incidents,
         "latencies": latencies,
         # Per-request samples for rolling average plots
         "sfc_tenancy_samples": sfc_tenancy_samples,
         "vnf_tenancy_samples": vnf_tenancy_samples,
         "substrate_utilization_samples": substrate_utilization_samples,
+        "risk_score_samples": risk_score_samples,
     }
 
 
@@ -397,6 +507,8 @@ def run_episode_eval(
     config = load_config(config_path)
     substrate = SubstrateNetwork(config["substrate"])
     request_generator = RequestGenerator(config["sfc"])
+    risk_cfg = _build_risk_config(config)
+    max_security = config["substrate"]["resources"]["security_score"]["max"]
 
     results = {}
     baselines = [
@@ -405,16 +517,25 @@ def run_episode_eval(
         BestFitPlacement(),
     ]
 
+    # Snapshot RNG state so every algorithm sees the same request stream.
+    initial_rng_state = random.getstate()
+
     for algorithm in baselines:
+        random.setstate(initial_rng_state)
+        substrate.reset()
+        request_generator.reset()
         result = evaluate_baseline(
             substrate,
             request_generator,
             algorithm,
             num_requests=num_requests,
+            risk_cfg=risk_cfg,
+            max_security=max_security,
             verbose=verbose,
         )
         results[result["algorithm"]] = result
 
+    random.setstate(initial_rng_state)
     substrate.reset()
     request_generator.reset()
     result = evaluate_rl_agent(
@@ -456,6 +577,8 @@ def compare_all(
     # Create substrate network and request generator
     substrate = SubstrateNetwork(config["substrate"])
     request_generator = RequestGenerator(config["sfc"])
+    risk_cfg = _build_risk_config(config)
+    max_security = config["substrate"]["resources"]["security_score"]["max"]
 
     results = {}
 
@@ -466,15 +589,23 @@ def compare_all(
         BestFitPlacement(),
     ]
 
+    # Snapshot RNG state so every algorithm sees the same request stream.
+    initial_rng_state = random.getstate()
+
     for algorithm in baselines:
         if verbose:
             print(f"\nEvaluating {algorithm.__class__.__name__}...")
 
+        random.setstate(initial_rng_state)
+        substrate.reset()
+        request_generator.reset()
         result = evaluate_baseline(
             substrate,
             request_generator,
             algorithm,
             num_requests=num_requests,
+            risk_cfg=risk_cfg,
+            max_security=max_security,
             verbose=verbose,
         )
         results[result["algorithm"]] = result
@@ -483,6 +614,7 @@ def compare_all(
     if model_path and Path(model_path).exists():
         if verbose:
             print("\nEvaluating RL Agent...")
+        random.setstate(initial_rng_state)
         substrate.reset()
         request_generator.reset()
         result = evaluate_rl_agent(
@@ -499,22 +631,23 @@ def compare_all(
 
     # Print comparison table
     if verbose:
-        print("\n" + "=" * 160)
+        print("\n" + "=" * 190)
         print("COMPARISON RESULTS")
-        print("=" * 160)
+        print("=" * 190)
         print(
-            f"{'Algorithm':<20} {'Accepted':<10} {'Rejected':<10} {'Ratio':<10} {'Avg Latency':<12} {'Avg Sec Margin':<14} {'Avg SFC/Node':<14} {'Avg VNF/Node':<14} {'Substrate Util':<14} {'Avg Time (ms)':<14}"
+            f"{'Algorithm':<20} {'Accepted':<10} {'Rejected':<10} {'Ratio':<10} {'Avg Latency':<12} {'Avg Sec Margin':<14} {'Avg SFC/Node':<14} {'Avg VNF/Node':<14} {'Substrate Util':<14} {'Avg Risk':<10} {'Exp Incidents':<14} {'Avg Time (ms)':<14}"
         )
-        print("-" * 160)
+        print("-" * 190)
 
         for name, result in results.items():
             print(
                 f"{name:<20} {result['accepted']:<10} {result['rejected']:<10} "
                 f"{result['acceptance_ratio']:.4f}     {result['avg_latency']:<12.2f} {result.get('avg_sec_margin', 0):<14.4f} "
-                f"{result.get('avg_sfc_tenancy', 0):<14.2f} {result.get('avg_vnf_tenancy', 0):<14.2f} {result.get('avg_substrate_utilization', 0):<14.2%} {result.get('avg_time_ms', 0):.3f}"
+                f"{result.get('avg_sfc_tenancy', 0):<14.2f} {result.get('avg_vnf_tenancy', 0):<14.2f} {result.get('avg_substrate_utilization', 0):<14.2%} "
+                f"{result.get('avg_risk_score', 0):<10.4f} {result.get('avg_expected_incidents', 0):<14.4f} {result.get('avg_time_ms', 0):.3f}"
             )
 
-        print("=" * 160)
+        print("=" * 190)
 
     # Generate bar chart plot if requested
     if save_plot:
@@ -611,6 +744,11 @@ def plot_rolling_averages(results: dict, output_dir: str, window_size: int = 50)
             "substrate_utilization_samples",
             "Substrate Utilization",
             "substrate_util_rolling.png",
+        ),
+        (
+            "risk_score_samples",
+            "Risk Score",
+            "risk_score_rolling.png",
         ),
     ]
 

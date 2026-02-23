@@ -186,17 +186,14 @@ def _compute_risk_metrics(
     vnf_tenancy_risk = _robust_ratio(avg_vnf_tenancy, vnf_reference)
 
     placement_nodes = sorted(set(placement))
-    inverse_security_risk = float(
-        np.mean(
-            [
-                1.0
-                - _effective_security(
-                    substrate, node_id, max_security, node_incident_pressure, risk_cfg
-                )[1]
-                for node_id in placement_nodes
-            ]
+    n_nodes = len(placement_nodes)
+
+    security_norms = np.empty(n_nodes, dtype=np.float64)
+    for idx, node_id in enumerate(placement_nodes):
+        _, security_norms[idx] = _effective_security(
+            substrate, node_id, max_security, node_incident_pressure, risk_cfg
         )
-    )
+    inverse_security_risk = float(np.mean(1.0 - security_norms))
     inverse_security_risk = min(max(inverse_security_risk, 0.0), 1.0)
 
     exposure_steps = int(max(1, min(risk_cfg["incident_steps_cap"], request_ttl)))
@@ -205,31 +202,34 @@ def _compute_risk_metrics(
         risk_cfg["load_ref_floor"],
         float(np.percentile(list(vnfs_per_node.values()), 75)) if vnfs_per_node else 0.0,
     )
-    expected_incidents = 0.0
-    realized_incidents = 0.0
-    for _ in range(exposure_steps):
-        for node_id in placement_nodes:
-            _, security_norm = _effective_security(
-                substrate, node_id, max_security, node_incident_pressure, risk_cfg
-            )
-            load_norm = _robust_ratio(vnfs_per_node.get(node_id, 0), load_reference)
-            pressure = node_incident_pressure.get(node_id, 0.0)
-            p_incident = risk_cfg["incident_base_rate"] * (
-                (1.0 - security_norm) ** risk_cfg["incident_alpha"]
-            )
-            p_incident *= 1.0 + risk_cfg["incident_beta"] * load_norm
-            p_incident *= 1.0 + pressure
-            p_incident = min(max(p_incident, 0.0), 1.0)
-            expected_incidents += p_incident
-            if random.random() < p_incident:
-                realized_incidents += 1.0
-                node_incident_pressure[node_id] = min(
-                    1.0,
-                    node_incident_pressure.get(node_id, 0.0)
-                    + risk_cfg["incident_pressure_gain"],
-                )
 
-    trials = max(len(placement_nodes) * exposure_steps, 1)
+    load_norms = np.empty(n_nodes, dtype=np.float64)
+    pressures = np.empty(n_nodes, dtype=np.float64)
+    for idx, node_id in enumerate(placement_nodes):
+        load_norms[idx] = _robust_ratio(vnfs_per_node.get(node_id, 0), load_reference)
+        pressures[idx] = node_incident_pressure.get(node_id, 0.0)
+
+    p_base = risk_cfg["incident_base_rate"] * np.power(
+        1.0 - security_norms, risk_cfg["incident_alpha"]
+    )
+    p_base *= 1.0 + risk_cfg["incident_beta"] * load_norms
+    p_base *= 1.0 + pressures
+    np.clip(p_base, 0.0, 1.0, out=p_base)
+
+    rolls = np.random.random((exposure_steps, n_nodes))
+    hits = rolls < p_base[np.newaxis, :]
+    expected_incidents = float(p_base.sum() * exposure_steps)
+    realized_incidents = float(hits.sum())
+    pressure_gain = risk_cfg["incident_pressure_gain"]
+    for idx, node_id in enumerate(placement_nodes):
+        node_hits = int(hits[:, idx].sum())
+        if node_hits > 0:
+            node_incident_pressure[node_id] = min(
+                1.0,
+                node_incident_pressure.get(node_id, 0.0) + pressure_gain * node_hits,
+            )
+
+    trials = max(n_nodes * exposure_steps, 1)
     incident_risk = min(realized_incidents / trials, 1.0)
     weight_sum = max(
         risk_cfg["w_vnf_tenancy"]
@@ -752,11 +752,13 @@ def run_episode_eval(
         BestFitPlacement(),
     ]
 
-    # Snapshot RNG state so every algorithm sees the same request stream.
+    # Snapshot RNG state so every algorithm sees the same request/incident stream.
     initial_rng_state = random.getstate()
+    initial_np_rng_state = np.random.get_state()
 
     for algorithm in baselines:
         random.setstate(initial_rng_state)
+        np.random.set_state(initial_np_rng_state)
         substrate.reset()
         request_generator.reset()
         result = evaluate_baseline(
@@ -772,6 +774,7 @@ def run_episode_eval(
         results[result["algorithm"]] = result
 
     random.setstate(initial_rng_state)
+    np.random.set_state(initial_np_rng_state)
     substrate.reset()
     request_generator.reset()
     result = evaluate_rl_agent(
@@ -826,14 +829,16 @@ def compare_all(
         BestFitPlacement(),
     ]
 
-    # Snapshot RNG state so every algorithm sees the same request stream.
+    # Snapshot RNG state so every algorithm sees the same request/incident stream.
     initial_rng_state = random.getstate()
+    initial_np_rng_state = np.random.get_state()
 
     for algorithm in baselines:
         if verbose:
             print(f"\nEvaluating {algorithm.__class__.__name__}...")
 
         random.setstate(initial_rng_state)
+        np.random.set_state(initial_np_rng_state)
         substrate.reset()
         request_generator.reset()
         result = evaluate_baseline(
@@ -853,6 +858,7 @@ def compare_all(
         if verbose:
             print("\nEvaluating RL Agent...")
         random.setstate(initial_rng_state)
+        np.random.set_state(initial_np_rng_state)
         substrate.reset()
         request_generator.reset()
         result = evaluate_rl_agent(

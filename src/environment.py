@@ -507,17 +507,15 @@ class SFCPlacementEnv(gym.Env):
         sfc_tenancy_risk = self._robust_ratio(avg_sfc_tenancy, sfc_reference)
 
         placement_nodes = sorted(set(placement))
-        inverse_security_risk = float(
-            np.mean(
-                [
-                    1.0
-                    - (
-                        self._effective_node_security(node_id) / max(self.max_security, 1e-6)
-                    )
-                    for node_id in placement_nodes
-                ]
+        n_nodes = len(placement_nodes)
+
+        max_sec_inv = 1.0 / max(self.max_security, 1e-6)
+        security_norms = np.empty(n_nodes, dtype=np.float64)
+        for idx, node_id in enumerate(placement_nodes):
+            security_norms[idx] = min(
+                max(self._effective_node_security(node_id) * max_sec_inv, 0.0), 1.0
             )
-        )
+        inverse_security_risk = float(np.mean(1.0 - security_norms))
         inverse_security_risk = min(max(inverse_security_risk, 0.0), 1.0)
 
         ttl = self.current_request.ttl if self.current_request is not None else 1
@@ -530,31 +528,33 @@ class SFCPlacementEnv(gym.Env):
             else 0.0,
         )
 
-        expected_incidents = 0.0
-        realized_incidents = 0.0
-        for _ in range(exposure_steps):
-            for node_id in placement_nodes:
-                security_norm = min(
-                    max(self._effective_node_security(node_id) / max(self.max_security, 1e-6), 0.0),
-                    1.0,
-                )
-                load_norm = self._robust_ratio(vnfs_per_node.get(node_id, 0), load_reference)
-                pressure = self.node_incident_pressure.get(node_id, 0.0)
-                p_incident = self.incident_base_rate * ((1.0 - security_norm) ** self.incident_alpha)
-                p_incident *= 1.0 + self.incident_beta * load_norm
-                p_incident *= 1.0 + pressure
-                p_incident = min(max(p_incident, 0.0), 1.0)
-                expected_incidents += p_incident
-                if random.random() < p_incident:
-                    realized_incidents += 1.0
-                    updated_pressure = min(
-                        1.0,
-                        self.node_incident_pressure.get(node_id, 0.0)
-                        + self.incident_pressure_gain,
-                    )
-                    self.node_incident_pressure[node_id] = updated_pressure
+        load_norms = np.empty(n_nodes, dtype=np.float64)
+        pressures = np.empty(n_nodes, dtype=np.float64)
+        for idx, node_id in enumerate(placement_nodes):
+            v = max(float(vnfs_per_node.get(node_id, 0)), 0.0)
+            safe_ref = max(load_reference, 1e-6)
+            load_norms[idx] = min(v / (v + safe_ref), 1.0)
+            pressures[idx] = self.node_incident_pressure.get(node_id, 0.0)
 
-        trials = max(len(placement_nodes) * exposure_steps, 1)
+        p_base = self.incident_base_rate * np.power(1.0 - security_norms, self.incident_alpha)
+        p_base *= 1.0 + self.incident_beta * load_norms
+        p_base *= 1.0 + pressures
+        np.clip(p_base, 0.0, 1.0, out=p_base)
+
+        rolls = np.random.random((exposure_steps, n_nodes))
+        hits = rolls < p_base[np.newaxis, :]
+        expected_incidents = float(p_base.sum() * exposure_steps)
+        realized_incidents = float(hits.sum())
+        for idx, node_id in enumerate(placement_nodes):
+            node_hits = int(hits[:, idx].sum())
+            if node_hits > 0:
+                self.node_incident_pressure[node_id] = min(
+                    1.0,
+                    self.node_incident_pressure.get(node_id, 0.0)
+                    + self.incident_pressure_gain * node_hits,
+                )
+
+        trials = max(n_nodes * exposure_steps, 1)
         incident_risk = min(realized_incidents / trials, 1.0)
         weight_sum = max(sum(self.risk_weights.values()), 1e-6)
         risk_score = (

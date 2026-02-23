@@ -828,6 +828,7 @@ class TrainingEvalCallback(BaseCallback):
         save_dir: str = "models/",
         num_requests: int = 1000,
         plot_freq: int = 10000,
+        eval_freq: int = 20000,
         verbose: int = 0,
     ):
         super().__init__(verbose)
@@ -835,6 +836,8 @@ class TrainingEvalCallback(BaseCallback):
         self.save_dir = save_dir
         self.num_requests = num_requests
         self.plot_freq = plot_freq
+        self.eval_freq = eval_freq
+        self._last_eval_step = 0
         self.episodes = []
         # algorithm_name -> list of values per episode
         self.by_algo = {}
@@ -853,6 +856,11 @@ class TrainingEvalCallback(BaseCallback):
             if done_i:
                 if "episode_acceptance_ratio" not in info:
                     continue
+
+                if (self.n_calls - self._last_eval_step) < self.eval_freq:
+                    continue
+                self._last_eval_step = self.n_calls
+
                 episode_num = info.get("total_episodes", len(self.episodes) + 1)
 
                 from src.compare import run_episode_eval

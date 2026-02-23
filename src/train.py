@@ -144,12 +144,13 @@ def train(
     save_dir = str(Path(save_path).parent)
     eval_requests = config.get("evaluation", {}).get("num_requests", 1000)
 
-    # 1. Eval at end of each episode (1000 requests) + all baselines; plot acceptance, rejection, substrate, sfc/node, vnf/node
+    # 1. Periodic full evaluation (4 algos × num_requests each) + plots
     training_eval_callback = TrainingEvalCallback(
         config_path=config_path,
         save_dir=save_dir,
         num_requests=eval_requests,
         plot_freq=plot_freq,
+        eval_freq=20000,
         verbose=1,
     )
 

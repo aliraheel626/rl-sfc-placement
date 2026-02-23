@@ -129,15 +129,17 @@ def run_sweep(
         row = {
             "lambda": lam,
             "ppo_acceptance_ratio": ppo.get("acceptance_ratio", 0.0),
-            "ppo_avg_risk_score": ppo.get("avg_risk_score", 0.0),
+            "ppo_avg_risk_integral": ppo.get("avg_risk_integral", ppo.get("avg_risk_score", 0.0)),
             "ppo_avg_expected_incidents": ppo.get("avg_expected_incidents", 0.0),
+            "ppo_avg_realized_incidents": ppo.get("avg_realized_incidents", 0.0),
+            "ppo_avg_incident_cost": ppo.get("avg_incident_cost", 0.0),
             "ppo_avg_latency": ppo.get("avg_latency", 0.0),
             "viterbi_acceptance_ratio": viterbi.get("acceptance_ratio", 0.0),
-            "viterbi_avg_risk_score": viterbi.get("avg_risk_score", 0.0),
+            "viterbi_avg_risk_integral": viterbi.get("avg_risk_integral", viterbi.get("avg_risk_score", 0.0)),
             "delta_acceptance_vs_viterbi": ppo.get("acceptance_ratio", 0.0)
             - viterbi.get("acceptance_ratio", 0.0),
-            "delta_risk_vs_viterbi": ppo.get("avg_risk_score", 0.0)
-            - viterbi.get("avg_risk_score", 0.0),
+            "delta_risk_vs_viterbi": ppo.get("avg_risk_integral", ppo.get("avg_risk_score", 0.0))
+            - viterbi.get("avg_risk_integral", viterbi.get("avg_risk_score", 0.0)),
             "run_dir": str(run_dir),
             "model_path": model_path,
         }
@@ -145,7 +147,7 @@ def run_sweep(
         print(
             "Result: "
             f"acc={row['ppo_acceptance_ratio']:.4f}, "
-            f"risk={row['ppo_avg_risk_score']:.4f}, "
+            f"risk={row['ppo_avg_risk_integral']:.4f}, "
             f"delta_acc_vs_viterbi={row['delta_acceptance_vs_viterbi']:.4f}"
         )
 
@@ -155,11 +157,13 @@ def run_sweep(
     fieldnames = [
         "lambda",
         "ppo_acceptance_ratio",
-        "ppo_avg_risk_score",
+        "ppo_avg_risk_integral",
         "ppo_avg_expected_incidents",
+        "ppo_avg_realized_incidents",
+        "ppo_avg_incident_cost",
         "ppo_avg_latency",
         "viterbi_acceptance_ratio",
-        "viterbi_avg_risk_score",
+        "viterbi_avg_risk_integral",
         "delta_acceptance_vs_viterbi",
         "delta_risk_vs_viterbi",
         "run_dir",

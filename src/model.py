@@ -873,7 +873,9 @@ class TrainingEvalCallback(BaseCallback):
                             "avg_sfc_tenancy": [],
                             "avg_vnf_tenancy": [],
                             "avg_substrate_utilization": [],
-                            "avg_risk_score": [],
+                            "avg_risk_integral": [],
+                            "avg_realized_incidents": [],
+                            "avg_incident_cost": [],
                         }
                     self.by_algo[algo_name]["acceptance_ratio"].append(
                         res["acceptance_ratio"]
@@ -890,8 +892,14 @@ class TrainingEvalCallback(BaseCallback):
                     self.by_algo[algo_name]["avg_substrate_utilization"].append(
                         res.get("avg_substrate_utilization", 0.0)
                     )
-                    self.by_algo[algo_name]["avg_risk_score"].append(
-                        res.get("avg_risk_score", 0.0)
+                    self.by_algo[algo_name]["avg_risk_integral"].append(
+                        res.get("avg_risk_integral", res.get("avg_risk_score", 0.0))
+                    )
+                    self.by_algo[algo_name]["avg_realized_incidents"].append(
+                        res.get("avg_realized_incidents", 0.0)
+                    )
+                    self.by_algo[algo_name]["avg_incident_cost"].append(
+                        res.get("avg_incident_cost", 0.0)
                     )
 
                 if self.logger is not None:
@@ -901,7 +909,16 @@ class TrainingEvalCallback(BaseCallback):
                             "custom/eval_acceptance_ratio", ppo["acceptance_ratio"]
                         )
                         self.logger.record(
-                            "custom/eval_risk_score", ppo.get("avg_risk_score", 0.0)
+                            "custom/eval_risk_integral",
+                            ppo.get("avg_risk_integral", ppo.get("avg_risk_score", 0.0)),
+                        )
+                        self.logger.record(
+                            "custom/eval_realized_incidents",
+                            ppo.get("avg_realized_incidents", 0.0),
+                        )
+                        self.logger.record(
+                            "custom/eval_incident_cost",
+                            ppo.get("avg_incident_cost", 0.0),
                         )
 
         if self.n_calls > 0 and self.n_calls % self.plot_freq == 0:
@@ -960,10 +977,10 @@ class TrainingEvalCallback(BaseCallback):
         plt.savefig(os.path.join(self.save_dir, "sfc_ppo_acceptance_ratio.png"))
         plt.close()
 
-        # 2) Risk score
+        # 2) Risk integral
         fig, ax = plt.subplots(figsize=(10, 6))
         for algo in algos:
-            vals = self.by_algo[algo]["avg_risk_score"]
+            vals = self.by_algo[algo]["avg_risk_integral"]
             ax.plot(
                 self.episodes,
                 vals,
@@ -984,9 +1001,9 @@ class TrainingEvalCallback(BaseCallback):
                             linewidth=2,
                             label=f"Moving Avg ({window} ep)",
                         )
-        ax.set_title("Avg Risk Score vs Episode Number (eval 1000 req/episode)")
+        ax.set_title("Avg Risk Integral vs Episode Number (eval 1000 req/episode)")
         ax.set_xlabel("Episode")
-        ax.set_ylabel("Risk Score (lower is better)")
+        ax.set_ylabel("Risk Integral (lower is better)")
         ax.grid(True, linestyle="--", alpha=0.7)
         ax.legend()
         plt.tight_layout()

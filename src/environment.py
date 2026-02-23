@@ -6,6 +6,7 @@ where an agent must place VNFs onto substrate nodes while respecting
 resource, security, bandwidth, and latency constraints.
 """
 
+import random
 from typing import Optional
 
 import gymnasium as gym
@@ -84,16 +85,28 @@ class SFCPlacementEnv(gym.Env):
         self.risk_enabled = risk_cfg.get("enabled", False)
         self.risk_lambda = float(risk_cfg.get("lambda", 0.0))
         self.risk_weights = {
-            "vnf_tenancy": float(risk_cfg.get("w_vnf_tenancy", 0.25)),
-            "sfc_tenancy": float(risk_cfg.get("w_sfc_tenancy", 0.25)),
-            "inverse_security": float(risk_cfg.get("w_inverse_security", 0.25)),
-            "incidents": float(risk_cfg.get("w_incidents", 0.25)),
+            "vnf_tenancy": float(risk_cfg.get("w_vnf_tenancy", 0.22)),
+            "sfc_tenancy": float(risk_cfg.get("w_sfc_tenancy", 0.18)),
+            "inverse_security": float(risk_cfg.get("w_inverse_security", 0.22)),
+            "incidents": float(risk_cfg.get("w_incidents", 0.28)),
+            "exposure": float(risk_cfg.get("w_exposure", 0.10)),
         }
-        self.vnf_tenancy_cap = float(risk_cfg.get("vnf_tenancy_cap", 8.0))
-        self.sfc_tenancy_cap = float(risk_cfg.get("sfc_tenancy_cap", 4.0))
-        self.incident_base_p = float(risk_cfg.get("incident_base_p", 0.05))
-        self.incident_alpha = float(risk_cfg.get("incident_alpha", 1.5))
-        self.incident_beta = float(risk_cfg.get("incident_beta", 0.5))
+        self.tenancy_ref_floor = float(risk_cfg.get("tenancy_ref_floor", 1.0))
+        self.load_ref_floor = float(risk_cfg.get("load_ref_floor", 1.0))
+        self.incident_base_rate = float(risk_cfg.get("incident_base_rate", 0.025))
+        self.incident_alpha = float(risk_cfg.get("incident_alpha", 1.6))
+        self.incident_beta = float(risk_cfg.get("incident_beta", 0.7))
+        self.incident_steps_cap = int(risk_cfg.get("incident_steps_cap", 12))
+        self.incident_pressure_gain = float(risk_cfg.get("incident_pressure_gain", 0.20))
+        self.incident_pressure_decay = float(risk_cfg.get("incident_pressure_decay", 0.92))
+        self.incident_block_threshold = float(risk_cfg.get("incident_block_threshold", 0.85))
+        self.incident_security_penalty = float(
+            risk_cfg.get("incident_security_penalty", 0.60)
+        )
+        self.incident_cost_per_event = float(risk_cfg.get("incident_cost_per_event", 0.2))
+        self.incident_cost_reward_scale = float(
+            risk_cfg.get("incident_cost_reward_scale", 0.05)
+        )
 
         # Link latency bounds for latency-aware masking
         self.min_link_latency = self.config["substrate"]["links"]["latency"]["min"]
@@ -125,12 +138,19 @@ class SFCPlacementEnv(gym.Env):
         self.episode_substrate_utilization_samples: list[float] = []
         self.episode_risk_scores: list[float] = []
         self.episode_incidents: list[float] = []
+        self.episode_expected_incidents: list[float] = []
+        self.episode_incident_costs: list[float] = []
+        self.episode_risk_integrals: list[float] = []
 
         # Global statistics tracking (across all episodes)
         self.total_requests = 0
         self.accepted_requests = 0
         self.total_episodes = 0
         self.total_incidents: float = 0.0
+        self.total_incident_cost: float = 0.0
+        self.total_expected_incidents: float = 0.0
+        self.total_risk_integral: float = 0.0
+        self.node_incident_pressure: dict[int, float] = {}
 
         # Rejection reason tracking
         self.rejection_reasons = {
@@ -209,6 +229,10 @@ class SFCPlacementEnv(gym.Env):
         self.episode_substrate_utilization_samples = []
         self.episode_risk_scores = []
         self.episode_incidents = []
+        self.episode_expected_incidents = []
+        self.episode_incident_costs = []
+        self.episode_risk_integrals = []
+        self.node_incident_pressure = {node_id: 0.0 for node_id in range(self.num_nodes)}
         self.total_episodes += 1
 
         # Generate first SFC request for this episode
@@ -224,6 +248,7 @@ class SFCPlacementEnv(gym.Env):
 
         # Advance time and release expired placements (TTL is per request)
         self.substrate.tick()
+        self._decay_incident_pressure()
 
         # Generate new SFC request
         self.current_request = self.request_generator.generate_request()
@@ -318,11 +343,26 @@ class SFCPlacementEnv(gym.Env):
 
         # Compute risk before tick(): with TTL=1, tick() can release this placement,
         # so risk must be computed while the placement is still registered.
-        risk_score, incidents = self._compute_request_risk(completed_placement)
-        self.episode_risk_scores.append(risk_score)
-        self.episode_incidents.append(incidents)
-        self.total_incidents += incidents
-        reward = self.acceptance_reward - self.risk_lambda * risk_score
+        (
+            risk_integral,
+            realized_incidents,
+            incident_cost,
+            expected_incidents,
+        ) = self._compute_request_risk(completed_placement)
+        self.episode_risk_scores.append(risk_integral)
+        self.episode_risk_integrals.append(risk_integral)
+        self.episode_incidents.append(realized_incidents)
+        self.episode_expected_incidents.append(expected_incidents)
+        self.episode_incident_costs.append(incident_cost)
+        self.total_incidents += realized_incidents
+        self.total_expected_incidents += expected_incidents
+        self.total_incident_cost += incident_cost
+        self.total_risk_integral += risk_integral
+        reward = (
+            self.acceptance_reward
+            - self.risk_lambda * risk_integral
+            - self.incident_cost_reward_scale * incident_cost
+        )
 
         # Check if episode is complete
         terminated = self.episode_requests >= self.max_requests_per_episode
@@ -337,20 +377,27 @@ class SFCPlacementEnv(gym.Env):
         info["placement"] = completed_placement
         info["request_min_security"] = completed_min_security
         info["sfc_complete"] = True  # This SFC was completed
-        info["request_risk_score"] = risk_score
-        info["request_incidents"] = incidents
+        info["request_risk_score"] = risk_integral
+        info["request_risk_integral"] = risk_integral
+        info["request_realized_incidents"] = realized_incidents
+        info["request_expected_incidents"] = expected_incidents
+        info["request_incidents"] = realized_incidents
+        info["request_incident_cost"] = incident_cost
         return observation, reward, terminated, False, info
 
     def _handle_rejection(
         self, reason: str, release_resources: bool = False
     ) -> tuple[np.ndarray, float, bool, bool, dict]:
         """Handle SFC rejection."""
-        # Rejected requests get risk 0 (consistent with compare.py). We must assign
-        # before releasing resources so risk is never computed from substrate state
-        # after release, which would be wrong and inconsistent with baselines.
-        risk_score, incidents = 0.0, 0.0
-        self.episode_risk_scores.append(risk_score)
-        self.episode_incidents.append(incidents)
+        risk_integral = 0.0
+        realized_incidents = 0.0
+        expected_incidents = 0.0
+        incident_cost = 0.0
+        self.episode_risk_scores.append(risk_integral)
+        self.episode_risk_integrals.append(risk_integral)
+        self.episode_incidents.append(realized_incidents)
+        self.episode_expected_incidents.append(expected_incidents)
+        self.episode_incident_costs.append(incident_cost)
 
         # Track rejection reason
         self.episode_rejections += 1
@@ -388,16 +435,50 @@ class SFCPlacementEnv(gym.Env):
         info["success"] = False
         info["rejection_reason"] = reason
         info["sfc_complete"] = True  # This SFC was completed (rejected)
-        info["request_risk_score"] = risk_score
-        info["request_incidents"] = incidents
+        info["request_risk_score"] = risk_integral
+        info["request_risk_integral"] = risk_integral
+        info["request_realized_incidents"] = realized_incidents
+        info["request_expected_incidents"] = expected_incidents
+        info["request_incidents"] = realized_incidents
+        info["request_incident_cost"] = incident_cost
 
-        reward = self.rejection_penalty - self.risk_lambda * risk_score
+        reward = (
+            self.rejection_penalty
+            - self.risk_lambda * risk_integral
+            - self.incident_cost_reward_scale * incident_cost
+        )
         return observation, reward, terminated, False, info
 
-    def _compute_request_risk(self, placement: list[int]) -> tuple[float, float]:
-        """Compute risk score and expected incidents for one processed request (deterministic, matches evaluation)."""
+    @staticmethod
+    def _robust_ratio(value: float, reference: float) -> float:
+        """Bounded normalization that remains stable across scales."""
+        safe_ref = max(reference, 1e-6)
+        value = max(value, 0.0)
+        return float(min(value / (value + safe_ref), 1.0))
+
+    def _decay_incident_pressure(self):
+        """Decay temporary node incident pressure each request-tick."""
+        if not self.node_incident_pressure:
+            return
+        next_pressure: dict[int, float] = {}
+        for node_id, pressure in self.node_incident_pressure.items():
+            decayed = pressure * self.incident_pressure_decay
+            next_pressure[node_id] = decayed if decayed >= 1e-4 else 0.0
+        self.node_incident_pressure = next_pressure
+
+    def _effective_node_security(self, node_id: int) -> float:
+        """Security score after temporary incident pressure effects."""
+        raw_security = self.substrate.node_resources[node_id]["security_score"]
+        pressure = self.node_incident_pressure.get(node_id, 0.0)
+        multiplier = max(0.0, 1.0 - self.incident_security_penalty * pressure)
+        return raw_security * multiplier
+
+    def _compute_request_risk(
+        self, placement: list[int]
+    ) -> tuple[float, float, float, float]:
+        """Compute stochastic, time-integrated risk for one accepted request."""
         if not self.risk_enabled or not placement:
-            return 0.0, 0.0
+            return 0.0, 0.0, 0.0, 0.0
 
         sfcs_per_node = self.substrate.get_sfcs_per_node()
         vnfs_per_node = self.substrate.get_vnfs_per_node()
@@ -414,45 +495,85 @@ class SFCPlacementEnv(gym.Env):
             if occupied_vnf_nodes
             else 0.0
         )
-        sfc_tenancy_risk = min(avg_sfc_tenancy / max(self.sfc_tenancy_cap, 1e-6), 1.0)
-        vnf_tenancy_risk = min(avg_vnf_tenancy / max(self.vnf_tenancy_cap, 1e-6), 1.0)
+        vnf_reference = max(
+            self.tenancy_ref_floor,
+            float(np.percentile(occupied_vnf_nodes, 75)) if occupied_vnf_nodes else 0.0,
+        )
+        sfc_reference = max(
+            self.tenancy_ref_floor,
+            float(np.percentile(occupied_sfc_nodes, 75)) if occupied_sfc_nodes else 0.0,
+        )
+        vnf_tenancy_risk = self._robust_ratio(avg_vnf_tenancy, vnf_reference)
+        sfc_tenancy_risk = self._robust_ratio(avg_sfc_tenancy, sfc_reference)
 
-        if placement:
-            inverse_security_risk = float(
-                np.mean(
-                    [
-                        1.0
-                        - (
-                            self.substrate.node_resources[node_id]["security_score"]
-                            / max(self.max_security, 1e-6)
-                        )
-                        for node_id in placement
-                    ]
-                )
+        placement_nodes = sorted(set(placement))
+        inverse_security_risk = float(
+            np.mean(
+                [
+                    1.0
+                    - (
+                        self._effective_node_security(node_id) / max(self.max_security, 1e-6)
+                    )
+                    for node_id in placement_nodes
+                ]
             )
-        else:
-            inverse_security_risk = 0.0
+        )
+        inverse_security_risk = min(max(inverse_security_risk, 0.0), 1.0)
+
+        ttl = self.current_request.ttl if self.current_request is not None else 1
+        exposure_steps = int(max(1, min(self.incident_steps_cap, ttl)))
+        ttl_exposure_risk = min(ttl / max(self.max_ttl, 1), 1.0)
+        load_reference = max(
+            self.load_ref_floor,
+            float(np.percentile(list(vnfs_per_node.values()), 75))
+            if vnfs_per_node
+            else 0.0,
+        )
 
         expected_incidents = 0.0
-        for node_id in placement:
-            node_security = self.substrate.node_resources[node_id]["security_score"]
-            security_norm = min(max(node_security / max(self.max_security, 1e-6), 0.0), 1.0)
-            load_norm = min(
-                max(vnfs_per_node.get(node_id, 0) / max(self.vnf_tenancy_cap, 1e-6), 0.0),
-                1.0,
-            )
-            p_incident = self.incident_base_p * ((1.0 - security_norm) ** self.incident_alpha)
-            p_incident *= 1.0 + self.incident_beta * load_norm
-            expected_incidents += min(max(p_incident, 0.0), 1.0)
-        incident_risk = min(expected_incidents / max(len(placement), 1), 1.0)
+        realized_incidents = 0.0
+        for _ in range(exposure_steps):
+            for node_id in placement_nodes:
+                security_norm = min(
+                    max(self._effective_node_security(node_id) / max(self.max_security, 1e-6), 0.0),
+                    1.0,
+                )
+                load_norm = self._robust_ratio(vnfs_per_node.get(node_id, 0), load_reference)
+                pressure = self.node_incident_pressure.get(node_id, 0.0)
+                p_incident = self.incident_base_rate * ((1.0 - security_norm) ** self.incident_alpha)
+                p_incident *= 1.0 + self.incident_beta * load_norm
+                p_incident *= 1.0 + pressure
+                p_incident = min(max(p_incident, 0.0), 1.0)
+                expected_incidents += p_incident
+                if random.random() < p_incident:
+                    realized_incidents += 1.0
+                    updated_pressure = min(
+                        1.0,
+                        self.node_incident_pressure.get(node_id, 0.0)
+                        + self.incident_pressure_gain,
+                    )
+                    self.node_incident_pressure[node_id] = updated_pressure
 
+        trials = max(len(placement_nodes) * exposure_steps, 1)
+        incident_risk = min(realized_incidents / trials, 1.0)
+        weight_sum = max(sum(self.risk_weights.values()), 1e-6)
         risk_score = (
             self.risk_weights["vnf_tenancy"] * vnf_tenancy_risk
             + self.risk_weights["sfc_tenancy"] * sfc_tenancy_risk
             + self.risk_weights["inverse_security"] * inverse_security_risk
             + self.risk_weights["incidents"] * incident_risk
+            + self.risk_weights["exposure"] * ttl_exposure_risk
+        ) / weight_sum
+        # TTL exposure is already included via risk_weights["exposure"].
+        # Avoid applying TTL a second time here.
+        risk_integral = min(max(risk_score, 0.0), 1.0)
+        incident_cost = realized_incidents * self.incident_cost_per_event
+        return (
+            float(risk_integral),
+            float(realized_incidents),
+            float(incident_cost),
+            float(expected_incidents),
         )
-        return float(max(risk_score, 0.0)), float(expected_incidents)
 
     def _sample_substrate_metrics(self):
         """Sample substrate tenancy and utilization metrics after each request."""
@@ -507,6 +628,16 @@ class SFCPlacementEnv(gym.Env):
         real_node_features = np.concatenate(
             [base_resources, connectivity, distances], axis=1
         )
+        # Expose incident-degraded security to the policy.
+        for node_id in range(N):
+            real_node_features[node_id, 3] = min(
+                max(
+                    self._effective_node_security(node_id)
+                    / max(self.max_security, 1e-6),
+                    0.0,
+                ),
+                1.0,
+            )
 
         # Pad to (max_nodes, 6)
         node_features = np.zeros((M, 6), dtype=np.float32)
@@ -630,6 +761,21 @@ class SFCPlacementEnv(gym.Env):
             if self.episode_incidents
             else 0.0
         )
+        episode_avg_expected_incidents = (
+            sum(self.episode_expected_incidents) / len(self.episode_expected_incidents)
+            if self.episode_expected_incidents
+            else 0.0
+        )
+        episode_avg_incident_cost = (
+            sum(self.episode_incident_costs) / len(self.episode_incident_costs)
+            if self.episode_incident_costs
+            else 0.0
+        )
+        episode_avg_risk_integral = (
+            sum(self.episode_risk_integrals) / len(self.episode_risk_integrals)
+            if self.episode_risk_integrals
+            else 0.0
+        )
 
         return {
             "current_vnf_index": self.current_vnf_index,
@@ -652,11 +798,17 @@ class SFCPlacementEnv(gym.Env):
             "episode_avg_substrate_util": episode_avg_substrate_util,
             "episode_avg_risk_score": episode_avg_risk_score,
             "episode_avg_incidents": episode_avg_incidents,
+            "episode_avg_expected_incidents": episode_avg_expected_incidents,
+            "episode_avg_incident_cost": episode_avg_incident_cost,
+            "episode_avg_risk_integral": episode_avg_risk_integral,
             # Global stats
             "total_requests": self.total_requests,
             "accepted_requests": self.accepted_requests,
             "total_episodes": self.total_episodes,
             "total_incidents": self.total_incidents,
+            "total_expected_incidents": self.total_expected_incidents,
+            "total_incident_cost": self.total_incident_cost,
+            "total_risk_integral": self.total_risk_integral,
             "acceptance_ratio": (
                 self.accepted_requests / self.total_requests
                 if self.total_requests > 0
@@ -669,6 +821,8 @@ class SFCPlacementEnv(gym.Env):
         """Check if an action is valid for the current state."""
         if action < 0 or action >= self.num_nodes:
             return False  # Padded nodes or out-of-range
+        if self.node_incident_pressure.get(action, 0.0) >= self.incident_block_threshold:
+            return False
 
         current_vnf = self.current_request.vnfs[self.current_vnf_index]
 
@@ -676,6 +830,8 @@ class SFCPlacementEnv(gym.Env):
         if not self.substrate.check_node_feasibility(
             action, current_vnf, self.current_request.min_security_score
         ):
+            return False
+        if self._effective_node_security(action) < self.current_request.min_security_score:
             return False
 
         # Check hard isolation constraints
@@ -728,6 +884,13 @@ class SFCPlacementEnv(gym.Env):
 
         # 1. Vectorized Resource Feasibility Check (only real nodes)
         feasible_mask = self.substrate.get_feasible_nodes(current_vnf, min_security)
+        feasible_indices = np.where(feasible_mask)[0]
+        for node_id in feasible_indices:
+            if self.node_incident_pressure.get(node_id, 0.0) >= self.incident_block_threshold:
+                feasible_mask[node_id] = False
+                continue
+            if self._effective_node_security(node_id) < min_security:
+                feasible_mask[node_id] = False
 
         # 2. Exclude hard-isolated nodes (nodes reserved by other SFCs)
         hard_isolated_mask = self.substrate.get_hard_isolated_nodes_mask()

@@ -29,6 +29,10 @@ def _truncated_exponential_inverse_cdf(mean: float, low: float, high: float) -> 
     """
     if low >= high:
         return low
+    # Guard against invalid/degenerate means from user config.
+    # Falling back to uniform keeps request generation running safely.
+    if not math.isfinite(mean) or mean <= 0:
+        return random.uniform(low, high)
     lam = 1.0 / mean
     u = random.random()
     exp_neg_la = math.exp(-lam * low)

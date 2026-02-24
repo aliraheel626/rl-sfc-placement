@@ -154,12 +154,12 @@ def train(
         verbose=1,
     )
 
-    # 2. Reward per unit step visualization
-    reward_plot_path = str(Path(save_path).parent / "reward_per_step.png")
+    # 2. Episode cumulative reward visualization
+    reward_plot_path = str(Path(save_path).parent / "reward_per_episode.png")
     reward_per_step_callback = RewardPerStepCallback(
         save_path=reward_plot_path,
         plot_freq=plot_freq,
-        step_interval=200,
+        rolling_window=50,
         verbose=1,
     )
 

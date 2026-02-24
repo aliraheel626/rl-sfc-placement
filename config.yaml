@@ -87,7 +87,7 @@ training:
   ent_coef: 0.01          # entropy coefficient (decay later if desired)
   gae_lambda: 0.97
   clip_range: 0.2
-  max_requests_per_episode: 1000 
+  max_requests_per_episode: 300
   randomize_topology: false
 
 # Reward Configuration

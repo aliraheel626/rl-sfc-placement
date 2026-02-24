@@ -198,92 +198,125 @@ def load_model(path: str, env: Optional[ActionMasker] = None) -> MaskablePPO:
 
 class RewardPerStepCallback(BaseCallback):
     """
-    Track reward per environment step and plot reward (aggregated per unit steps) vs step.
+    Track per-episode cumulative reward and plot it vs episode number.
     """
 
     def __init__(
         self,
-        save_path: str = "models/reward_per_step.png",
+        save_path: str = "models/reward_per_episode.png",
         plot_freq: int = 10000,
-        step_interval: int = 200,
+        rolling_window: int = 50,
         verbose: int = 0,
     ):
         super().__init__(verbose)
         self.save_path = save_path
         self.plot_freq = plot_freq
-        self.step_interval = step_interval
-        self.steps = []
-        self.reward_means = []
-        self._reward_buffer = []
+        self.rolling_window = rolling_window
+        self.episodes = []
+        self.episode_rewards = []
+        # Running per-env episode sums (support VecEnv; common case is 1 env).
+        self._current_episode_rewards = {}
+        self._episode_counter = 0
 
     def _on_step(self) -> bool:
-        rewards = self.locals.get("rewards", 0)
-        if hasattr(rewards, "__len__") and not isinstance(rewards, (str, bytes)):
-            try:
-                for r in rewards:
-                    self._reward_buffer.append(float(r))
-            except TypeError:
-                self._reward_buffer.append(float(rewards))
-        else:
-            self._reward_buffer.append(float(rewards))
+        rewards = self.locals.get("rewards", [])
+        dones = self.locals.get("dones", [])
+        infos = self.locals.get("infos", [])
 
-        while len(self._reward_buffer) >= self.step_interval:
-            chunk = self._reward_buffer[: self.step_interval]
-            self._reward_buffer = self._reward_buffer[self.step_interval :]
-            # Step at end of this bucket (current timestep)
-            step = self.num_timesteps
-            self.steps.append(step)
-            self.reward_means.append(sum(chunk) / len(chunk))
+        # Normalize to list-like for uniform handling.
+        if hasattr(rewards, "__len__") and not isinstance(rewards, (str, bytes)):
+            reward_list = list(rewards)
+        else:
+            reward_list = [float(rewards)]
+
+        if hasattr(dones, "__len__") and not isinstance(dones, (str, bytes)):
+            done_list = list(dones)
+        else:
+            done_list = [bool(dones)]
+
+        if not isinstance(infos, list):
+            info_list = [infos]
+        else:
+            info_list = infos
+
+        n_envs = max(len(reward_list), len(done_list), len(info_list), 1)
+
+        for i in range(n_envs):
+            reward_i = float(reward_list[i]) if i < len(reward_list) else 0.0
+            done_i = bool(done_list[i]) if i < len(done_list) else False
+            info_i = info_list[i] if i < len(info_list) and isinstance(info_list[i], dict) else {}
+
+            self._current_episode_rewards[i] = (
+                self._current_episode_rewards.get(i, 0.0) + reward_i
+            )
+
+            if done_i:
+                self._episode_counter += 1
+                episode_num = int(info_i.get("total_episodes", self._episode_counter))
+                episode_reward = float(self._current_episode_rewards.get(i, 0.0))
+                self.episodes.append(episode_num)
+                self.episode_rewards.append(episode_reward)
+                del self._current_episode_rewards[i]
 
         if self.n_calls > 0 and self.n_calls % self.plot_freq == 0:
             self._save_plot()
         return True
 
     def _save_plot(self):
-        if not self.steps:
+        if not self.episodes:
             return
         try:
             import numpy as np
 
             os.makedirs(os.path.dirname(self.save_path) or ".", exist_ok=True)
-            steps = np.array(self.steps)
-            rewards = np.array(self.reward_means)
+            episodes = np.array(self.episodes)
+            rewards = np.array(self.episode_rewards)
 
             plt.figure(figsize=(10, 6))
-            plt.plot(steps, rewards, alpha=0.6, label="Reward (mean per step)", linewidth=0.8)
+            plt.plot(
+                episodes,
+                rewards,
+                alpha=0.35,
+                label="Episode cumulative reward",
+                linewidth=0.8,
+            )
 
-            if len(rewards) > 20:
-                window = min(50, len(rewards) // 5)
+            if len(rewards) > 10:
+                window = min(max(int(self.rolling_window), 2), len(rewards))
                 if window > 1:
                     k = np.ones(window) / window
                     smooth = np.convolve(rewards, k, mode="valid")
                     plt.plot(
-                        steps[window - 1 :],
+                        episodes[window - 1 :],
                         smooth,
                         color="orange",
                         linewidth=2,
-                        label=f"Moving Avg ({window} bins)",
+                        label=f"Moving Avg ({window} episodes)",
                     )
 
-            plt.title("Reward per Unit Step vs Training Step")
-            plt.xlabel("Training Step")
-            plt.ylabel("Reward (mean per {} steps)".format(self.step_interval))
+            plt.title("Episode Cumulative Reward vs Episode")
+            plt.xlabel("Episode")
+            plt.ylabel("Cumulative Reward (per episode)")
             plt.grid(True, linestyle="--", alpha=0.7)
             plt.legend()
             plt.tight_layout()
             plt.savefig(self.save_path)
             plt.close()
             if self.verbose > 1:
-                print(f"Reward-per-step plot saved to {self.save_path}")
+                print(f"Episode reward plot saved to {self.save_path}")
         except Exception as e:
             if self.verbose > 0:
-                print(f"Warning: Could not save reward-per-step plot: {e}")
+                print(f"Warning: Could not save episode reward plot: {e}")
 
     def _on_training_end(self) -> None:
-        if self._reward_buffer:
-            step = self.steps[-1] + self.step_interval if self.steps else self.step_interval
-            self.steps.append(step)
-            self.reward_means.append(sum(self._reward_buffer) / len(self._reward_buffer))
+        # Flush incomplete episode data (training ended before done signal).
+        # Use a single episode number for all (the "next" episode); in multi-env
+        # setups, incomplete episodes from different envs are the same logical episode.
+        next_episode = (max(self.episodes) + 1) if self.episodes else 1
+        for cum_reward in self._current_episode_rewards.values():
+            self.episodes.append(next_episode)
+            self.episode_rewards.append(float(cum_reward))
+        self._current_episode_rewards.clear()
         self._save_plot()
 
 

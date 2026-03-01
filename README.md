@@ -118,6 +118,27 @@ Use TensorBoard to monitor training progress:
 uv run tensorboard --logdir logs/
 ```
 
+### Performance (training speed)
+
+The **progress bar only moves during rollout** (data collection). After every `n_steps` (e.g. 4096), it pauses while PPO runs the **update phase**: multiple epochs of gradient updates over the GNN policy. That phase is slow because:
+
+- **Per minibatch**: The GNN runs over `batch_size × num_nodes` nodes (e.g. 512×300 = 153,600 nodes) and a proportionally large number of edges. Each epoch has `n_steps / batch_size` minibatches; total updates per iteration = `n_epochs × (n_steps / batch_size)`.
+- **CPU**: On CPU, message passing over 150k+ nodes per batch is expensive. **Using a GPU (CUDA)** gives a large speedup; the script prints the selected device at startup.
+- **Model size**: Deeper/wider GNN (more layers, larger `gnn_hidden_dim` / `gnn_features_dim`) increases cost per step.
+
+**Suggestions to speed up the update phase:**
+
+| Change | Effect |
+|--------|--------|
+| **Use GPU** | Install PyTorch and PyTorch Geometric with CUDA; training will use it automatically (`device="auto"`). |
+| **Reduce `n_epochs`** | e.g. `4` → `3`; fewer gradient steps per iteration. |
+| **Reduce `n_steps`** | e.g. `4096` → `2048`; fewer batches per epoch, so each iteration finishes sooner. |
+| **Reduce `batch_size`** | e.g. `512` → `256`; less work per minibatch (may need slightly more epochs for similar sample efficiency). |
+| **Smaller GNN** | `gnn_layers: 3`, `gnn_features_dim: 256`, `net_arch: [128, 128]`; faster forward/backward. |
+| **Keep `gnn_type: sage`** | GraphSAGE is faster than GAT; avoid GAT if speed is critical. |
+
+See `config.yaml` (training section) for inline comments and defaults.
+
 ---
 
 ## 📊 Evaluation & Comparison

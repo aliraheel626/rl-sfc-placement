@@ -2,12 +2,12 @@
 
 # Substrate Network Configuration
 substrate:
-  # Fixed size: 25 nodes (smaller network, difficulty preserved via scaled SFC/load)
+  # Fixed size: 100 nodes (difficulty preserved via SFC size, load, and constraints)
   num_nodes:
-    min: 25
-    max: 25
-  max_nodes: 25 # Fixed upper bound for obs/action space shapes
-  mesh_connectivity: 0.35 # Slightly higher connectivity for small graph (paths exist)
+    min: 100
+    max: 100
+  max_nodes: 100 # Fixed upper bound for obs/action space shapes
+  mesh_connectivity: 0.28 # Moderate connectivity for 100-node graph (paths exist, similar difficulty)
 
   # Node resource ranges (scaled up for ~70% placement)
   resources:
@@ -33,12 +33,12 @@ substrate:
       min: 5
       max: 60
 
-# SFC Request Configuration (scaled for 25-node substrate; difficulty preserved)
+# SFC Request Configuration (scaled for 100-node substrate; difficulty preserved)
 sfc:
-  # Number of VNFs per chain (smaller chains so multiple fit in 25 nodes)
+  # Number of VNFs per chain (longer chains for larger network; similar fraction of nodes per SFC)
   vnf_count:
-    min: 2
-    max: 6
+    min: 3
+    max: 8
 
   # VNF resource demands (fits on nodes; similar relative load vs capacity)
   vnf_resources:
@@ -64,11 +64,11 @@ sfc:
       min: 50
       max: 250
 
-  # Time to live (truncated exponential on [min, max] via inverse CDF; optional mean, default = midpoint)
+  # Time to live (truncated exponential; scaled for 100 nodes so congestion builds similarly)
   ttl:
     distribution: exponential
-    min: 1
-    max: 25
+    min: 4
+    max: 100
 
   # Lower isolation probability to reduce pressure
   hard_isolation_probability: 0.1
@@ -87,8 +87,16 @@ training:
   ent_coef: 0.01          # entropy coefficient (decay later if desired)
   gae_lambda: 0.97
   clip_range: 0.2
-  max_requests_per_episode: 300
+  requests_per_graph: 600   # requests per topology (scaled for 100 nodes; similar load per node)
   randomize_topology: false
+
+  # Model architecture (optional; defaults below if omitted)
+  gnn_type: sage
+  gnn_hidden_dim: 128
+  gnn_features_dim: 512
+  gnn_layers: 4
+  # Policy MLP on top of GNN features (list of ints). Example: [256, 256]
+  net_arch: [256, 256]
 
 # Reward Configuration
 rewards:

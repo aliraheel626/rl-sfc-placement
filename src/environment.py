@@ -56,7 +56,7 @@ class SFCPlacementEnv(gym.Env):
         *,
         substrate: Optional[SubstrateNetwork] = None,
         request_generator: Optional[RequestGenerator] = None,
-        max_requests_per_episode: Optional[int] = None,
+        requests_per_graph: Optional[int] = None,
     ):
         super().__init__()
 
@@ -111,28 +111,26 @@ class SFCPlacementEnv(gym.Env):
         # Link latency bounds for latency-aware masking
         self.min_link_latency = self.config["substrate"]["links"]["latency"]["min"]
 
-        # Episode configuration - how many requests per episode (override for eval: single long episode)
+        # Graph/topology: requests per graph before starting a new topology
         training_config = self.config.get("training", {})
-        self.max_requests_per_episode = (
-            max_requests_per_episode
-            if max_requests_per_episode is not None
-            else training_config.get("max_requests_per_episode", 100)
+        self.requests_per_graph = (
+            requests_per_graph
+            if requests_per_graph is not None
+            else training_config.get("requests_per_graph", training_config.get("max_requests_per_episode", 100))
         )
 
-        # Environment state
+        # Environment state (per episode = per SFC request)
         self.current_request: Optional[SFCRequest] = None
         self.current_vnf_index: int = 0
         self.current_placement: list[int] = []
         self.current_latency: float = 0.0  # Accumulated latency for current SFC
         self.episode_step: int = 0
 
-        # Episode-level statistics (reset each episode)
+        # Per-request statistics (one episode = one SFC request; for backward-compat info)
         self.episode_requests = 0
         self.episode_accepted = 0
         self.episode_latency_violations = 0
         self.episode_rejections = 0
-
-        # Episode-level substrate metrics (sampled per request, reset each episode)
         self.episode_sfc_tenancy_samples: list[float] = []
         self.episode_vnf_tenancy_samples: list[float] = []
         self.episode_substrate_utilization_samples: list[float] = []
@@ -142,7 +140,22 @@ class SFCPlacementEnv(gym.Env):
         self.episode_incident_costs: list[float] = []
         self.episode_risk_integrals: list[float] = []
 
-        # Global statistics tracking (across all episodes)
+        # Graph-level: one graph = one topology instance, lasts requests_per_graph requests
+        self.total_graphs = 0
+        self._graph_request_count = 0
+        self._graph_accepted = 0
+        self._graph_rejected = 0
+        self._graph_latency_violations = 0
+        self._graph_sfc_tenancy_samples: list[float] = []
+        self._graph_vnf_tenancy_samples: list[float] = []
+        self._graph_substrate_utilization_samples: list[float] = []
+        self._graph_risk_scores: list[float] = []
+        self._graph_incidents: list[float] = []
+        self._graph_expected_incidents: list[float] = []
+        self._graph_incident_costs: list[float] = []
+        self._graph_risk_integrals: list[float] = []
+
+        # Global statistics tracking (across all episodes/requests)
         self.total_requests = 0
         self.accepted_requests = 0
         self.total_episodes = 0
@@ -203,23 +216,59 @@ class SFCPlacementEnv(gym.Env):
         self, seed: Optional[int] = None, options: Optional[dict] = None
     ) -> tuple[np.ndarray, dict]:
         """
-        Reset the environment for a new episode.
+        Reset for a new episode (= one SFC request).
 
-        Each episode handles max_requests_per_episode SFC requests.
-        The substrate network is reset to full capacity at the start of each episode.
+        If we have reached requests_per_graph requests on the current graph, or this is
+        the first reset, start a new graph (reset/regenerate substrate). Otherwise
+        advance time (tick + decay) and keep the same substrate.
         """
         super().reset(seed=seed)
 
-        # Reset substrate network to full capacity for new episode
-        if self.randomize_topology:
-            self.substrate.regenerate_topology()
-            self.num_nodes = self.substrate.num_nodes
+        new_graph = (
+            self.total_graphs == 0
+            or self._graph_request_count >= self.requests_per_graph
+        )
+
+        if new_graph:
+            # Topology/scenario boundary: new graph
+            if self.randomize_topology:
+                self.substrate.regenerate_topology()
+                self.num_nodes = self.substrate.num_nodes
+            else:
+                self.substrate.reset()
+            self.request_generator.reset()
+            self._graph_request_count = 0
+            self.total_graphs += 1
+            self.node_incident_pressure = {
+                node_id: 0.0 for node_id in range(self.num_nodes)
+            }
+            self._graph_accepted = 0
+            self._graph_rejected = 0
+            self._graph_latency_violations = 0
+            self._graph_sfc_tenancy_samples = []
+            self._graph_vnf_tenancy_samples = []
+            self._graph_substrate_utilization_samples = []
+            self._graph_risk_scores = []
+            self._graph_incidents = []
+            self._graph_expected_incidents = []
+            self._graph_incident_costs = []
+            self._graph_risk_integrals = []
         else:
-            self.substrate.reset()
+            # Same graph: advance time, keep substrate state
+            self.substrate.tick()
+            self._decay_incident_pressure()
 
-        self.request_generator.reset()
+        # Generate one SFC request for this episode
+        self.current_request = self.request_generator.generate_request()
+        self.current_vnf_index = 0
+        self.current_placement = []
+        self.current_latency = 0.0
+        self.episode_step = 0
+        self._graph_request_count += 1
+        self.total_requests += 1
+        self.total_episodes += 1
 
-        # Reset episode-level counters
+        # Per-request (episode) stats for this single request; set when request completes
         self.episode_requests = 0
         self.episode_accepted = 0
         self.episode_latency_violations = 0
@@ -232,33 +281,10 @@ class SFCPlacementEnv(gym.Env):
         self.episode_expected_incidents = []
         self.episode_incident_costs = []
         self.episode_risk_integrals = []
-        self.node_incident_pressure = {node_id: 0.0 for node_id in range(self.num_nodes)}
-        self.total_episodes += 1
-
-        # Generate first SFC request for this episode
-        self._start_new_request()
 
         observation = self._get_observation()
         info = self._get_info()
-
         return observation, info
-
-    def _start_new_request(self):
-        """Start processing a new SFC request within the current episode."""
-
-        # Advance time and release expired placements (TTL is per request)
-        self.substrate.tick()
-        self._decay_incident_pressure()
-
-        # Generate new SFC request
-        self.current_request = self.request_generator.generate_request()
-        self.current_vnf_index = 0
-        self.current_placement = []
-        self.current_latency = 0.0
-        self.episode_step = 0
-
-        self.episode_requests += 1
-        self.total_requests += 1
 
     def step(self, action: int) -> tuple[np.ndarray, float, bool, bool, dict]:
         """
@@ -309,23 +335,10 @@ class SFCPlacementEnv(gym.Env):
                     "latency_violation", release_resources=True
                 )
 
-        # Episode continues - move to next VNF
+              # Episode continues - move to next VNF (no intermediate reward/penalty)
         observation = self._get_observation()
         info = self._get_info()
-
-        # Intermediate reward shaping: small signal per VNF step so the agent
-        # can learn which placement decisions are good before the terminal
-        # accept/reject arrives.  Kept smaller than terminal reward (+1 / -1).
-        reward = 0.1  # progress bonus for each feasible VNF placement
-
-        # Latency penalty: encourage locality / co-location
-        if len(self.current_placement) > 1:
-            prev_node = self.current_placement[-2]
-            curr_node = self.current_placement[-1]
-            hop_latency = self.substrate.get_path_latency(prev_node, curr_node)
-            norm_latency = min(hop_latency / self.current_request.max_latency, 1.0)
-            reward -= 0.3 * norm_latency
-
+        reward = 0.0
         return observation, reward, False, False, info
 
     def _handle_acceptance(self) -> tuple[np.ndarray, float, bool, bool, dict]:
@@ -336,9 +349,11 @@ class SFCPlacementEnv(gym.Env):
 
         self.substrate.register_placement(self.current_request, self.current_placement)
         self.accepted_requests += 1
-        self.episode_accepted += 1
+        self.episode_accepted = 1
+        self.episode_requests = 1
+        self._graph_accepted += 1
 
-        # Sample substrate metrics after placement
+        # Sample substrate metrics after placement (updates both episode and graph lists)
         self._sample_substrate_metrics()
 
         # Compute risk before tick(): with TTL=1, tick() can release this placement,
@@ -354,6 +369,11 @@ class SFCPlacementEnv(gym.Env):
         self.episode_incidents.append(realized_incidents)
         self.episode_expected_incidents.append(expected_incidents)
         self.episode_incident_costs.append(incident_cost)
+        self._graph_risk_scores.append(risk_integral)
+        self._graph_risk_integrals.append(risk_integral)
+        self._graph_incidents.append(realized_incidents)
+        self._graph_expected_incidents.append(expected_incidents)
+        self._graph_incident_costs.append(incident_cost)
         self.total_incidents += realized_incidents
         self.total_expected_incidents += expected_incidents
         self.total_incident_cost += incident_cost
@@ -364,13 +384,7 @@ class SFCPlacementEnv(gym.Env):
             - self.incident_cost_reward_scale * incident_cost
         )
 
-        # Check if episode is complete
-        terminated = self.episode_requests >= self.max_requests_per_episode
-
-        if not terminated:
-            # Move to next request within the same episode (calls substrate.tick())
-            self._start_new_request()
-
+        # One episode = one SFC request; always terminate
         observation = self._get_observation()
         info = self._get_info()
         info["success"] = True
@@ -383,7 +397,7 @@ class SFCPlacementEnv(gym.Env):
         info["request_expected_incidents"] = expected_incidents
         info["request_incidents"] = realized_incidents
         info["request_incident_cost"] = incident_cost
-        return observation, reward, terminated, False, info
+        return observation, reward, True, False, info
 
     def _handle_rejection(
         self, reason: str, release_resources: bool = False
@@ -398,13 +412,21 @@ class SFCPlacementEnv(gym.Env):
         self.episode_incidents.append(realized_incidents)
         self.episode_expected_incidents.append(expected_incidents)
         self.episode_incident_costs.append(incident_cost)
+        self._graph_risk_scores.append(risk_integral)
+        self._graph_risk_integrals.append(risk_integral)
+        self._graph_incidents.append(realized_incidents)
+        self._graph_expected_incidents.append(expected_incidents)
+        self._graph_incident_costs.append(incident_cost)
 
         # Track rejection reason
-        self.episode_rejections += 1
+        self.episode_rejections = 1
+        self.episode_requests = 1
+        self._graph_rejected += 1
         if reason in self.rejection_reasons:
             self.rejection_reasons[reason] += 1
         if reason == "latency_violation":
-            self.episode_latency_violations += 1
+            self.episode_latency_violations = 1
+            self._graph_latency_violations += 1
 
         if release_resources:
             # Release all resources allocated so far
@@ -423,13 +445,6 @@ class SFCPlacementEnv(gym.Env):
         # Sample substrate metrics after rejection
         self._sample_substrate_metrics()
 
-        # Check if episode is complete
-        terminated = self.episode_requests >= self.max_requests_per_episode
-
-        if not terminated:
-            # Move to next request within the same episode
-            self._start_new_request()
-
         observation = self._get_observation()
         info = self._get_info()
         info["success"] = False
@@ -447,7 +462,7 @@ class SFCPlacementEnv(gym.Env):
             - self.risk_lambda * risk_integral
             - self.incident_cost_reward_scale * incident_cost
         )
-        return observation, reward, terminated, False, info
+        return observation, reward, True, False, info
 
     @staticmethod
     def _robust_ratio(value: float, reference: float) -> float:
@@ -585,21 +600,21 @@ class SFCPlacementEnv(gym.Env):
         occupied_vnf_nodes = [v for v in vnfs_per_node.values() if v > 0]
 
         if occupied_sfc_nodes:
-            self.episode_sfc_tenancy_samples.append(
-                sum(occupied_sfc_nodes) / len(occupied_sfc_nodes)
-            )
+            val = sum(occupied_sfc_nodes) / len(occupied_sfc_nodes)
+            self.episode_sfc_tenancy_samples.append(val)
+            self._graph_sfc_tenancy_samples.append(val)
         if occupied_vnf_nodes:
-            self.episode_vnf_tenancy_samples.append(
-                sum(occupied_vnf_nodes) / len(occupied_vnf_nodes)
-            )
+            val = sum(occupied_vnf_nodes) / len(occupied_vnf_nodes)
+            self.episode_vnf_tenancy_samples.append(val)
+            self._graph_vnf_tenancy_samples.append(val)
 
         # Substrate utilization: % of nodes being used
         if sfcs_per_node:
             nodes_in_use = len(occupied_sfc_nodes)
             total_nodes = len(sfcs_per_node)
-            self.episode_substrate_utilization_samples.append(
-                nodes_in_use / total_nodes
-            )
+            val = nodes_in_use / total_nodes
+            self.episode_substrate_utilization_samples.append(val)
+            self._graph_substrate_utilization_samples.append(val)
 
     def _get_observation(self) -> dict[str, np.ndarray]:
         """Construct the Dict observation with max_nodes padding."""
@@ -777,11 +792,64 @@ class SFCPlacementEnv(gym.Env):
             else 0.0
         )
 
+        # Graph-level (one topology instance over requests_per_graph requests)
+        graph_total = self._graph_accepted + self._graph_rejected
+        graph_acceptance_ratio = (
+            self._graph_accepted / graph_total if graph_total > 0 else 0.0
+        )
+        graph_latency_violation_ratio = (
+            self._graph_latency_violations / self._graph_rejected
+            if self._graph_rejected > 0
+            else 0.0
+        )
+        graph_avg_sfc_tenancy = (
+            sum(self._graph_sfc_tenancy_samples) / len(self._graph_sfc_tenancy_samples)
+            if self._graph_sfc_tenancy_samples
+            else 0.0
+        )
+        graph_avg_vnf_tenancy = (
+            sum(self._graph_vnf_tenancy_samples) / len(self._graph_vnf_tenancy_samples)
+            if self._graph_vnf_tenancy_samples
+            else 0.0
+        )
+        graph_avg_substrate_util = (
+            sum(self._graph_substrate_utilization_samples)
+            / len(self._graph_substrate_utilization_samples)
+            if self._graph_substrate_utilization_samples
+            else 0.0
+        )
+        graph_avg_risk_score = (
+            sum(self._graph_risk_scores) / len(self._graph_risk_scores)
+            if self._graph_risk_scores
+            else 0.0
+        )
+        graph_avg_incidents = (
+            sum(self._graph_incidents) / len(self._graph_incidents)
+            if self._graph_incidents
+            else 0.0
+        )
+        graph_avg_expected_incidents = (
+            sum(self._graph_expected_incidents) / len(self._graph_expected_incidents)
+            if self._graph_expected_incidents
+            else 0.0
+        )
+        graph_avg_incident_cost = (
+            sum(self._graph_incident_costs) / len(self._graph_incident_costs)
+            if self._graph_incident_costs
+            else 0.0
+        )
+        graph_avg_risk_integral = (
+            sum(self._graph_risk_integrals) / len(self._graph_risk_integrals)
+            if self._graph_risk_integrals
+            else 0.0
+        )
+        is_graph_complete = self._graph_request_count >= self.requests_per_graph
+
         return {
             "current_vnf_index": self.current_vnf_index,
             "total_vnfs": self.current_request.num_vnfs if self.current_request else 0,
             "current_placement": self.current_placement.copy(),
-            # Episode-level stats
+            # Episode-level stats (per-request; one episode = one SFC request)
             "episode_requests": self.episode_requests,
             "episode_accepted": self.episode_accepted,
             "episode_acceptance_ratio": episode_acceptance_ratio,
@@ -801,6 +869,20 @@ class SFCPlacementEnv(gym.Env):
             "episode_avg_expected_incidents": episode_avg_expected_incidents,
             "episode_avg_incident_cost": episode_avg_incident_cost,
             "episode_avg_risk_integral": episode_avg_risk_integral,
+            # Graph-level stats (for callbacks: one data point per graph)
+            "total_graphs": self.total_graphs,
+            "graph_request_count": self._graph_request_count,
+            "is_graph_complete": is_graph_complete,
+            "graph_acceptance_ratio": graph_acceptance_ratio,
+            "graph_latency_violation_ratio": graph_latency_violation_ratio,
+            "graph_avg_sfc_tenancy": graph_avg_sfc_tenancy,
+            "graph_avg_vnf_tenancy": graph_avg_vnf_tenancy,
+            "graph_avg_substrate_util": graph_avg_substrate_util,
+            "graph_avg_risk_score": graph_avg_risk_score,
+            "graph_avg_incidents": graph_avg_incidents,
+            "graph_avg_expected_incidents": graph_avg_expected_incidents,
+            "graph_avg_incident_cost": graph_avg_incident_cost,
+            "graph_avg_risk_integral": graph_avg_risk_integral,
             # Global stats
             "total_requests": self.total_requests,
             "accepted_requests": self.accepted_requests,

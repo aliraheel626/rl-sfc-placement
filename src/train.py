@@ -16,6 +16,7 @@ matplotlib.use("Agg")
 import argparse
 import shutil
 from pathlib import Path
+from typing import Optional
 
 from src.requests import load_config
 from src.model import (
@@ -26,6 +27,7 @@ from src.model import (
     RewardPerStepCallback,
     TrainingEvalCallback,
 )
+import torch
 from stable_baselines3.common.callbacks import CallbackList
 
 
@@ -42,6 +44,7 @@ def train(
     gnn_hidden_dim: int = 64,
     gnn_features_dim: int = 256,
     num_gnn_layers: int = 3,
+    net_arch: Optional[list] = None,
 ):
     """
     Train the Maskable PPO agent for SFC placement.
@@ -59,6 +62,7 @@ def train(
         gnn_hidden_dim: Hidden dimension for GNN layers
         gnn_features_dim: Output dimension of GNN feature extractor
         num_gnn_layers: Number of GNN layers
+        net_arch: Policy MLP layer sizes (e.g. [256, 256]). From config if None.
     """
     # Load configuration
     config = load_config(config_path)
@@ -121,12 +125,16 @@ def train(
             def lr_schedule(progress_remaining: float) -> float:
                 return lr_final + (lr_initial - lr_final) * progress_remaining
             lr = lr_schedule
+        policy_kwargs = {}
+        if net_arch is not None:
+            policy_kwargs["net_arch"] = net_arch
+        print(f"Policy net_arch: {net_arch if net_arch is not None else '[128, 128] (default)'}")
         model = create_maskable_ppo(
             env,
             learning_rate=lr,
             n_steps=n_steps,
             batch_size=training_config.get("batch_size", 512),
-            n_epochs=training_config.get("n_epochs", 10),
+            n_epochs=training_config.get("n_epochs", 4),
             gamma=training_config.get("gamma", 0.99),
             ent_coef=training_config.get("ent_coef", 0.01),
             gae_lambda=training_config.get("gae_lambda", 0.97),
@@ -138,6 +146,16 @@ def train(
             gnn_hidden_dim=gnn_hidden_dim,
             gnn_features_dim=gnn_features_dim,
             num_gnn_layers=num_gnn_layers,
+            policy_kwargs=policy_kwargs,
+        )
+
+    # Device: update phase is much faster on GPU
+    device = next(model.policy.parameters()).device
+    print(f"Training device: {device}")
+    if device.type == "cpu":
+        print(
+            "  Tip: PPO update phase is slow on CPU. Use CUDA (install PyTorch + PyG with CUDA) "
+            "or reduce batch_size / n_steps / gnn_layers in config for faster iterations."
         )
 
     # Setup callbacks
@@ -154,8 +172,8 @@ def train(
         verbose=1,
     )
 
-    # 2. Episode cumulative reward visualization
-    reward_plot_path = str(Path(save_path).parent / "reward_per_episode.png")
+    # 2. Per-graph cumulative reward visualization
+    reward_plot_path = str(Path(save_path).parent / "reward_per_graph.png")
     reward_per_step_callback = RewardPerStepCallback(
         save_path=reward_plot_path,
         plot_freq=plot_freq,
@@ -180,6 +198,14 @@ def train(
 
     # Start training
     print("\nStarting training...")
+    n_steps = training_config.get("n_steps", 2048)
+    n_epochs = training_config.get("n_epochs", 4)
+    batch_size = training_config.get("batch_size", 512)
+    print(
+        f"Note: Progress bar moves only during rollout. After every {n_steps} steps "
+        f"the bar will pause while PPO runs {n_epochs} epochs of updates "
+        f"({n_steps // batch_size} batches/epoch); this can take several minutes per iteration."
+    )
     print("-" * 50)
 
     model.learn(
@@ -202,7 +228,8 @@ def train(
 
     # Get final stats from environment
     base_env = env.unwrapped
-    print(f"Total Episodes: {base_env.total_episodes}")
+    print(f"Total Graphs: {base_env.total_graphs}")
+    print(f"Total Requests (episodes): {base_env.total_episodes}")
     print(f"Total Requests: {base_env.total_requests}")
     print(f"Total Accepted: {base_env.accepted_requests}")
     print(
@@ -262,36 +289,60 @@ def main():
     parser.add_argument(
         "--gnn-type",
         type=str,
-        default="sage",
+        default=None,
         choices=["gcn", "gat", "sage"],
-        help="Type of GNN layer: gcn, gat, or sage (default: sage)",
+        help="Type of GNN layer (default: from config or sage)",
     )
     parser.add_argument(
         "--gnn-hidden-dim",
         type=int,
-        default=64,
-        help="Hidden dimension for GNN layers (default: 64)",
+        default=None,
+        help="Hidden dimension for GNN layers (default: from config or 64)",
     )
     parser.add_argument(
         "--gnn-features-dim",
         type=int,
-        default=256,
-        help="Output dimension of GNN feature extractor (default: 256)",
+        default=None,
+        help="Output dimension of GNN feature extractor (default: from config or 256)",
     )
     parser.add_argument(
         "--gnn-layers",
         type=int,
-        default=3,
-        help="Number of GNN layers (default: 3)",
+        default=None,
+        help="Number of GNN layers (default: from config or 3)",
     )
 
     args = parser.parse_args()
 
-    # Load config to get default timesteps
+    # Load config for timesteps and model architecture
     config = load_config(args.config)
-    timesteps = args.timesteps or config.get("training", {}).get(
+    training_config = config.get("training", {})
+    timesteps = args.timesteps or training_config.get(
         "total_timesteps", 1000000
     )
+
+    # Resolve GNN/model params: CLI overrides config
+    gnn_type = (
+        args.gnn_type
+        if args.gnn_type is not None
+        else training_config.get("gnn_type", "sage")
+    )
+    gnn_hidden_dim = (
+        args.gnn_hidden_dim
+        if args.gnn_hidden_dim is not None
+        else training_config.get("gnn_hidden_dim", 64)
+    )
+    gnn_features_dim = (
+        args.gnn_features_dim
+        if args.gnn_features_dim is not None
+        else training_config.get("gnn_features_dim", 256)
+    )
+    num_gnn_layers = (
+        args.gnn_layers
+        if args.gnn_layers is not None
+        else training_config.get("gnn_layers", 3)
+    )
+    net_arch = training_config.get("net_arch")
 
     # Resolve load path
     load_path = args.resume
@@ -310,10 +361,11 @@ def main():
         plot_freq=args.plot_freq,
         seed=args.seed,
         load_path=load_path,
-        gnn_type=args.gnn_type,
-        gnn_hidden_dim=args.gnn_hidden_dim,
-        gnn_features_dim=args.gnn_features_dim,
-        num_gnn_layers=args.gnn_layers,
+        gnn_type=gnn_type,
+        gnn_hidden_dim=gnn_hidden_dim,
+        gnn_features_dim=gnn_features_dim,
+        num_gnn_layers=num_gnn_layers,
+        net_arch=net_arch,
     )
 
 

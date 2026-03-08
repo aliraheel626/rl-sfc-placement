@@ -333,7 +333,13 @@ def evaluate_baseline(
             risk_cfg,
             max_security,
         )
-        placement = algorithm.place(substrate_copy, request)
+        placement = algorithm.place(
+            substrate_copy,
+            request,
+            risk_cfg=risk_cfg,
+            node_incident_pressure=node_incident_pressure,
+            max_security=max_security,
+        )
         _restore_incident_view(
             substrate_copy,
             original_resource_matrix,
@@ -717,30 +723,47 @@ def evaluate_rl_agent(
         "incident_cost_samples": incident_cost_samples,
     }
 
-
-def run_episode_eval(
+# BOOKMARK, IMPORTANT: THIS IS THE FUNCTION THAT IS USED TO EVALUATE THE RL AGENT.
+def run_eval(
     config_path: str,
-    model,
+    model=None,
     num_requests: int = 1000,
     verbose: bool = False,
+    *,
+    substrate=None,
+    request_generator=None,
+    model_path: Optional[str] = None,
+    save_plot: Optional[str] = None,
+    plot_rolling_dir: Optional[str] = None,
 ) -> dict:
     """
-    Run a 1000-request evaluation for the current RL model and all baselines.
-    Uses the same substrate and request stream (reset before each algorithm) for fairness.
+    Run evaluation for baselines and optionally the RL agent on the same substrate/request stream.
+
+    Substrate and request_generator can be provided (e.g. from training env); otherwise they
+    are created from config. RL is run if model (in-memory) is provided, or if model_path is
+    provided and the file exists; otherwise only baselines are run. Optional printing and
+    plotting when verbose, save_plot, or plot_rolling_dir are set.
 
     Args:
         config_path: Path to configuration file
-        model: In-memory RL model (e.g. current training checkpoint)
+        model: In-memory RL model (optional; preferred over model_path when both set)
         num_requests: Number of requests per evaluation
-        verbose: Whether to print progress
+        verbose: If True, print "Evaluating X..." per algorithm and the comparison table
+        substrate: Optional substrate to use (created from config if None)
+        request_generator: Optional request generator (created from config if None)
+        model_path: If model is None and this path exists, load model and run RL
+        save_plot: If set, call plot_comparison(results, save_plot)
+        plot_rolling_dir: If set, call plot_rolling_averages(results, plot_rolling_dir, 50)
 
     Returns:
         Dictionary mapping algorithm name -> result dict (acceptance_ratio,
         latency_violation_ratio, avg_sfc_tenancy, avg_vnf_tenancy, avg_substrate_utilization, etc.)
     """
     config = load_config(config_path)
-    substrate = SubstrateNetwork(config["substrate"])
-    request_generator = RequestGenerator(config["sfc"])
+    if substrate is None:
+        substrate = SubstrateNetwork(config["substrate"])
+    if request_generator is None:
+        request_generator = RequestGenerator(config["sfc"])
     risk_cfg = _build_risk_config(config)
     max_security = config["substrate"]["resources"]["security_score"]["max"]
     max_ttl = int(config["sfc"]["ttl"]["max"])
@@ -757,6 +780,8 @@ def run_episode_eval(
     initial_np_rng_state = np.random.get_state()
 
     for algorithm in baselines:
+        if verbose:
+            print(f"\nEvaluating {algorithm.__class__.__name__}...")
         random.setstate(initial_rng_state)
         np.random.set_state(initial_np_rng_state)
         substrate.reset()
@@ -773,20 +798,58 @@ def run_episode_eval(
         )
         results[result["algorithm"]] = result
 
-    random.setstate(initial_rng_state)
-    np.random.set_state(initial_np_rng_state)
-    substrate.reset()
-    request_generator.reset()
-    result = evaluate_rl_agent(
-        model_path="",  # unused when model is provided
-        config_path=config_path,
-        num_requests=num_requests,
-        verbose=verbose,
-        model=model,
-        substrate=substrate,
-        request_generator=request_generator,
-    )
-    results[result["algorithm"]] = result
+    # RL: use in-memory model if provided, else load from model_path if it exists
+    run_rl = model is not None or (model_path and Path(model_path).exists())
+    if run_rl:
+        if verbose:
+            print("\nEvaluating RL Agent...")
+        random.setstate(initial_rng_state)
+        np.random.set_state(initial_np_rng_state)
+        substrate.reset()
+        request_generator.reset()
+        if model is None:
+            env = create_masked_env(
+                config_path,
+                substrate=substrate,
+                request_generator=request_generator,
+                max_requests_per_episode=num_requests,
+            )
+            model = load_model(model_path, env)
+        result = evaluate_rl_agent(
+            model_path="" if model is not None else model_path,
+            config_path=config_path,
+            num_requests=num_requests,
+            verbose=verbose,
+            model=model,
+            substrate=substrate,
+            request_generator=request_generator,
+        )
+        results[result["algorithm"]] = result
+    elif model_path:
+        print(f"Warning: Model not found at {model_path}")
+
+    if verbose:
+        print("\n" + "=" * 230)
+        print("COMPARISON RESULTS")
+        print("=" * 230)
+        print(
+            f"{'Algorithm':<20} {'Accepted':<10} {'Rejected':<10} {'Ratio':<10} {'Avg Latency':<12} {'Avg Sec Margin':<14} {'Avg SFC/Node':<14} {'Avg VNF/Node':<14} {'Substrate Util':<14} {'Risk Integral':<14} {'Real Inc':<10} {'Exp Inc':<10} {'Inc Cost':<10} {'Avg Time (ms)':<14}"
+        )
+        print("-" * 230)
+        for name, result in results.items():
+            print(
+                f"{name:<20} {result['accepted']:<10} {result['rejected']:<10} "
+                f"{result['acceptance_ratio']:.4f}     {result['avg_latency']:<12.2f} {result.get('avg_sec_margin', 0):<14.4f} "
+                f"{result.get('avg_sfc_tenancy', 0):<14.2f} {result.get('avg_vnf_tenancy', 0):<14.2f} {result.get('avg_substrate_utilization', 0):<14.2%} "
+                f"{result.get('avg_risk_integral', 0):<14.4f} {result.get('avg_realized_incidents', 0):<10.4f} {result.get('avg_expected_incidents', 0):<10.4f} "
+                f"{result.get('avg_incident_cost', 0):<10.4f} {result.get('avg_time_ms', 0):.3f}"
+            )
+        print("=" * 230)
+
+    if save_plot:
+        plot_comparison(results, save_plot)
+    if plot_rolling_dir:
+        plot_rolling_averages(results, plot_rolling_dir, window_size=50)
 
     return results
 
@@ -811,97 +874,15 @@ def compare_all(
     Returns:
         Dictionary with results for all algorithms
     """
-    config = load_config(config_path)
-
-    # Create substrate network and request generator
-    substrate = SubstrateNetwork(config["substrate"])
-    request_generator = RequestGenerator(config["sfc"])
-    risk_cfg = _build_risk_config(config)
-    max_security = config["substrate"]["resources"]["security_score"]["max"]
-    max_ttl = int(config["sfc"]["ttl"]["max"])
-
-    results = {}
-
-    # Evaluate baseline algorithms
-    baselines = [
-        ViterbiPlacement(),
-        FirstFitPlacement(),
-        BestFitPlacement(),
-    ]
-
-    # Snapshot RNG state so every algorithm sees the same request/incident stream.
-    initial_rng_state = random.getstate()
-    initial_np_rng_state = np.random.get_state()
-
-    for algorithm in baselines:
-        if verbose:
-            print(f"\nEvaluating {algorithm.__class__.__name__}...")
-
-        random.setstate(initial_rng_state)
-        np.random.set_state(initial_np_rng_state)
-        substrate.reset()
-        request_generator.reset()
-        result = evaluate_baseline(
-            substrate,
-            request_generator,
-            algorithm,
-            num_requests=num_requests,
-            risk_cfg=risk_cfg,
-            max_security=max_security,
-            max_ttl=max_ttl,
-            verbose=verbose,
-        )
-        results[result["algorithm"]] = result
-
-    # Evaluate RL agent if model path provided (on same substrate as baselines)
-    if model_path and Path(model_path).exists():
-        if verbose:
-            print("\nEvaluating RL Agent...")
-        random.setstate(initial_rng_state)
-        np.random.set_state(initial_np_rng_state)
-        substrate.reset()
-        request_generator.reset()
-        result = evaluate_rl_agent(
-            model_path,
-            config_path,
-            num_requests=num_requests,
-            verbose=verbose,
-            substrate=substrate,
-            request_generator=request_generator,
-        )
-        results[result["algorithm"]] = result
-    elif model_path:
-        print(f"Warning: Model not found at {model_path}")
-
-    # Print comparison table
-    if verbose:
-        print("\n" + "=" * 230)
-        print("COMPARISON RESULTS")
-        print("=" * 230)
-        print(
-            f"{'Algorithm':<20} {'Accepted':<10} {'Rejected':<10} {'Ratio':<10} {'Avg Latency':<12} {'Avg Sec Margin':<14} {'Avg SFC/Node':<14} {'Avg VNF/Node':<14} {'Substrate Util':<14} {'Risk Integral':<14} {'Real Inc':<10} {'Exp Inc':<10} {'Inc Cost':<10} {'Avg Time (ms)':<14}"
-        )
-        print("-" * 230)
-
-        for name, result in results.items():
-            print(
-                f"{name:<20} {result['accepted']:<10} {result['rejected']:<10} "
-                f"{result['acceptance_ratio']:.4f}     {result['avg_latency']:<12.2f} {result.get('avg_sec_margin', 0):<14.4f} "
-                f"{result.get('avg_sfc_tenancy', 0):<14.2f} {result.get('avg_vnf_tenancy', 0):<14.2f} {result.get('avg_substrate_utilization', 0):<14.2%} "
-                f"{result.get('avg_risk_integral', 0):<14.4f} {result.get('avg_realized_incidents', 0):<10.4f} {result.get('avg_expected_incidents', 0):<10.4f} "
-                f"{result.get('avg_incident_cost', 0):<10.4f} {result.get('avg_time_ms', 0):.3f}"
-            )
-
-        print("=" * 230)
-
-    # Generate bar chart plot if requested
-    if save_plot:
-        plot_comparison(results, save_plot)
-
-    # Always generate rolling average plots to eval/
-    plot_rolling_averages(results, "eval/", window_size=50)
-
-    return results
+    return run_eval(
+        config_path,
+        model=None,
+        num_requests=num_requests,
+        verbose=verbose,
+        model_path=model_path,
+        save_plot=save_plot,
+        plot_rolling_dir="eval/",
+    )
 
 
 def plot_comparison(results: dict, save_path: str):

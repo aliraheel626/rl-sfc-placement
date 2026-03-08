@@ -2,9 +2,9 @@
 Baseline Algorithms for SFC Placement.
 
 This module implements baseline placement algorithms for comparison:
-- ViterbiPlacement: Optimal dynamic programming approach
-- FirstFitPlacement: Simple heuristic (first valid node)
-- BestFitPlacement: Greedy heuristic (best resource match)
+- ViterbiPlacement: Optimal dynamic programming approach (latency or risk)
+- FirstFitPlacement: Simple heuristic (first valid node, optionally by risk)
+- BestFitPlacement: Greedy heuristic (best resource match or lowest risk)
 """
 
 from abc import ABC, abstractmethod
@@ -12,6 +12,60 @@ from typing import Optional
 
 from src.substrate import SubstrateNetwork
 from src.requests import SFCRequest, VNF
+
+
+def _robust_ratio(value: float, reference: float) -> float:
+    """Bounded ratio value / (value + ref), in [0, 1]."""
+    safe_ref = max(reference, 1e-6)
+    value = max(value, 0.0)
+    return float(min(value / (value + safe_ref), 1.0))
+
+
+def node_risk_heuristic(
+    substrate: SubstrateNetwork,
+    node_id: int,
+    risk_cfg: dict,
+    node_incident_pressure: dict,
+    max_security: float,
+) -> float:
+    """
+    Per-node risk score used to rank nodes when optimizing for risk.
+    Aligns with risk model: inverse security, tenancy, and incident pressure.
+    Lower is better.
+    """
+    if not risk_cfg.get("enabled", False):
+        return 0.0
+    raw_security = substrate.node_resources[node_id]["security_score"]
+    pressure = node_incident_pressure.get(node_id, 0.0)
+    penalty = risk_cfg.get("incident_security_penalty", 0.6)
+    multiplier = max(0.0, 1.0 - penalty * pressure)
+    effective_security = raw_security * multiplier
+    security_norm = min(
+        max(effective_security / max(max_security, 1e-6), 0.0), 1.0
+    )
+    inverse_security_risk = 1.0 - security_norm
+
+    vnfs_per_node = substrate.get_vnfs_per_node()
+    sfcs_per_node = substrate.get_sfcs_per_node()
+    vnf_count = vnfs_per_node.get(node_id, 0)
+    sfc_count = sfcs_per_node.get(node_id, 0)
+    vnf_ref = max(risk_cfg.get("load_ref_floor", 1.0), 1.0)
+    sfc_ref = max(risk_cfg.get("tenancy_ref_floor", 1.0), 1.0)
+    vnf_tenancy_risk = _robust_ratio(float(vnf_count), vnf_ref)
+    sfc_tenancy_risk = _robust_ratio(float(sfc_count), sfc_ref)
+
+    w_inv = risk_cfg.get("w_inverse_security", 0.22)
+    w_vnf = risk_cfg.get("w_vnf_tenancy", 0.22)
+    w_sfc = risk_cfg.get("w_sfc_tenancy", 0.18)
+    weight_sum = max(w_inv + w_vnf + w_sfc, 1e-6)
+    risk = (
+        w_inv * inverse_security_risk
+        + w_vnf * vnf_tenancy_risk
+        + w_sfc * sfc_tenancy_risk
+    ) / weight_sum
+    # Add pressure as a proxy for incident propensity (higher pressure -> higher risk)
+    risk = risk + 0.1 * pressure
+    return min(max(risk, 0.0), 1.0)
 
 
 class BasePlacement(ABC):
@@ -104,44 +158,52 @@ class ViterbiPlacement(BasePlacement):
     """
     Optimal SFC placement using Viterbi-style dynamic programming.
 
-    This algorithm builds a trellis where:
-    - States: (vnf_index, substrate_node)
-    - Transitions: Valid placements considering constraints
-    - Metric: Minimize total path latency
-
-    The algorithm finds the placement that minimizes total latency
-    while satisfying all constraints.
+    Metric: Minimize total path risk only. Latency is enforced as a hard
+    constraint (feasibility) and used only as tie-breaker when risk is equal.
     """
 
     def place(
-        self, substrate: SubstrateNetwork, request: SFCRequest
+        self,
+        substrate: SubstrateNetwork,
+        request: SFCRequest,
+        *,
+        risk_cfg: Optional[dict] = None,
+        node_incident_pressure: Optional[dict] = None,
+        max_security: Optional[float] = None,
     ) -> Optional[list[int]]:
         """
-        Find optimal placement using dynamic programming.
-
-        Returns placement with minimum latency, or None if infeasible.
+        Find placement that minimizes sum of node risk along the path,
+        subject to latency <= max_latency. Tie-break by lower latency.
         """
         num_vnfs = request.num_vnfs
         num_nodes = substrate.num_nodes
+        use_risk_heuristic = (
+            risk_cfg is not None
+            and risk_cfg.get("enabled", False)
+            and node_incident_pressure is not None
+            and max_security is not None
+        )
+        pressure = node_incident_pressure if node_incident_pressure else {}
 
-        # dp[vnf_idx][node] = (min_latency, backpointer)
-        # Initialize with infinity
         INF = float("inf")
         dp = [[INF for _ in range(num_nodes)] for _ in range(num_vnfs)]
+        dp_latency = [[INF for _ in range(num_nodes)] for _ in range(num_vnfs)]
         backpointer = [[None for _ in range(num_nodes)] for _ in range(num_vnfs)]
 
-        # Initialize first VNF - all valid nodes have latency 0
         first_vnf = request.vnfs[0]
         valid_first = self.get_valid_nodes(substrate, first_vnf, request)
-
         if not valid_first:
             return None
 
         for node in valid_first:
-            dp[0][node] = 0.0
+            dp[0][node] = (
+                node_risk_heuristic(substrate, node, risk_cfg, pressure, max_security)
+                if use_risk_heuristic
+                else 0.0
+            )
+            dp_latency[0][node] = 0.0
 
-        # Fill the trellis
-        min_link_latency = 1.0  # Minimum possible link latency
+        min_link_latency = 1.0
 
         for vnf_idx in range(1, num_vnfs):
             vnf = request.vnfs[vnf_idx]
@@ -149,85 +211,93 @@ class ViterbiPlacement(BasePlacement):
             min_remaining_latency = remaining_vnfs * min_link_latency
 
             for curr_node in range(num_nodes):
-                # Check if current node is valid for this VNF
                 if not substrate.check_node_feasibility(
                     curr_node, vnf, request.min_security_score
                 ):
                     continue
-
-                # Check hard isolation: skip nodes isolated by other SFCs
                 if substrate.is_node_hard_isolated(curr_node):
                     continue
+                if request.hard_isolation and substrate.has_any_sfc_on_node(curr_node):
+                    continue
 
-                # If this SFC requires hard isolation, skip nodes with other SFCs
-                if request.hard_isolation:
-                    if substrate.has_any_sfc_on_node(curr_node):
-                        continue
+                curr_risk = (
+                    node_risk_heuristic(
+                        substrate, curr_node, risk_cfg, pressure, max_security
+                    )
+                    if use_risk_heuristic
+                    else 0.0
+                )
 
-                # Try all previous nodes
                 for prev_node in range(num_nodes):
                     if dp[vnf_idx - 1][prev_node] == INF:
                         continue
-
-                    # Check bandwidth constraint
                     if not substrate.check_bandwidth(
                         prev_node, curr_node, request.min_bandwidth
                     ):
                         continue
 
-                    # Calculate latency for this transition
                     link_latency = substrate.get_path_latency(prev_node, curr_node)
-                    total_latency = dp[vnf_idx - 1][prev_node] + link_latency
-
-                    # Early pruning: skip if this path can't possibly meet the constraint
+                    total_latency = dp_latency[vnf_idx - 1][prev_node] + link_latency
                     if total_latency + min_remaining_latency > request.max_latency:
                         continue
 
-                    # Update if better
-                    if total_latency < dp[vnf_idx][curr_node]:
-                        dp[vnf_idx][curr_node] = total_latency
+                    total_risk = dp[vnf_idx - 1][prev_node] + curr_risk
+                    # Update if better risk, or same risk with lower latency (tie-break)
+                    better = total_risk < dp[vnf_idx][curr_node] or (
+                        total_risk == dp[vnf_idx][curr_node]
+                        and total_latency < dp_latency[vnf_idx][curr_node]
+                    )
+                    if better:
+                        dp[vnf_idx][curr_node] = total_risk
+                        dp_latency[vnf_idx][curr_node] = total_latency
                         backpointer[vnf_idx][curr_node] = prev_node
 
-        # Find best final placement that satisfies latency constraint
-        best_latency = INF
         best_final_node = None
-
+        best_risk = INF
+        best_latency = INF
         for node in range(num_nodes):
-            if dp[num_vnfs - 1][node] <= request.max_latency:
-                if dp[num_vnfs - 1][node] < best_latency:
-                    best_latency = dp[num_vnfs - 1][node]
+            if dp_latency[num_vnfs - 1][node] <= request.max_latency:
+                if dp[num_vnfs - 1][node] < best_risk or (
+                    dp[num_vnfs - 1][node] == best_risk
+                    and dp_latency[num_vnfs - 1][node] < best_latency
+                ):
+                    best_risk = dp[num_vnfs - 1][node]
+                    best_latency = dp_latency[num_vnfs - 1][node]
                     best_final_node = node
 
         if best_final_node is None:
             return None
 
-        # Backtrack to find placement
         placement = [None] * num_vnfs
         placement[num_vnfs - 1] = best_final_node
-
         for vnf_idx in range(num_vnfs - 1, 0, -1):
             placement[vnf_idx - 1] = backpointer[vnf_idx][placement[vnf_idx]]
-
         return placement
 
 
 class FirstFitPlacement(BasePlacement):
     """
-    Simple first-fit heuristic placement.
-
-    For each VNF, selects the first valid node found.
-    Fast but may not produce optimal placements.
+    First-fit by risk only: for each VNF, select the valid node with lowest risk
+    (first when sorted by risk ascending). Tie-break by node id.
     """
 
     def place(
-        self, substrate: SubstrateNetwork, request: SFCRequest
+        self,
+        substrate: SubstrateNetwork,
+        request: SFCRequest,
+        *,
+        risk_cfg: Optional[dict] = None,
+        node_incident_pressure: Optional[dict] = None,
+        max_security: Optional[float] = None,
     ) -> Optional[list[int]]:
         """
-        Place VNFs using first-fit strategy.
+        Place VNFs by always choosing the lowest-risk valid node per step.
         """
         placement = []
         current_latency = 0.0
-        min_link_latency = 1.0  # Minimum possible link latency
+        min_link_latency = 1.0
+        pressure = node_incident_pressure if node_incident_pressure else {}
+        max_sec = max_security if max_security is not None else 1.0
 
         for i, vnf in enumerate(request.vnfs):
             prev_node = placement[-1] if placement else None
@@ -247,11 +317,17 @@ class FirstFitPlacement(BasePlacement):
             if not valid_nodes:
                 return None
 
-            # Select first valid node
+            # Always order by risk (ascending); tie-break by node id
+            valid_nodes = sorted(
+                valid_nodes,
+                key=lambda n: (
+                    node_risk_heuristic(substrate, n, risk_cfg or {}, pressure, max_sec),
+                    n,
+                ),
+            )
             selected_node = valid_nodes[0]
             placement.append(selected_node)
 
-            # Update accumulated latency
             if prev_node is not None:
                 current_latency += substrate.get_path_latency(prev_node, selected_node)
 
@@ -260,21 +336,27 @@ class FirstFitPlacement(BasePlacement):
 
 class BestFitPlacement(BasePlacement):
     """
-    Greedy best-fit heuristic placement.
-
-    For each VNF, selects the node with the closest matching
-    resources (minimizes wasted capacity).
+    Best-fit by risk only: for each VNF, select the valid node with minimum risk.
+    Tie-break by resource waste (then node id).
     """
 
     def place(
-        self, substrate: SubstrateNetwork, request: SFCRequest
+        self,
+        substrate: SubstrateNetwork,
+        request: SFCRequest,
+        *,
+        risk_cfg: Optional[dict] = None,
+        node_incident_pressure: Optional[dict] = None,
+        max_security: Optional[float] = None,
     ) -> Optional[list[int]]:
         """
-        Place VNFs using best-fit strategy.
+        Place VNFs by always choosing the valid node with minimum risk per step.
         """
         placement = []
         current_latency = 0.0
         min_link_latency = 1.0
+        pressure = node_incident_pressure if node_incident_pressure else {}
+        max_sec = max_security if max_security is not None else 1.0
 
         for i, vnf in enumerate(request.vnfs):
             prev_node = placement[-1] if placement else None
@@ -294,27 +376,21 @@ class BestFitPlacement(BasePlacement):
             if not valid_nodes:
                 return None
 
-            # Select node with best resource match (minimum waste)
-            best_node = None
-            best_score = float("inf")
-
-            for node in valid_nodes:
-                res = substrate.get_node_resources(node)
-
-                # Calculate waste (excess resources)
+            def key(n: int):
+                risk = node_risk_heuristic(
+                    substrate, n, risk_cfg or {}, pressure, max_sec
+                )
+                res = substrate.get_node_resources(n)
                 waste = (
                     (res["ram"] - vnf.ram)
                     + (res["cpu"] - vnf.cpu)
                     + (res["storage"] - vnf.storage)
                 )
+                return (risk, waste, n)
 
-                if waste < best_score:
-                    best_score = waste
-                    best_node = node
-
+            best_node = min(valid_nodes, key=key)
             placement.append(best_node)
 
-            # Update accumulated latency
             if prev_node is not None:
                 current_latency += substrate.get_path_latency(prev_node, best_node)
 

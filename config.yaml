@@ -75,7 +75,7 @@ sfc:
 
 # Training Configuration (PPO tuning for create_maskable_ppo)
 training:
-  total_timesteps: 1000000
+  total_timesteps: 2000000
   # Learning rate: constant 1e-4, or linear decay from 3e-4 (set use_linear_lr_schedule: true)
   learning_rate: 0.0001   # 1e-4 (final value when using schedule)
   use_linear_lr_schedule: false
@@ -130,3 +130,5 @@ risk:
 # Evaluation Configuration
 evaluation:
   num_requests: 1000
+  use_training_substrate: true
+  use_training_request_generator: true

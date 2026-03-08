@@ -7,6 +7,7 @@ agent from sb3-contrib for use with the SFC placement environment.
 
 from typing import Optional
 
+import copy
 import os
 import matplotlib.pyplot as plt
 from sb3_contrib import MaskablePPO
@@ -18,7 +19,7 @@ from src.gnn_policy import (
     GNNFeaturesExtractor,
     create_edge_getter,
 )
-from src.requests import RequestGenerator
+from src.requests import RequestGenerator, load_config
 from src.substrate import SubstrateNetwork
 
 
@@ -874,6 +875,13 @@ class TrainingEvalCallback(BaseCallback):
         self.episodes = []
         # algorithm_name -> list of values per episode
         self.by_algo = {}
+        config = load_config(config_path)
+        self.use_training_substrate = config.get("evaluation", {}).get(
+            "use_training_substrate", False
+        )
+        self.use_training_request_generator = config.get("evaluation", {}).get(
+            "use_training_request_generator", False
+        )
 
     def _on_step(self) -> bool:
         infos = self.locals.get("infos", [])
@@ -896,13 +904,26 @@ class TrainingEvalCallback(BaseCallback):
 
                 episode_num = info.get("total_episodes", len(self.episodes) + 1)
 
-                from src.compare import run_episode_eval
+                from src.compare import run_eval
 
-                results = run_episode_eval(
+                substrate = None
+                request_generator = None
+                if self.use_training_substrate or self.use_training_request_generator:
+                    vec_env = self.training_env
+                    first_env = vec_env.envs[0]
+                    base_env = first_env.unwrapped
+                    if self.use_training_substrate:
+                        substrate = copy.deepcopy(base_env.substrate)
+                    if self.use_training_request_generator:
+                        request_generator = copy.deepcopy(base_env.request_generator)
+
+                results = run_eval(
                     self.config_path,
                     self.model,
                     num_requests=self.num_requests,
                     verbose=False,
+                    substrate=substrate,
+                    request_generator=request_generator,
                 )
 
                 self.episodes.append(episode_num)

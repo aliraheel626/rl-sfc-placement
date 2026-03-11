@@ -69,14 +69,26 @@ class SFCPlacementEnv(gym.Env):
             self.substrate = substrate
             self.request_generator = request_generator
             self.randomize_topology = False
+            self.randomize_request_generator = False
+            self._request_gen_rng_state = None
+            self._request_gen_np_rng_state = None
         else:
             self.substrate = SubstrateNetwork(self.config["substrate"])
             self.request_generator = RequestGenerator(self.config["sfc"])
             self.randomize_topology = self.config.get("training", {}).get(
                 "randomize_topology", False
             )
+            self.randomize_request_generator = self.config.get("training", {}).get(
+                "randomize_request_generator", False
+            )
+            self._request_gen_rng_state = None
+            self._request_gen_np_rng_state = None
             if self.randomize_topology:
                 print("INFO: Topology randomization enabled (new graph per episode).")
+            if not self.randomize_request_generator:
+                print(
+                    "INFO: Same request sequence per episode (randomize_request_generator=false)."
+                )
 
         # Reward configuration
         self.acceptance_reward = self.config["rewards"]["acceptance"]
@@ -217,6 +229,14 @@ class SFCPlacementEnv(gym.Env):
         else:
             self.substrate.reset()
 
+        # Same request sequence every episode when randomize_request_generator is False
+        if not self.randomize_request_generator:
+            if self._request_gen_rng_state is None:
+                self._request_gen_rng_state = random.getstate()
+                self._request_gen_np_rng_state = np.random.get_state()
+            else:
+                random.setstate(self._request_gen_rng_state)
+                np.random.set_state(self._request_gen_np_rng_state)
         self.request_generator.reset()
 
         # Reset episode-level counters

@@ -89,7 +89,7 @@ training:
   clip_range: 0.2
   max_requests_per_episode: 300
   randomize_topology: false
-
+  randomize_request_generator: false
 # Reward Configuration
 rewards:
   acceptance: 1

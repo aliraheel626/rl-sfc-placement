@@ -534,8 +534,10 @@ def evaluate_rl_agent(
 
     if model is not None:
         pass  # Use provided in-memory model
-    else:
+    elif model_path:
         model = load_model(model_path, env)
+    else:
+        raise ValueError("evaluate_rl_agent requires model or model_path")
 
     accepted = 0
     rejected = 0
@@ -798,7 +800,9 @@ def run_eval(
         )
         results[result["algorithm"]] = result
 
-    # RL: use in-memory model if provided, else load from model_path if it exists
+    # RL: use in-memory model if provided, else load from model_path if it exists.
+    # Do not create an env here when model is None: evaluate_rl_agent must create the only
+    # env and call reset() once, so the same RNG state produces the same request stream as baselines.
     run_rl = model is not None or (model_path and Path(model_path).exists())
     if run_rl:
         if verbose:
@@ -807,16 +811,8 @@ def run_eval(
         np.random.set_state(initial_np_rng_state)
         substrate.reset()
         request_generator.reset()
-        if model is None:
-            env = create_masked_env(
-                config_path,
-                substrate=substrate,
-                request_generator=request_generator,
-                max_requests_per_episode=num_requests,
-            )
-            model = load_model(model_path, env)
         result = evaluate_rl_agent(
-            model_path="" if model is not None else model_path,
+            model_path=model_path or "",
             config_path=config_path,
             num_requests=num_requests,
             verbose=verbose,

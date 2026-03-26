@@ -1,10 +1,8 @@
 """
 Baseline Algorithms for SFC Placement.
 
-This module implements baseline placement algorithms for comparison:
-- ViterbiPlacement: Optimal dynamic programming approach (latency or risk)
-- FirstFitPlacement: Simple heuristic (first valid node, optionally by risk)
-- BestFitPlacement: Greedy heuristic (best resource match or lowest risk)
+This module implements BestFitPlacement for comparison with RL:
+greedy per-step choice by minimum risk, tie-break by resource waste (then node id).
 """
 
 from abc import ABC, abstractmethod
@@ -154,186 +152,6 @@ class BasePlacement(ABC):
         return valid_nodes
 
 
-class ViterbiPlacement(BasePlacement):
-    """
-    Optimal SFC placement using Viterbi-style dynamic programming.
-
-    Metric: Minimize total path risk only. Latency is enforced as a hard
-    constraint (feasibility) and used only as tie-breaker when risk is equal.
-    """
-
-    def place(
-        self,
-        substrate: SubstrateNetwork,
-        request: SFCRequest,
-        *,
-        risk_cfg: Optional[dict] = None,
-        node_incident_pressure: Optional[dict] = None,
-        max_security: Optional[float] = None,
-    ) -> Optional[list[int]]:
-        """
-        Find placement that minimizes sum of node risk along the path,
-        subject to latency <= max_latency. Tie-break by lower latency.
-        """
-        num_vnfs = request.num_vnfs
-        num_nodes = substrate.num_nodes
-        use_risk_heuristic = (
-            risk_cfg is not None
-            and risk_cfg.get("enabled", False)
-            and node_incident_pressure is not None
-            and max_security is not None
-        )
-        pressure = node_incident_pressure if node_incident_pressure else {}
-
-        INF = float("inf")
-        dp = [[INF for _ in range(num_nodes)] for _ in range(num_vnfs)]
-        dp_latency = [[INF for _ in range(num_nodes)] for _ in range(num_vnfs)]
-        backpointer = [[None for _ in range(num_nodes)] for _ in range(num_vnfs)]
-
-        first_vnf = request.vnfs[0]
-        valid_first = self.get_valid_nodes(substrate, first_vnf, request)
-        if not valid_first:
-            return None
-
-        for node in valid_first:
-            dp[0][node] = (
-                node_risk_heuristic(substrate, node, risk_cfg, pressure, max_security)
-                if use_risk_heuristic
-                else 0.0
-            )
-            dp_latency[0][node] = 0.0
-
-        min_link_latency = 1.0
-
-        for vnf_idx in range(1, num_vnfs):
-            vnf = request.vnfs[vnf_idx]
-            remaining_vnfs = num_vnfs - vnf_idx - 1
-            min_remaining_latency = remaining_vnfs * min_link_latency
-
-            for curr_node in range(num_nodes):
-                if not substrate.check_node_feasibility(
-                    curr_node, vnf, request.min_security_score
-                ):
-                    continue
-                if substrate.is_node_hard_isolated(curr_node):
-                    continue
-                if request.hard_isolation and substrate.has_any_sfc_on_node(curr_node):
-                    continue
-
-                curr_risk = (
-                    node_risk_heuristic(
-                        substrate, curr_node, risk_cfg, pressure, max_security
-                    )
-                    if use_risk_heuristic
-                    else 0.0
-                )
-
-                for prev_node in range(num_nodes):
-                    if dp[vnf_idx - 1][prev_node] == INF:
-                        continue
-                    if not substrate.check_bandwidth(
-                        prev_node, curr_node, request.min_bandwidth
-                    ):
-                        continue
-
-                    link_latency = substrate.get_path_latency(prev_node, curr_node)
-                    total_latency = dp_latency[vnf_idx - 1][prev_node] + link_latency
-                    if total_latency + min_remaining_latency > request.max_latency:
-                        continue
-
-                    total_risk = dp[vnf_idx - 1][prev_node] + curr_risk
-                    # Update if better risk, or same risk with lower latency (tie-break)
-                    better = total_risk < dp[vnf_idx][curr_node] or (
-                        total_risk == dp[vnf_idx][curr_node]
-                        and total_latency < dp_latency[vnf_idx][curr_node]
-                    )
-                    if better:
-                        dp[vnf_idx][curr_node] = total_risk
-                        dp_latency[vnf_idx][curr_node] = total_latency
-                        backpointer[vnf_idx][curr_node] = prev_node
-
-        best_final_node = None
-        best_risk = INF
-        best_latency = INF
-        for node in range(num_nodes):
-            if dp_latency[num_vnfs - 1][node] <= request.max_latency:
-                if dp[num_vnfs - 1][node] < best_risk or (
-                    dp[num_vnfs - 1][node] == best_risk
-                    and dp_latency[num_vnfs - 1][node] < best_latency
-                ):
-                    best_risk = dp[num_vnfs - 1][node]
-                    best_latency = dp_latency[num_vnfs - 1][node]
-                    best_final_node = node
-
-        if best_final_node is None:
-            return None
-
-        placement = [None] * num_vnfs
-        placement[num_vnfs - 1] = best_final_node
-        for vnf_idx in range(num_vnfs - 1, 0, -1):
-            placement[vnf_idx - 1] = backpointer[vnf_idx][placement[vnf_idx]]
-        return placement
-
-
-class FirstFitPlacement(BasePlacement):
-    """
-    First-fit by risk only: for each VNF, select the valid node with lowest risk
-    (first when sorted by risk ascending). Tie-break by node id.
-    """
-
-    def place(
-        self,
-        substrate: SubstrateNetwork,
-        request: SFCRequest,
-        *,
-        risk_cfg: Optional[dict] = None,
-        node_incident_pressure: Optional[dict] = None,
-        max_security: Optional[float] = None,
-    ) -> Optional[list[int]]:
-        """
-        Place VNFs by always choosing the lowest-risk valid node per step.
-        """
-        placement = []
-        current_latency = 0.0
-        min_link_latency = 1.0
-        pressure = node_incident_pressure if node_incident_pressure else {}
-        max_sec = max_security if max_security is not None else 1.0
-
-        for i, vnf in enumerate(request.vnfs):
-            prev_node = placement[-1] if placement else None
-            remaining_vnfs = request.num_vnfs - i - 1
-
-            valid_nodes = self.get_valid_nodes(
-                substrate,
-                vnf,
-                request,
-                prev_node,
-                current_latency,
-                remaining_vnfs,
-                min_link_latency,
-                current_placement=placement,
-            )
-
-            if not valid_nodes:
-                return None
-
-            # Always order by risk (ascending); tie-break by node id
-            valid_nodes = sorted(
-                valid_nodes,
-                key=lambda n: (
-                    node_risk_heuristic(substrate, n, risk_cfg or {}, pressure, max_sec),
-                    n,
-                ),
-            )
-            selected_node = valid_nodes[0]
-            placement.append(selected_node)
-
-            if prev_node is not None:
-                current_latency += substrate.get_path_latency(prev_node, selected_node)
-
-        return placement
-
-
 class BestFitPlacement(BasePlacement):
     """
     Best-fit by risk only: for each VNF, select the valid node with minimum risk.
@@ -402,20 +220,12 @@ def get_placement_algorithm(name: str) -> BasePlacement:
     Factory function to get a placement algorithm by name.
 
     Args:
-        name: Algorithm name (viterbi, first_fit, best_fit)
+        name: Algorithm name (best_fit)
 
     Returns:
         Instance of the placement algorithm
     """
-    algorithms = {
-        "viterbi": ViterbiPlacement,
-        "first_fit": FirstFitPlacement,
-        "best_fit": BestFitPlacement,
-    }
+    if name != "best_fit":
+        raise ValueError(f"Unknown algorithm: {name}. Available: ['best_fit']")
 
-    if name not in algorithms:
-        raise ValueError(
-            f"Unknown algorithm: {name}. Available: {list(algorithms.keys())}"
-        )
-
-    return algorithms[name]()
+    return BestFitPlacement()

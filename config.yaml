@@ -120,8 +120,8 @@ risk:
   # Incident pressure state (temporary node degradation, decays each request tick)
   incident_pressure_gain: 0.20
   incident_pressure_decay: 0.92
-  incident_block_threshold: 0.85 # Nodes above this pressure are temporarily unavailable
-  incident_security_penalty: 0.60 # Effective security multiplier: (1 - penalty * pressure)
+  incident_block_threshold: 1.01 # Nodes above this pressure are temporarily unavailable
+  incident_security_penalty: 0.00 # Effective security multiplier: (1 - penalty * pressure)
 
   # Incident consequence and reward coupling
   incident_cost_per_event: 0.20

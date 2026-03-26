@@ -21,12 +21,7 @@ from tqdm import tqdm
 from src.substrate import SubstrateNetwork
 from src.requests import RequestGenerator, load_config
 from src.model import create_masked_env, load_model
-from src.baselines import (
-    BasePlacement,
-    ViterbiPlacement,
-    FirstFitPlacement,
-    BestFitPlacement,
-)
+from src.baselines import BasePlacement, BestFitPlacement
 
 
 def _build_risk_config(config: dict) -> dict:
@@ -771,11 +766,7 @@ def run_eval(
     max_ttl = int(config["sfc"]["ttl"]["max"])
 
     results = {}
-    baselines = [
-        ViterbiPlacement(),
-        FirstFitPlacement(),
-        BestFitPlacement(),
-    ]
+    baselines = [BestFitPlacement()]
 
     # Snapshot RNG state so every algorithm sees the same request/incident stream.
     initial_rng_state = random.getstate()

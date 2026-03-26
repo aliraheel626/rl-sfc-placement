@@ -125,7 +125,7 @@ def run_sweep(
         )
 
         ppo = results.get("MaskablePPO", {})
-        viterbi = results.get("ViterbiPlacement", {})
+        bestfit = results.get("BestFitPlacement", {})
         row = {
             "lambda": lam,
             "ppo_acceptance_ratio": ppo.get("acceptance_ratio", 0.0),
@@ -134,12 +134,12 @@ def run_sweep(
             "ppo_avg_realized_incidents": ppo.get("avg_realized_incidents", 0.0),
             "ppo_avg_incident_cost": ppo.get("avg_incident_cost", 0.0),
             "ppo_avg_latency": ppo.get("avg_latency", 0.0),
-            "viterbi_acceptance_ratio": viterbi.get("acceptance_ratio", 0.0),
-            "viterbi_avg_risk_integral": viterbi.get("avg_risk_integral", viterbi.get("avg_risk_score", 0.0)),
-            "delta_acceptance_vs_viterbi": ppo.get("acceptance_ratio", 0.0)
-            - viterbi.get("acceptance_ratio", 0.0),
-            "delta_risk_vs_viterbi": ppo.get("avg_risk_integral", ppo.get("avg_risk_score", 0.0))
-            - viterbi.get("avg_risk_integral", viterbi.get("avg_risk_score", 0.0)),
+            "bestfit_acceptance_ratio": bestfit.get("acceptance_ratio", 0.0),
+            "bestfit_avg_risk_integral": bestfit.get("avg_risk_integral", bestfit.get("avg_risk_score", 0.0)),
+            "delta_acceptance_vs_bestfit": ppo.get("acceptance_ratio", 0.0)
+            - bestfit.get("acceptance_ratio", 0.0),
+            "delta_risk_vs_bestfit": ppo.get("avg_risk_integral", ppo.get("avg_risk_score", 0.0))
+            - bestfit.get("avg_risk_integral", bestfit.get("avg_risk_score", 0.0)),
             "run_dir": str(run_dir),
             "model_path": model_path,
         }
@@ -148,7 +148,7 @@ def run_sweep(
             "Result: "
             f"acc={row['ppo_acceptance_ratio']:.4f}, "
             f"risk={row['ppo_avg_risk_integral']:.4f}, "
-            f"delta_acc_vs_viterbi={row['delta_acceptance_vs_viterbi']:.4f}"
+            f"delta_acc_vs_bestfit={row['delta_acceptance_vs_bestfit']:.4f}"
         )
 
     csv_path = out_path / "summary.csv"
@@ -162,10 +162,10 @@ def run_sweep(
         "ppo_avg_realized_incidents",
         "ppo_avg_incident_cost",
         "ppo_avg_latency",
-        "viterbi_acceptance_ratio",
-        "viterbi_avg_risk_integral",
-        "delta_acceptance_vs_viterbi",
-        "delta_risk_vs_viterbi",
+        "bestfit_acceptance_ratio",
+        "bestfit_avg_risk_integral",
+        "delta_acceptance_vs_bestfit",
+        "delta_risk_vs_bestfit",
         "run_dir",
         "model_path",
     ]

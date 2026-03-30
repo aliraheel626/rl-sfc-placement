@@ -10,60 +10,7 @@ from typing import Optional
 
 from src.substrate import SubstrateNetwork
 from src.requests import SFCRequest, VNF
-
-
-def _robust_ratio(value: float, reference: float) -> float:
-    """Bounded ratio value / (value + ref), in [0, 1]."""
-    safe_ref = max(reference, 1e-6)
-    value = max(value, 0.0)
-    return float(min(value / (value + safe_ref), 1.0))
-
-
-def node_risk_heuristic(
-    substrate: SubstrateNetwork,
-    node_id: int,
-    risk_cfg: dict,
-    node_incident_pressure: dict,
-    max_security: float,
-) -> float:
-    """
-    Per-node risk score used to rank nodes when optimizing for risk.
-    Aligns with risk model: inverse security, tenancy, and incident pressure.
-    Lower is better.
-    """
-    if not risk_cfg.get("enabled", False):
-        return 0.0
-    raw_security = substrate.node_resources[node_id]["security_score"]
-    pressure = node_incident_pressure.get(node_id, 0.0)
-    penalty = risk_cfg.get("incident_security_penalty", 0.6)
-    multiplier = max(0.0, 1.0 - penalty * pressure)
-    effective_security = raw_security * multiplier
-    security_norm = min(
-        max(effective_security / max(max_security, 1e-6), 0.0), 1.0
-    )
-    inverse_security_risk = 1.0 - security_norm
-
-    vnfs_per_node = substrate.get_vnfs_per_node()
-    sfcs_per_node = substrate.get_sfcs_per_node()
-    vnf_count = vnfs_per_node.get(node_id, 0)
-    sfc_count = sfcs_per_node.get(node_id, 0)
-    vnf_ref = max(risk_cfg.get("load_ref_floor", 1.0), 1.0)
-    sfc_ref = max(risk_cfg.get("tenancy_ref_floor", 1.0), 1.0)
-    vnf_tenancy_risk = _robust_ratio(float(vnf_count), vnf_ref)
-    sfc_tenancy_risk = _robust_ratio(float(sfc_count), sfc_ref)
-
-    w_inv = risk_cfg.get("w_inverse_security", 0.22)
-    w_vnf = risk_cfg.get("w_vnf_tenancy", 0.22)
-    w_sfc = risk_cfg.get("w_sfc_tenancy", 0.18)
-    weight_sum = max(w_inv + w_vnf + w_sfc, 1e-6)
-    risk = (
-        w_inv * inverse_security_risk
-        + w_vnf * vnf_tenancy_risk
-        + w_sfc * sfc_tenancy_risk
-    ) / weight_sum
-    # Add pressure as a proxy for incident propensity (higher pressure -> higher risk)
-    risk = risk + 0.1 * pressure
-    return min(max(risk, 0.0), 1.0)
+from src.risk import node_risk_score
 
 
 class BasePlacement(ABC):
@@ -166,6 +113,7 @@ class BestFitPlacement(BasePlacement):
         risk_cfg: Optional[dict] = None,
         node_incident_pressure: Optional[dict] = None,
         max_security: Optional[float] = None,
+        max_ttl: int = 1,
     ) -> Optional[list[int]]:
         """
         Place VNFs by always choosing the valid node with minimum risk per step.
@@ -195,8 +143,10 @@ class BestFitPlacement(BasePlacement):
                 return None
 
             def key(n: int):
-                risk = node_risk_heuristic(
-                    substrate, n, risk_cfg or {}, pressure, max_sec
+                risk = node_risk_score(
+                    substrate, n, risk_cfg or {}, pressure, max_sec,
+                    request_ttl=request.ttl,
+                    max_ttl=max_ttl,
                 )
                 res = substrate.get_node_resources(n)
                 waste = (

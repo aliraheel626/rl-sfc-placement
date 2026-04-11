@@ -386,7 +386,7 @@ def evaluate_rl_agent(
                 accepted += 1
                 # Get latency from placement
                 placement = info.get("placement", [])
-                if len(placement) > 1:
+                if placement:
                     latency = env.unwrapped.substrate.get_total_latency(placement)
                     total_latency += latency
                     latencies.append(latency)

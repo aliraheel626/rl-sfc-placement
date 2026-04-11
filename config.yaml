@@ -94,6 +94,10 @@ training:
 rewards:
   acceptance: 1
   rejection: -1
+  # Windowed acceptance ratio (AR) reward modifier
+  acceptance_ratio_window: 10            # number of recent requests to consider
+  acceptance_ratio_reward_weight: 0.5    # scaling factor for the multiplicative modifier
+  acceptance_ratio_flip_rejection: true  # use flipped multiplier (1-AR) on rejections
 
 # Risk + Incident realism (full replacement model)
 risk:

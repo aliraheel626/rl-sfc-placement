@@ -7,6 +7,7 @@ resource, security, bandwidth, and latency constraints.
 """
 
 import random
+from collections import deque
 from typing import Optional
 
 import gymnasium as gym
@@ -36,9 +37,9 @@ class SFCPlacementEnv(gym.Env):
 
     Observation Space (Dict):
         - node_features: (max_nodes, 6) - [RAM, CPU, Storage, Security, AvgBW, DistToPrev]
-        - global_context: (14,) - [VNF_RAM, VNF_CPU, VNF_Storage, SFC_Sec, SFC_Lat, SFC_BW,
+        - global_context: (15,) - [VNF_RAM, VNF_CPU, VNF_Storage, SFC_Sec, SFC_Lat, SFC_BW,
           VNF_Progress, HardIsolation, LatencyProgress, TTL,
-          RemainingVNFs, RemainingRAM, RemainingCPU, RemainingStorage]
+          RemainingVNFs, RemainingRAM, RemainingCPU, RemainingStorage, WindowedAR]
         - placement_mask: (max_nodes,) - which nodes are used in current SFC
         - node_mask: (max_nodes,) - 1.0 for real nodes, 0.0 for padding
 
@@ -50,6 +51,7 @@ class SFCPlacementEnv(gym.Env):
         - +0.1 per intermediate VNF step (minus latency penalty for locality)
         - +acceptance_reward for successfully placing entire SFC
         - +rejection_penalty (negative) for failed placement
+        - Terminal rewards are scaled by a windowed acceptance-ratio multiplier
     """
 
     metadata = {"render_modes": ["human"]}
@@ -98,6 +100,14 @@ class SFCPlacementEnv(gym.Env):
         # Reward configuration
         self.acceptance_reward = self.config["rewards"]["acceptance"]
         self.rejection_penalty = self.config["rewards"]["rejection"]
+        self.ar_window_size = self.config["rewards"].get("acceptance_ratio_window", 10)
+        self.ar_reward_weight = float(
+            self.config["rewards"].get("acceptance_ratio_reward_weight", 0.5)
+        )
+        self.ar_flip_rejection = self.config["rewards"].get(
+            "acceptance_ratio_flip_rejection", True
+        )
+        self.recent_outcomes: deque[float] = deque(maxlen=self.ar_window_size)
         risk_cfg = self.config.get("risk", {})
         self.risk_enabled = risk_cfg.get("enabled", False)
         self.risk_lambda = float(risk_cfg.get("lambda", 0.0))
@@ -191,7 +201,7 @@ class SFCPlacementEnv(gym.Env):
                 "node_features": spaces.Box(
                     0.0, 1.0, (self.max_nodes, 6), dtype=np.float32
                 ),
-                "global_context": spaces.Box(0.0, 1.0, (14,), dtype=np.float32),
+                "global_context": spaces.Box(0.0, 1.0, (15,), dtype=np.float32),
                 "placement_mask": spaces.Box(
                     0.0, 1.0, (self.max_nodes,), dtype=np.float32
                 ),
@@ -245,6 +255,7 @@ class SFCPlacementEnv(gym.Env):
         self.request_generator.reset()
 
         # Reset episode-level counters
+        self.recent_outcomes.clear()
         self.episode_requests = 0
         self.episode_accepted = 0
         self.episode_latency_violations = 0
@@ -391,6 +402,10 @@ class SFCPlacementEnv(gym.Env):
             - self.incident_cost_reward_scale * incident_cost
         )
 
+        self.recent_outcomes.append(1.0)
+        windowed_ar = sum(self.recent_outcomes) / len(self.recent_outcomes)
+        reward *= 1.0 + self.ar_reward_weight * windowed_ar
+
         # Check if episode is complete
         terminated = self.episode_requests >= self.max_requests_per_episode
 
@@ -450,6 +465,19 @@ class SFCPlacementEnv(gym.Env):
         # Sample substrate metrics after rejection
         self._sample_substrate_metrics()
 
+        reward = (
+            self.rejection_penalty
+            - self.risk_lambda * risk_integral
+            - self.incident_cost_reward_scale * incident_cost
+        )
+
+        self.recent_outcomes.append(0.0)
+        windowed_ar = sum(self.recent_outcomes) / len(self.recent_outcomes)
+        if self.ar_flip_rejection:
+            reward *= 1.0 + self.ar_reward_weight * (1.0 - windowed_ar)
+        else:
+            reward *= 1.0 + self.ar_reward_weight * windowed_ar
+
         # Check if episode is complete
         terminated = self.episode_requests >= self.max_requests_per_episode
 
@@ -469,11 +497,6 @@ class SFCPlacementEnv(gym.Env):
         info["request_incidents"] = realized_incidents
         info["request_incident_cost"] = incident_cost
 
-        reward = (
-            self.rejection_penalty
-            - self.risk_lambda * risk_integral
-            - self.incident_cost_reward_scale * incident_cost
-        )
         return observation, reward, terminated, False, info
 
     def _placement_risk_cfg(self) -> dict:
@@ -579,7 +602,7 @@ class SFCPlacementEnv(gym.Env):
         node_features = np.zeros((M, 6), dtype=np.float32)
         node_features[:N] = np.clip(real_node_features, 0.0, 1.0)
 
-        # 2. Global context: (14,)
+        # 2. Global context: (15,)
         # [0-2]  Current VNF demands (RAM, CPU, Storage)
         if self.current_vnf_index < self.current_request.num_vnfs:
             current_vnf = self.current_request.vnfs[self.current_vnf_index]
@@ -624,6 +647,12 @@ class SFCPlacementEnv(gym.Env):
             else 0.0
         )
 
+        windowed_ar = (
+            sum(self.recent_outcomes) / len(self.recent_outcomes)
+            if self.recent_outcomes
+            else 0.0
+        )
+
         global_context = np.array(
             vnf_obs  # [0-2] current VNF demands
             + [
@@ -638,6 +667,7 @@ class SFCPlacementEnv(gym.Env):
                 remaining_ram_norm,                                           # [11]
                 remaining_cpu_norm,                                           # [12]
                 remaining_storage_norm,                                       # [13]
+                windowed_ar,                                                  # [14]
             ],
             dtype=np.float32,
         )

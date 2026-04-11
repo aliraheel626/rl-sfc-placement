@@ -102,7 +102,7 @@ rewards:
 # Risk + Incident realism (full replacement model)
 risk:
   enabled: true
-  lambda: 2 # Reward penalty: reward -= lambda * risk_integral
+  lambda: 4 # Reward penalty: reward -= lambda * risk_integral
 
   # Risk composition weights (normalized internally by sum of weights)
   w_vnf_tenancy: 0.22

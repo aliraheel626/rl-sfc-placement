@@ -333,7 +333,14 @@ def evaluate_rl_agent(
     if model is not None:
         pass  # Use provided in-memory model
     elif model_path:
+        # load_model → MaskablePPO.load → _setup_model → set_random_seed(saved_seed)
+        # which overrides the global RNG.  Snapshot and restore around the load so
+        # the caller's carefully-chosen RNG state (for fair comparison) is preserved.
+        _rng_before = random.getstate()
+        _np_rng_before = np.random.get_state()
         model = load_model(model_path, env)
+        random.setstate(_rng_before)
+        np.random.set_state(_np_rng_before)
     else:
         raise ValueError("evaluate_rl_agent requires model or model_path")
 
@@ -1011,6 +1018,20 @@ def run_multi_episode_eval(
 
     import copy
 
+    # Pre-load model once so we don't call load_model (which re-seeds global RNG
+    # via set_random_seed) every episode.  A throwaway env is used only for the
+    # GNN edge-getter; the real per-episode env is created inside evaluate_rl_agent.
+    preloaded_model = None
+    if model_path and Path(model_path).exists():
+        _tmp_env = create_masked_env(
+            config_path,
+            substrate=copy.deepcopy(substrate) if substrate is not None else None,
+            request_generator=copy.deepcopy(request_generator) if request_generator is not None else None,
+            max_requests_per_episode=num_requests,
+        )
+        preloaded_model = load_model(model_path, _tmp_env)
+        del _tmp_env
+
     by_algo: dict = {}
     episodes = list(range(1, num_episodes + 1))
 
@@ -1018,17 +1039,21 @@ def run_multi_episode_eval(
         if verbose:
             print(f"\n── Episode {ep}/{num_episodes} ──────────────────────────")
 
+        # Seed per-episode so every episode uses an equally "mixed" RNG state and
+        # episode 1 is not special (avoids the fresh-startup-seed anomaly).
+        random.seed(ep * 7919)
+        np.random.seed(ep * 7919)
+
         ep_substrate = copy.deepcopy(substrate) if substrate is not None else None
         ep_rg = copy.deepcopy(request_generator) if request_generator is not None else None
 
         results = run_eval(
             config_path=config_path,
-            model=None,
+            model=preloaded_model,
             num_requests=num_requests,
             verbose=verbose,
             substrate=ep_substrate,
             request_generator=ep_rg,
-            model_path=model_path,
         )
 
         for algo, res in results.items():
@@ -1255,6 +1280,84 @@ def main():
         verbose=verbose,
     )
     plot_comparison_episodes(multi_ep, output_dir=out_dir, num_requests=num_requests)
+
+    if verbose:
+        print("\nPer-episode raw values (to verify episode-to-episode variation):")
+        for algo, metrics in multi_ep["by_algo"].items():
+            util = metrics.get("avg_substrate_utilization", [])
+            ar   = metrics.get("acceptance_ratio", [])
+            risk = metrics.get("avg_risk_integral", [])
+            print(f"  {algo}:")
+            print(f"    substrate_util : {[f'{v:.4f}' for v in util]}")
+            print(f"    acceptance_ratio: {[f'{v:.4f}' for v in ar]}")
+            print(f"    avg_risk_integral: {[f'{v:.4f}' for v in risk]}")
+
+    # Print average-across-episodes performance difference table (PPO vs BestFit).
+    by_algo = multi_ep["by_algo"]
+    bf_key = next((k for k in by_algo if "BestFit" in k), None)
+    ppo_key = next((k for k in by_algo if "PPO" in k or "Maskable" in k), None)
+
+    if bf_key and ppo_key:
+        # higher-is-better metrics: positive diff means PPO wins
+        # lower-is-better metrics: negative diff means PPO wins (flagged accordingly)
+        METRICS = [
+            ("acceptance_ratio",          "Acceptance Ratio",       True),
+            ("latency_violation_ratio",   "Latency Violation Ratio",False),
+            ("avg_risk_integral",         "Avg Risk Integral",      False),
+            ("avg_substrate_utilization", "Substrate Utilisation",  True),
+            ("avg_sfc_tenancy",           "Avg SFCs / Node",        True),
+            ("avg_vnf_tenancy",           "Avg VNFs / Node",        True),
+        ]
+
+        col_w = [32, 14, 14, 12, 10]
+        sep = "-" * sum(col_w)
+        header = (
+            f"{'Metric':<{col_w[0]}}"
+            f"{'BestFit mean':>{col_w[1]}}"
+            f"{'PPO mean':>{col_w[2]}}"
+            f"{'Δ%':>{col_w[3]}}"
+            f"{'Winner':>{col_w[4]}}"
+        )
+        print(f"\n{'PPO vs BestFit – average across episodes':^{sum(col_w)}}")
+        print(sep)
+        print(header)
+        print(sep)
+        bf_ep_count  = len(next(iter(by_algo[bf_key].values()),  []))
+        ppo_ep_count = len(next(iter(by_algo[ppo_key].values()), []))
+        n_paired = min(bf_ep_count, ppo_ep_count)
+        if bf_ep_count != ppo_ep_count:
+            print(
+                f"  Warning: BestFit ran {bf_ep_count} episode(s) but PPO ran "
+                f"{ppo_ep_count} – comparison uses the first {n_paired} episode(s) only."
+            )
+
+        for key, label, higher_better in METRICS:
+            bf_vals  = by_algo[bf_key].get(key,  [])[:n_paired]
+            ppo_vals = by_algo[ppo_key].get(key, [])[:n_paired]
+            if not bf_vals or not ppo_vals:
+                continue
+            bf_mean  = float(np.mean(bf_vals))
+            ppo_mean = float(np.mean(ppo_vals))
+            if bf_mean != 0:
+                pct = (ppo_mean - bf_mean) / abs(bf_mean) * 100
+            else:
+                pct = float("nan")
+            if np.isnan(pct):
+                winner = "–"
+            elif higher_better:
+                winner = "PPO" if pct > 0 else ("BestFit" if pct < 0 else "tie")
+            else:
+                winner = "PPO" if pct < 0 else ("BestFit" if pct > 0 else "tie")
+            print(
+                f"{label:<{col_w[0]}}"
+                f"{bf_mean:>{col_w[1]}.4f}"
+                f"{ppo_mean:>{col_w[2]}.4f}"
+                f"{pct:>{col_w[3]}.2f}%"
+                f"{winner:>{col_w[4]}}"
+            )
+        print(sep)
+    elif not ppo_key:
+        print("\n(No PPO results – skipping comparison table; run without --no-model)")
 
 
 if __name__ == "__main__":

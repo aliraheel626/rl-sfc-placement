@@ -60,9 +60,11 @@ class BasePlacement(ABC):
         """
         valid_nodes = []
 
-        # Calculate latency budget (optimistic estimate for remaining hops)
+        # Calculate latency budget (optimistic estimate for remaining hops).
+        # Clamp to zero: matches environment behaviour where a negative raw budget
+        # only allows zero-latency hops rather than immediately rejecting.
         min_remaining_latency = remaining_vnfs * min_link_latency
-        latency_budget = request.max_latency - current_latency - min_remaining_latency
+        latency_budget = max(0.0, request.max_latency - current_latency - min_remaining_latency)
 
         for node_id in range(substrate.num_nodes):
             # Check resource and security feasibility

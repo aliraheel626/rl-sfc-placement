@@ -731,6 +731,150 @@ def plot_comparison(results: dict, save_path: str):
     plt.close()
 
 
+def plot_comparison_models(
+    results: dict,
+    output_dir: str = "compare/",
+    window_size: int = 50,
+) -> None:
+    """
+    Generate comparison plots saved to *output_dir* using the same filenames as the
+    training callback so they can be viewed alongside (or replace) training plots.
+
+    Produces:
+        sfc_ppo_acceptance_ratio.png  – acceptance ratio bar chart
+        sfc_ppo_rejection_ratio.png   – latency violation ratio bar chart
+        sfc_risk_training.png         – rolling-avg risk integral over requests
+        substrate_util_training.png   – rolling-avg substrate utilisation
+        sfc_per_node_training.png     – rolling-avg SFCs per occupied node
+        vnf_per_node_training.png     – rolling-avg VNFs per occupied node
+
+    Args:
+        results:     dict mapping algorithm name -> result dict (from run_eval)
+        output_dir:  directory to write plots into (created if missing)
+        window_size: rolling-window width for the time-series plots
+    """
+    out = Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+
+    algorithms = list(results.keys())
+    colors_bar = plt.cm.tab10(np.linspace(0, 1, max(len(algorithms), 10)))[: len(algorithms)]
+    color_map = dict(zip(algorithms, colors_bar))
+
+    # ── helper: rolling average ────────────────────────────────────────────────
+    def _rolling(samples: np.ndarray):
+        if len(samples) >= window_size:
+            kernel = np.ones(window_size) / window_size
+            y = np.convolve(samples, kernel, mode="valid")
+            x = np.arange(window_size - 1, len(samples))
+        else:
+            y = samples
+            x = np.arange(len(samples))
+        return x, y
+
+    # ── helper: bar chart ──────────────────────────────────────────────────────
+    def _bar_chart(metric_key: str, ylabel: str, title: str, filename: str, ylim=(0, 1.05)):
+        fig, ax = plt.subplots(figsize=(10, 6))
+        vals = [results[a].get(metric_key, 0.0) for a in algorithms]
+        bars = ax.bar(algorithms, vals, color=colors_bar)
+        for bar, v in zip(bars, vals):
+            ax.text(
+                bar.get_x() + bar.get_width() / 2,
+                bar.get_height() + 0.01,
+                f"{v:.3f}",
+                ha="center",
+                va="bottom",
+                fontsize=10,
+            )
+        ax.set_ylabel(ylabel, fontsize=12)
+        ax.set_title(title, fontsize=13)
+        if ylim:
+            ax.set_ylim(*ylim)
+        ax.tick_params(axis="x", rotation=30)
+        ax.grid(True, axis="y", linestyle="--", alpha=0.7)
+        plt.tight_layout()
+        save_path = out / filename
+        plt.savefig(save_path, dpi=150, bbox_inches="tight")
+        print(f"Plot saved to: {save_path}")
+        plt.close()
+
+    # ── helper: rolling time-series chart ─────────────────────────────────────
+    def _rolling_chart(
+        metric_key: str,
+        ylabel: str,
+        title: str,
+        filename: str,
+        as_percent: bool = False,
+    ):
+        fig, ax = plt.subplots(figsize=(10, 6))
+        for algo in algorithms:
+            samples = np.array(results[algo].get(metric_key, []))
+            if len(samples) == 0:
+                continue
+            x, y = _rolling(samples)
+            ax.plot(x, y, label=algo, color=color_map[algo], linewidth=2)
+        ax.set_xlabel("Request Number", fontsize=12)
+        ax.set_ylabel(ylabel, fontsize=12)
+        ax.set_title(title, fontsize=13)
+        if as_percent:
+            ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0%}"))
+        ax.legend(loc="best", fontsize=10)
+        ax.grid(True, linestyle="--", alpha=0.7)
+        plt.tight_layout()
+        save_path = out / filename
+        plt.savefig(save_path, dpi=150, bbox_inches="tight")
+        print(f"Plot saved to: {save_path}")
+        plt.close()
+
+    # 1) Acceptance ratio
+    _bar_chart(
+        "acceptance_ratio",
+        "Acceptance Ratio",
+        "SFC Acceptance Ratio by Algorithm (comparison)",
+        "sfc_ppo_acceptance_ratio.png",
+    )
+
+    # 2) Latency violation ratio (fraction of rejections caused by latency)
+    _bar_chart(
+        "latency_violation_ratio",
+        "Latency Violations / Total Rejections",
+        "Latency Violation Ratio by Algorithm (comparison)",
+        "sfc_ppo_rejection_ratio.png",
+    )
+
+    # 3) Risk integral (rolling)
+    _rolling_chart(
+        "risk_score_samples",
+        "Risk Integral (lower is better)",
+        f"Avg Risk Integral over Requests (window={window_size})",
+        "sfc_risk_training.png",
+    )
+
+    # 4) Substrate utilisation (rolling)
+    _rolling_chart(
+        "substrate_utilization_samples",
+        "Substrate Utilisation",
+        f"Substrate Utilisation over Requests (window={window_size})",
+        "substrate_util_training.png",
+        as_percent=True,
+    )
+
+    # 5) SFCs per occupied node (rolling)
+    _rolling_chart(
+        "sfc_tenancy_samples",
+        "Avg SFCs per Occupied Node",
+        f"Avg SFCs per Occupied Node over Requests (window={window_size})",
+        "sfc_per_node_training.png",
+    )
+
+    # 6) VNFs per occupied node (rolling)
+    _rolling_chart(
+        "vnf_tenancy_samples",
+        "Avg VNFs per Occupied Node",
+        f"Avg VNFs per Occupied Node over Requests (window={window_size})",
+        "vnf_per_node_training.png",
+    )
+
+
 def plot_rolling_averages(results: dict, output_dir: str, window_size: int = 50):
     """
     Generate rolling window average plots for time-series metrics.
@@ -824,8 +968,206 @@ def plot_rolling_averages(results: dict, output_dir: str, window_size: int = 50)
         plt.close()
 
 
+def run_multi_episode_eval(
+    config_path: str,
+    num_episodes: int,
+    num_requests: int,
+    model_path: Optional[str] = None,
+    substrate=None,
+    request_generator: Optional[object] = None,
+    verbose: bool = True,
+) -> dict:
+    """
+    Run *num_episodes* independent evaluation rounds, each processing *num_requests*
+    requests, and collect per-episode scalar metrics for every algorithm.
+
+    When *substrate* / *request_generator* are provided they are deep-copied before
+    each episode so every round starts from the same initial state, mirroring what
+    the training callback does.
+
+    Returns:
+        {
+            "episodes": [1, 2, ..., num_episodes],
+            "by_algo": {
+                algo_name: {
+                    "acceptance_ratio": [...],
+                    "latency_violation_ratio": [...],
+                    "avg_risk_integral": [...],
+                    "avg_sfc_tenancy": [...],
+                    "avg_vnf_tenancy": [...],
+                    "avg_substrate_utilization": [...],
+                }
+            }
+        }
+    """
+    _METRICS = [
+        "acceptance_ratio",
+        "latency_violation_ratio",
+        "avg_risk_integral",
+        "avg_sfc_tenancy",
+        "avg_vnf_tenancy",
+        "avg_substrate_utilization",
+    ]
+
+    import copy
+
+    by_algo: dict = {}
+    episodes = list(range(1, num_episodes + 1))
+
+    for ep in episodes:
+        if verbose:
+            print(f"\n── Episode {ep}/{num_episodes} ──────────────────────────")
+
+        ep_substrate = copy.deepcopy(substrate) if substrate is not None else None
+        ep_rg = copy.deepcopy(request_generator) if request_generator is not None else None
+
+        results = run_eval(
+            config_path=config_path,
+            model=None,
+            num_requests=num_requests,
+            verbose=verbose,
+            substrate=ep_substrate,
+            request_generator=ep_rg,
+            model_path=model_path,
+        )
+
+        for algo, res in results.items():
+            if algo not in by_algo:
+                by_algo[algo] = {m: [] for m in _METRICS}
+            for m in _METRICS:
+                by_algo[algo][m].append(res.get(m, 0.0))
+
+    return {"episodes": episodes, "by_algo": by_algo}
+
+
+def plot_comparison_episodes(
+    multi_ep_data: dict,
+    output_dir: str = "compare/",
+    num_requests: int = 1000,
+) -> None:
+    """
+    Generate the same six plots as the training callback but using per-episode
+    comparison data produced by *run_multi_episode_eval*.
+
+    Saves to *output_dir* with the training-style filenames so they can be viewed
+    alongside (or replace) the training plots.
+
+    Args:
+        multi_ep_data: Return value of run_multi_episode_eval
+        output_dir:    Directory to write plots into (created if missing)
+        num_requests:  Requests per episode – used in axis/title labels
+    """
+    out = Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+
+    episodes = multi_ep_data["episodes"]
+    by_algo = multi_ep_data["by_algo"]
+    algos = list(by_algo.keys())
+    colors = plt.cm.tab10(np.linspace(0, 1, max(len(algos), 10)))[: len(algos)]
+    color_map = dict(zip(algos, colors))
+
+    ma_colors = {
+        "acceptance_ratio": "orange",
+        "avg_risk_integral": "purple",
+        "latency_violation_ratio": "darkred",
+        "avg_substrate_utilization": "indigo",
+        "avg_sfc_tenancy": "darkblue",
+        "avg_vnf_tenancy": "darkgreen",
+    }
+
+    def _moving_avg(y, window):
+        if len(y) < window or window < 2:
+            return None, None
+        k = np.ones(window) / window
+        ma = np.convolve(y, k, mode="valid")
+        x = episodes[window - 1 :]
+        return x, ma
+
+    def _ep_plot(metric_key, ylabel, title, filename, ylim=None, as_percent=False):
+        fig, ax = plt.subplots(figsize=(10, 6))
+        for algo in algos:
+            vals = by_algo[algo][metric_key]
+            ax.plot(
+                episodes,
+                vals,
+                alpha=0.6,
+                label=algo,
+                linewidth=0.8,
+                color=color_map[algo],
+            )
+            if algo == "MaskablePPO" and len(vals) > 10:
+                window = min(50, len(vals) // 5)
+                if window > 1:
+                    x_ma, y_ma = _moving_avg(vals, window)
+                    if x_ma is not None:
+                        ax.plot(
+                            x_ma,
+                            y_ma,
+                            color=ma_colors.get(metric_key, "orange"),
+                            linewidth=2,
+                            label=f"Moving Avg ({window} ep)",
+                        )
+        ax.set_xlabel("Episode", fontsize=12)
+        ax.set_ylabel(ylabel, fontsize=12)
+        ax.set_title(f"{title} ({num_requests} req/episode)", fontsize=13)
+        if ylim:
+            ax.set_ylim(*ylim)
+        if as_percent:
+            ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0%}"))
+        ax.grid(True, linestyle="--", alpha=0.7)
+        ax.legend(loc="best", fontsize=10)
+        plt.tight_layout()
+        save_path = out / filename
+        plt.savefig(save_path, dpi=150, bbox_inches="tight")
+        print(f"Plot saved to: {save_path}")
+        plt.close()
+
+    _ep_plot(
+        "acceptance_ratio",
+        "Acceptance Ratio (per episode)",
+        "Episode Acceptance Ratio vs Episode Number",
+        "sfc_ppo_acceptance_ratio.png",
+        ylim=(0, 1.05),
+    )
+    _ep_plot(
+        "avg_risk_integral",
+        "Risk Integral (lower is better)",
+        "Avg Risk Integral vs Episode Number",
+        "sfc_risk_training.png",
+    )
+    _ep_plot(
+        "latency_violation_ratio",
+        "Latency Violations / Total Rejections",
+        "Latency Violation % of Rejections vs Episode",
+        "sfc_ppo_rejection_ratio.png",
+        ylim=(0, 1.05),
+    )
+    _ep_plot(
+        "avg_substrate_utilization",
+        "Substrate Utilisation",
+        "Substrate Utilisation vs Episode Number",
+        "substrate_util_training.png",
+        ylim=(0, 1.05),
+        as_percent=True,
+    )
+    _ep_plot(
+        "avg_sfc_tenancy",
+        "Avg SFCs per Occupied Node",
+        "Avg SFCs per Occupied Node vs Episode Number",
+        "sfc_per_node_training.png",
+    )
+    _ep_plot(
+        "avg_vnf_tenancy",
+        "Avg VNFs per Occupied Node",
+        "Avg VNFs per Occupied Node vs Episode Number",
+        "vnf_per_node_training.png",
+    )
+
+
 def main():
     """Main entry point with argument parsing."""
+    import pickle
+
     parser = argparse.ArgumentParser(description="Compare SFC Placement Algorithms")
     parser.add_argument(
         "--config", type=str, default="config.yaml", help="Path to configuration file"
@@ -845,31 +1187,74 @@ def main():
         "--requests",
         type=int,
         default=None,
-        help="Number of requests to evaluate (overrides config)",
+        help="Number of requests per episode (overrides config evaluation.num_requests)",
     )
     parser.add_argument(
-        "--plot", type=str, default=None, help="Path to save comparison plot"
+        "--episodes",
+        type=int,
+        default=None,
+        help="Number of evaluation episodes (overrides config evaluation.num_episodes)",
+    )
+    parser.add_argument(
+        "--models-dir",
+        type=str,
+        default="models/",
+        help="Directory containing sfc_ppo_best.zip and optional pickle files (default: models/)",
+    )
+    parser.add_argument(
+        "--plot", type=str, default=None, help="Path to save single-run comparison bar chart"
     )
     parser.add_argument("--quiet", action="store_true", help="Suppress verbose output")
 
     args = parser.parse_args()
+    verbose = not args.quiet
 
-    # Load config for default num_requests
     config = load_config(args.config)
-    num_requests = args.requests or config.get("evaluation", {}).get(
-        "num_requests", 1000
-    )
+    eval_cfg = config.get("evaluation", {})
 
-    # Handle --no-model flag
+    num_requests = args.requests or eval_cfg.get("num_requests", 1000)
+    num_episodes = args.episodes or eval_cfg.get("num_episodes", 1)
+
     model_path = None if args.no_model else args.model
 
-    compare_all(
+    models_dir = Path(args.models_dir)
+
+    # Load saved substrate / request_generator if the config flags are set and the
+    # pickles exist (they are written by train.py when the flags are enabled).
+    substrate = None
+    request_generator = None
+
+    if eval_cfg.get("use_training_substrate", False):
+        pkl = models_dir / "substrate.pkl"
+        if pkl.exists():
+            with open(pkl, "rb") as f:
+                substrate = pickle.load(f)
+            print(f"Loaded training substrate from: {pkl}")
+        else:
+            print(f"Warning: use_training_substrate=true but {pkl} not found – using fresh substrate")
+
+    if eval_cfg.get("use_training_request_generator", False):
+        pkl = models_dir / "request_generator.pkl"
+        if pkl.exists():
+            with open(pkl, "rb") as f:
+                request_generator = pickle.load(f)
+            print(f"Loaded training request generator from: {pkl}")
+        else:
+            print(f"Warning: use_training_request_generator=true but {pkl} not found – using fresh generator")
+
+    out_dir = "compare/"
+
+    print(f"\nRunning {num_episodes} episode(s) × {num_requests} requests each")
+    multi_ep = run_multi_episode_eval(
         config_path=args.config,
-        model_path=model_path,
+        num_episodes=num_episodes,
         num_requests=num_requests,
-        save_plot=args.plot,
-        verbose=not args.quiet,
+        model_path=model_path,
+        substrate=substrate,
+        request_generator=request_generator,
+        verbose=verbose,
     )
+    plot_comparison_episodes(multi_ep, output_dir=out_dir, num_requests=num_requests)
 
 
 if __name__ == "__main__":

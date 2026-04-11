@@ -14,6 +14,7 @@ import matplotlib
 matplotlib.use("Agg")
 
 import argparse
+import pickle
 import shutil
 from pathlib import Path
 
@@ -99,6 +100,20 @@ def train(
     # Create environment
     print("\nCreating environment...")
     env = create_masked_env(config_path)
+
+    # Persist substrate / request-generator for standalone compare.py
+    eval_cfg = config.get("evaluation", {})
+    base_env = env.unwrapped
+    if eval_cfg.get("use_training_substrate", False):
+        substrate_pkl = save_dir / "substrate.pkl"
+        with open(substrate_pkl, "wb") as _f:
+            pickle.dump(base_env.substrate, _f)
+        print(f"Training substrate saved to: {substrate_pkl}")
+    if eval_cfg.get("use_training_request_generator", False):
+        rg_pkl = save_dir / "request_generator.pkl"
+        with open(rg_pkl, "wb") as _f:
+            pickle.dump(base_env.request_generator, _f)
+        print(f"Training request generator saved to: {rg_pkl}")
 
     # Create or load model
     reset_timesteps = True

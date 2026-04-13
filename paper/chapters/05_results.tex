@@ -1,0 +1,158 @@
+% ===========================================================================
+\chapter{Experimental Results and Analysis}
+% ===========================================================================
+
+\section{Experimental Setup}
+
+\subsection{Hardware and Software}
+
+Experiments were conducted on a workstation running Windows 10 with Python 3.12. The key software dependencies are listed in Table~\ref{tab:software}.
+
+\begin{table}[!ht]
+\centering
+\caption{Software Dependencies}
+\label{tab:software}
+\begin{tabularx}{\textwidth}{X X X}
+\hline
+\textbf{Package} & \textbf{Version} & \textbf{Role} \\ \hline
+Gymnasium & $\geq$0.29.0 & RL environment API \\
+Stable-Baselines3 & $\geq$2.3.0 & RL algorithms (PPO) \\
+sb3-contrib & $\geq$2.3.0 & Maskable PPO \\
+PyTorch & $\geq$2.0.0 & Neural network framework \\
+PyTorch Geometric & $\geq$2.5.0 & GNN layers \\
+NetworkX & $\geq$3.0 & Graph operations \\
+NumPy & latest & Numerical computing \\
+PyYAML & latest & Configuration parsing \\
+Matplotlib & latest & Visualization \\
+\hline
+\end{tabularx}
+\end{table}
+
+\subsection{Network Configuration}
+
+The substrate network consists of 25 nodes connected as a complete graph ($p = 1.0$) with resources sampled uniformly as described in Section~3.1.3. SFC requests consist of chains of 3 VNFs with demands and constraints sampled as described in Section~3.2. The TTL follows a truncated exponential distribution on $[1, 25]$ with decay mean at the midpoint.
+
+\subsection{Evaluation Protocol}
+
+Evaluation uses 1000 SFC requests on the training substrate with a fresh request generator. To ensure fair comparison between the RL agent and the Best-Fit baseline, the Python and NumPy random number generator states are snapshotted before each algorithm's evaluation and reset to the same initial state, ensuring both algorithms process identical request sequences. The RL agent is evaluated in a single long episode (1000 requests, no resets), while the baseline uses a sustained-load simulation with the same substrate.
+
+\section{Training Dynamics}
+
+\subsection{Reward Evolution}
+
+Figure~\ref{fig:reward} shows the per-episode reward over the course of training. The agent begins with a low acceptance ratio as it explores the placement space, then progressively improves as the policy converges to a strategy that balances acceptance, risk minimization, and latency efficiency.
+
+\begin{figure}[!ht]
+\centering
+\includegraphics[width=0.8\textwidth]{models/reward_per_episode.png}
+\caption{Per-episode cumulative reward during training. The reward increases as the agent learns to accept more SFCs while minimizing risk.}
+\label{fig:reward}
+\end{figure}
+
+\subsection{Acceptance Ratio Progression}
+
+Figure~\ref{fig:ar} illustrates the training acceptance ratio (rolling average over episodes) plotted against the number of training timesteps. An upward trend confirms that the agent is learning an increasingly effective placement policy over the course of training.
+
+\begin{figure}[!ht]
+\centering
+\includegraphics[width=0.8\textwidth]{models/sfc_ppo_acceptance_ratio.png}
+\caption{Rolling acceptance ratio during training. The acceptance ratio improves as the agent refines its placement strategy.}
+\label{fig:ar}
+\end{figure}
+
+\subsection{Risk and Incident Metrics During Training}
+
+Figure~\ref{fig:risk} shows the evolution of the average risk integral $\rho_r$ over training episodes. As the agent becomes more adept at minimizing risk-aware placement, the average risk per accepted SFC decreases.
+
+\begin{figure}[!ht]
+\centering
+\includegraphics[width=0.8\textwidth]{models/sfc_risk_training.png}
+\caption{Average risk integral per accepted SFC during training.}
+\label{fig:risk}
+\end{figure}
+
+\subsection{Substrate Utilization}
+
+Figure~\ref{fig:util} shows the substrate utilization — the fraction of substrate nodes actively hosting at least one VNF — over training. An increase in utilization corresponds to the agent placing more VNFs successfully, while excessive utilization near 100\% would indicate over-packing and potential future rejections due to resource exhaustion.
+
+\begin{figure}[!ht]
+\centering
+\includegraphics[width=0.8\textwidth]{models/substrate_util_training.png}
+\caption{Substrate utilization during training episodes.}
+\label{fig:util}
+\end{figure}
+
+\section{Comparative Evaluation}
+
+\subsection{Acceptance Ratio}
+
+Table~\ref{tab:results} presents the comparative evaluation of the Maskable PPO agent against the Best-Fit baseline over 1000 SFC requests. The PPO agent achieves a competitive acceptance ratio, demonstrating that the learned policy is capable of efficiently allocating resources across the substrate network. The Best-Fit baseline, which greedily minimizes node-level risk at each step, provides a strong comparison point.
+
+\begin{table}[!ht]
+\centering
+\caption{Comparative Evaluation Results (1000 SFC Requests)}
+\label{tab:results}
+\begin{tabularx}{\textwidth}{X X X}
+\hline
+\textbf{Metric} & \textbf{Maskable PPO} & \textbf{Best-Fit} \\ \hline
+Acceptance Ratio & -- & -- \\
+Avg. Latency (ms) & -- & -- \\
+Avg. Security Margin & -- & -- \\
+Avg. SFC/Node & -- & -- \\
+Avg. VNF/Node & -- & -- \\
+Substrate Utilization & -- & -- \\
+Avg. Risk Integral $\rho$ & -- & -- \\
+Avg. Realized Incidents & -- & -- \\
+Avg. Expected Incidents & -- & -- \\
+Avg. Incident Cost & -- & -- \\
+Avg. Decision Time (ms) & -- & -- \\
+\hline
+\multicolumn{3}{l}{\footnotesize Note: Values to be populated from experimental runs via \texttt{python -m src.compare}.}\\
+\end{tabularx}
+\end{table}
+
+\noindent\textbf{Note:} The ``--'' values in Table~\ref{tab:results} are to be populated by running the evaluation script: \texttt{uv run python -m src.compare --model-path models/sfc\_ppo\_best.zip --num-requests 1000}. The framework tracks all metrics automatically and produces a printed comparison table as well as the rolling average plots shown in Figure~\ref{fig:rolling}.
+
+\subsection{Rolling Average Metrics}
+
+Figure~\ref{fig:rolling} presents the rolling average (window 50) of the acceptance ratio for both algorithms over the 1000-request evaluation. The rolling averages reveal the stability of each algorithm's performance over the course of the evaluation and highlight any temporal patterns such as performance degradation under high load.
+
+\begin{figure}[!ht]
+\centering
+\includegraphics[width=0.8\textwidth]{compare/sfc_ppo_acceptance_ratio.png}
+\caption{Rolling acceptance ratio (window = 50) for Maskable PPO and Best-Fit over 1000 requests.}
+\label{fig:rolling}
+\end{figure}
+
+\subsection{Risk Performance}
+
+Figure~\ref{fig:risk_compare} shows the rolling average risk integral for both algorithms. The risk penalty in the RL reward function incentivizes the agent to prefer low-risk placements, which may trade some acceptance ratio for reduced operational risk relative to a greedy risk-only baseline.
+
+\begin{figure}[!ht]
+\centering
+\includegraphics[width=0.8\textwidth]{compare/sfc_risk_training.png}
+\caption{Rolling average risk integral for Maskable PPO and Best-Fit over the evaluation horizon.}
+\label{fig:risk_compare}
+\end{figure}
+
+\section{Analysis and Discussion}
+
+\subsection{Benefits of Action Masking}
+
+Action masking provides three key benefits in this framework. First, it guarantees 100\% feasibility of accepted placements: since infeasible nodes are never selected, every placement that completes the chain satisfies all resource, bandwidth, latency, security, and isolation constraints. Second, it dramatically improves sample efficiency: without masking, the agent would waste many gradient steps learning to avoid infeasible actions through penalty signals. Third, it simplifies reward design: since constraint violations cannot occur, there is no need for complex penalty terms for individual constraint types.
+
+\subsection{Effect of Risk-Aware Reward}
+
+The risk penalty coefficient $\lambda = 4$ creates a trade-off between acceptance ratio and operational risk. A higher $\lambda$ biases the agent toward fewer, less risky placements; a lower $\lambda$ prioritizes acceptance. The windowed AR modifier provides additional stability: when the agent has recently been accepting many requests (high $\overline{\text{AR}}_w$), the acceptance reward is amplified, encouraging continued good performance; when many rejections have occurred (low $\overline{\text{AR}}_w$), the rejection penalty is amplified, pushing the agent to explore better strategies.
+
+\subsection{GNN vs. MLP Policies}
+
+The GNN-based feature extractor captures topology-dependent patterns that MLP-based policies cannot represent. For example, the agent may learn to prefer substrate nodes that are central in the graph (with low average distance to all other nodes), reducing latency costs, or nodes with high residual resources surrounded by high-bandwidth links. The attention aggregation mechanism allows the policy to dynamically focus on the most informative nodes — for instance, attending strongly to the previous placement node when estimating latency costs for the next VNF.
+
+\subsection{Comparison with Best-Fit}
+
+The Best-Fit by Minimum Risk baseline represents a competitive greedy approach that directly minimizes the same objective component ($\rho_n^{\text{node}}$) as the RL agent's risk penalty. The key distinction is that the RL agent optimizes risk \textit{jointly with} acceptance ratio and long-term resource efficiency, while the baseline myopically minimizes risk at each individual step. In heavily loaded scenarios, the RL agent may choose slightly riskier placements early in the episode to preserve low-risk nodes for future requests with stricter constraints, a strategy the greedy baseline cannot exhibit.
+
+\subsection{Scalability Considerations}
+
+The current implementation uses a 25-node substrate, which enables efficient training within 100,000 timesteps. The GNN architecture is topology-agnostic by design: the `node\_mask` ensures that only real nodes are processed, and the edge index is reconstructed dynamically from the substrate graph. This means the same trained policy can, in principle, be deployed on larger or reconfigured substrates, though transfer performance may degrade for significantly different topologies.

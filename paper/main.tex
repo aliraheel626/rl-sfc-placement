@@ -1,0 +1,51 @@
+\documentclass[A4paper,12pt]{report}
+
+% ---------------------------------------------------------------------------
+% Preamble: packages, theorem environments, formatting settings
+% ---------------------------------------------------------------------------
+\input{preamble}
+
+\begin{document}
+
+% ===========================================================================
+% Front Matter
+% ===========================================================================
+\input{frontmatter/01_titlepage}
+\input{frontmatter/02_certificate_approval}
+\input{frontmatter/03_declaration}
+\input{frontmatter/04_certificate}
+\input{frontmatter/05_dedication}
+\input{frontmatter/06_acknowledgements}
+\input{frontmatter/07_abstract}
+
+% Table of Contents, List of Figures, List of Tables
+\newpage
+\tableofcontents
+\clearpage
+\listoffigures
+\clearpage
+{\let\oldnumberline\numberline%
+\renewcommand{\numberline}{\tablename~\oldnumberline}%
+\listoftables}
+\clearpage
+
+% ===========================================================================
+% Main Body
+% ===========================================================================
+\pagenumbering{arabic}
+
+\input{chapters/01_introduction}
+\input{chapters/02_literature_review}
+\input{chapters/03_system_model}
+\input{chapters/04_methodology}
+\input{chapters/05_results}
+\input{chapters/06_conclusion}
+
+% ===========================================================================
+% References
+% ===========================================================================
+\begin{spacing}{1.5}
+\input{references/references}
+\end{spacing}
+
+\end{document}

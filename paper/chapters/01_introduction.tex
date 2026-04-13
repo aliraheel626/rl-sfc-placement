@@ -1,0 +1,90 @@
+% ===========================================================================
+\chapter{Introduction}
+% ===========================================================================
+
+\section{Background}
+
+The last decade has witnessed a profound transformation in the architecture of communication networks, driven by two paradigm-shifting technologies: Software-Defined Networking (SDN) and Network Function Virtualization (NFV). Traditional networks relied on dedicated, proprietary hardware appliances to implement network functions such as firewalls, load balancers, intrusion detection systems, and deep packet inspection engines. These ``middleboxes'' were expensive to procure, rigid in their placement, and difficult to manage at scale \cite{mijumbi2016}.
+
+SDN decouples the control plane from the data plane, centralizing network intelligence in a logically centralized controller that programs forwarding rules across the network infrastructure via standardized protocols such as OpenFlow \cite{mckeown2008}. This separation introduces unprecedented programmability and flexibility in network management.
+
+NFV complements SDN by decoupling network functions from the dedicated hardware on which they were traditionally implemented, running them instead as software instances — Virtual Network Functions (VNFs) — on commodity servers in data centers \cite{etsi2013}. NFV allows network operators to instantiate, scale, migrate, and terminate VNFs dynamically in response to traffic demands, dramatically reducing both capital expenditure (CapEx) and operational expenditure (OpEx).
+
+The convergence of SDN and NFV has given rise to the concept of \textit{Service Function Chaining} (SFC), wherein ordered sequences of VNFs are composed to implement end-to-end network services \cite{halpern2015}. For example, a corporate network might route traffic through a firewall, then a WAN optimizer, then a load balancer before it reaches its destination. The ability to specify, instantiate, and route traffic through such chains programmatically is a cornerstone of modern cloud-native and 5G network architectures \cite{nfv5g2017}.
+
+\section{The SFC Placement Problem}
+
+Given the flexibility offered by NFV/SDN, a fundamental challenge emerges: \textit{where} should the VNFs that comprise an SFC be deployed on the physical substrate network? This \textbf{SFC Placement Problem} (also called the VNF Embedding Problem or NFV Resource Allocation Problem) requires simultaneously satisfying a complex set of constraints:
+
+\begin{itemize}
+  \item \textbf{Resource constraints:} Each substrate node has finite CPU, RAM, and storage capacity; the aggregate demands of all VNFs placed on a node must not exceed its available resources.
+  \item \textbf{Latency constraints:} The accumulated end-to-end latency along the path from the first to the last VNF must not exceed the SFC's maximum latency requirement.
+  \item \textbf{Bandwidth constraints:} Each link along the path between consecutive VNFs must have sufficient residual bandwidth to carry the SFC traffic.
+  \item \textbf{Security constraints:} Each substrate node on which a VNF is placed must meet the minimum security score required by the SFC.
+  \item \textbf{Isolation constraints:} Some SFCs require \textit{hard isolation}, meaning their VNFs must not share substrate nodes with VNFs of other SFCs.
+\end{itemize}
+
+The SFC placement problem has been shown to be NP-hard in general \cite{dolev2013}, as it encompasses variants of the Virtual Network Embedding (VNE) problem, which subsumes bin-packing and graph isomorphism \cite{yu2008}. Consequently, exact algorithms are intractable for large-scale networks, and practical solutions must rely on approximations, heuristics, or learning-based approaches.
+
+\section{Limitations of Existing Approaches}
+
+Classical approaches to SFC placement fall into three broad categories:
+
+\textbf{Exact methods}, such as Integer Linear Programming (ILP) \cite{cohen2015}, guarantee optimal solutions but scale exponentially with problem size, making them suitable only for small networks or offline planning scenarios. Dynamic programming approaches (e.g., Viterbi-style trellis methods) offer polynomial-time optimality for restricted objective functions but still do not scale to large substrate networks with hundreds of nodes under continuously arriving requests.
+
+\textbf{Heuristic methods}, such as First-Fit and Best-Fit algorithms, make locally greedy decisions and run efficiently in practice but lack any global optimization perspective. They typically optimize a single criterion (e.g., resource waste) while ignoring others (e.g., risk, security diversity, future load), and their performance degrades significantly under high load.
+
+\textbf{Meta-heuristic and evolutionary methods} \cite{rankothge2017}, such as genetic algorithms and simulated annealing, offer better solution quality than greedy heuristics but require careful hyperparameter tuning, suffer from slow convergence, and are difficult to adapt online to real-time request arrivals.
+
+A fundamental limitation shared by all of the above is that they \textit{do not learn from experience}. Each incoming SFC request is solved in isolation, without leveraging patterns learned from prior requests. Moreover, virtually no existing practical method incorporates a realistic model of operational risk — the possibility that VNF co-location, node security vulnerabilities, or accumulated load may lead to security incidents, failures, or degraded service quality over time.
+
+\section{Reinforcement Learning for SFC Placement}
+
+Reinforcement Learning (RL) offers a compelling alternative: an agent learns a placement policy through interaction with the environment, receiving reward signals that encode the desired optimization objectives. The agent improves its policy over many episodes, ultimately learning to make globally informed placement decisions that account for long-term consequences \cite{mao2016}.
+
+Recent work has demonstrated the viability of deep RL for network resource management problems, including virtual machine placement \cite{mao2016}, VNE \cite{yan2020}, and SFC embedding \cite{heo2020}. A key advantage of RL-based approaches is their ability to generalize: once trained, the policy executes in milliseconds, making it highly suitable for online, real-time placement. Furthermore, RL policies can naturally encode multi-objective trade-offs through the reward function, incorporating resource efficiency, latency minimization, security, and risk simultaneously.
+
+However, applying standard RL to combinatorial placement problems with hard constraints presents a major challenge: the agent may waste a significant fraction of training exploring infeasible actions, leading to slow convergence and unstable learning. \textbf{Action masking} \cite{vinyals2019, huang2020} is a well-established technique that addresses this by dynamically pruning the action space to include only feasible choices, drastically improving sample efficiency and guaranteeing constraint satisfaction during both training and inference.
+
+\section{Graph Neural Networks for Topology-Aware Placement}
+
+The substrate network is inherently a graph, and the placement decision for each VNF is fundamentally topology-dependent: the latency and bandwidth between nodes, the load distribution across the graph, and the structural position of candidate nodes all influence the quality of a placement. Standard multi-layer perceptrons (MLPs) treat node features in isolation and are unable to capture these relational, graph-structural dependencies.
+
+Graph Neural Networks (GNNs) \cite{kipf2017, velickovic2018, hamilton2017} learn node representations by aggregating information from neighborhood nodes through iterative message passing, naturally encoding the topological context of each node. Embedding a GNN into the policy network of an RL agent endows it with topology awareness, enabling it to reason about placement decisions in the context of the entire network graph \cite{lotfi2022}.
+
+\section{Research Motivation and Objectives}
+
+Despite significant progress in applying RL and GNNs to network resource management, several gaps remain:
+
+\begin{enumerate}
+  \item \textbf{Operational risk is largely ignored.} Existing RL-based SFC placement methods optimize for acceptance ratio, latency, and resource utilization, but do not model the security and reliability risk associated with specific placements.
+  \item \textbf{Stochastic failure dynamics are not modeled.} Real networks experience security incidents and node failures whose probability depends on load, security posture, and historical incident pressure. Ignoring this leads to placements that are efficient in the short term but risky in operation.
+  \item \textbf{Hard constraint satisfaction is not guaranteed.} Many RL agents learn to respect constraints softly through penalty terms in the reward, resulting in occasional constraint violations during inference.
+  \item \textbf{Topology-agnostic policies fail to generalize.} Policies trained on fixed-size networks do not transfer to different topologies without retraining.
+\end{enumerate}
+
+This thesis addresses all four gaps through the following research objectives:
+
+\begin{enumerate}
+  \item Design a Maskable PPO-based RL framework for SFC placement that \textit{guarantees} feasibility of all placements through hard action masking.
+  \item Develop a composite risk model that quantifies operational risk as a function of tenancy, security, stochastic incident dynamics, and exposure time, and incorporate it into the reward signal.
+  \item Integrate a GNN-based feature extractor into the RL policy to capture topology-aware node embeddings that enable globally informed placement decisions.
+  \item Evaluate the proposed framework against a risk-minimizing Best-Fit heuristic on comprehensive metrics including acceptance ratio, latency, substrate utilization, tenancy, and realized incident rates.
+\end{enumerate}
+
+\section{Thesis Contributions}
+
+The principal contributions of this thesis are:
+
+\begin{enumerate}
+  \item \textbf{A Maskable PPO framework for SFC placement} with hard action masking that enforces all five constraint types (resource, latency, bandwidth, security, isolation) at every step, guaranteeing the feasibility of every accepted placement.
+  \item \textbf{A composite risk model} integrating VNF tenancy, SFC tenancy, inverse security, stochastic incident dynamics with pressure accumulation and decay, and TTL-proportional exposure into a single normalized risk integral $\rho \in [0,1]$.
+  \item \textbf{A topology-aware GNN feature extractor} (supporting GCN, GAT, and GraphSAGE architectures) with attention-weighted graph aggregation and MLP-based global context fusion, embedded within the Maskable PPO policy.
+  \item \textbf{A windowed acceptance ratio reward modifier} that provides curriculum-style feedback by scaling terminal rewards according to recent placement success rates, improving training stability.
+  \item \textbf{A fair evaluation framework} that aligns the random number generator state across all algorithms so that the RL agent and baseline receive identical SFC request streams, enabling unbiased comparison.
+  \item \textbf{Comprehensive experimental analysis} across acceptance ratio, latency, security margin, substrate utilization, SFC/VNF tenancy, risk integral, expected and realized incident rates, and incident cost.
+\end{enumerate}
+
+\section{Thesis Organization}
+
+The remainder of this thesis is organized as follows. Chapter~2 provides a review of the relevant literature on NFV/SFC, RL for network resource management, GNNs, action masking, and risk-aware networking. Chapter~3 formalizes the system model and problem formulation, including the MDP definition and risk model. Chapter~4 presents the proposed methodology in detail, covering the Maskable PPO algorithm, GNN feature extractor, reward design, and training procedure. Chapter~5 describes the experimental setup and presents results and analysis. Chapter~6 concludes the thesis and outlines directions for future work.

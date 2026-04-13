@@ -1,0 +1,124 @@
+% ===========================================================================
+\chapter{Literature Review}
+% ===========================================================================
+
+\section{Network Function Virtualization and Service Function Chaining}
+
+\subsection{Fundamentals of NFV}
+
+The European Telecommunications Standards Institute (ETSI) formalized the NFV framework in 2013 \cite{etsi2013}, proposing a reference architecture that separates the NFV Infrastructure (NFVI), the VNF software components, and the NFV Management and Orchestration (MANO) layer. The NFVI encompasses compute, storage, and networking resources pooled across data centers; VNFs are software implementations of network functions executed as virtual machines or containers on the NFVI; and MANO provides lifecycle management of VNFs and the services they compose.
+
+Key motivations for NFV include: consolidation of diverse network appliances onto standard hardware; elastic scaling of VNF instances in response to traffic load; rapid service innovation through software-based function development; and reduced total cost of ownership through commodity hardware and centralized management \cite{mijumbi2016}.
+
+\subsection{Service Function Chaining}
+
+RFC 7665 \cite{halpern2015} defines an SFC as an ordered set of abstract service functions and ordering constraints that together define the required treatment for packets and/or flows. The Service Function Chaining problem has two core sub-problems: \textit{function chain composition} (determining which VNFs constitute a service) and \textit{function chain embedding} (mapping the abstract chain to concrete infrastructure). This thesis focuses on the embedding problem.
+
+Formally, an SFC request $r$ is a tuple $r = \langle \mathcal{V}_r, \mathbf{c}_r, \ell_r^{\max}, b_r^{\min}, s_r^{\min}, \tau_r, \delta_r \rangle$ where $\mathcal{V}_r = \{v_1, v_2, \ldots, v_{K_r}\}$ is the ordered sequence of VNFs, $\mathbf{c}_r$ encodes per-VNF resource demands, $\ell_r^{\max}$ is the maximum end-to-end latency, $b_r^{\min}$ is the minimum link bandwidth, $s_r^{\min}$ is the minimum node security score, $\tau_r$ is the time-to-live (TTL), and $\delta_r \in \{0,1\}$ indicates whether hard isolation is required.
+
+\subsection{Challenges in SFC Embedding}
+
+The SFC embedding problem is NP-hard as it generalizes the Virtual Network Embedding (VNE) problem \cite{yu2008}. The combinatorial explosion of feasible mappings, coupled with the need to jointly optimize multiple objectives (resource efficiency, latency, security, cost), makes exact optimization intractable for large networks. Additional challenges include: \textit{online arrivals} (requests arrive dynamically and must be processed in real time); \textit{resource fragmentation} (accepted SFCs hold resources for their TTL, potentially blocking future requests); \textit{multi-dimensional resource constraints} (CPU, RAM, storage, bandwidth must all be simultaneously satisfied); and \textit{fairness} (the placement policy must balance the load across substrate nodes to avoid hotspots) \cite{nfv5g2017}.
+
+\section{Classical SFC Placement Algorithms}
+
+\subsection{Integer Linear Programming}
+
+ILP formulations \cite{cohen2015, bari2015} model the SFC embedding as an optimization problem over binary placement variables, with constraints encoding resource, latency, bandwidth, and security requirements. These approaches are exact and can incorporate complex multi-objective cost functions. However, ILP is NP-hard, and practical instances with tens of nodes and VNFs require hours to solve, making ILP infeasible for online placement \cite{nfv5g2017}.
+
+\subsection{Greedy Heuristics}
+
+First-Fit (FF) and Best-Fit (BF) algorithms process VNFs sequentially, selecting the first or best-scoring feasible node at each step. Their key advantage is computational efficiency (linear in the number of nodes per VNF), making them suitable for online scenarios. The Best-Fit criterion is typically defined as minimizing resource waste (the excess capacity after VNF allocation), though variants that minimize cost, latency, or risk have been proposed \cite{bhamare2016}. The primary limitation of greedy algorithms is their myopic nature: locally optimal decisions may globally fragment resources and reduce the acceptance ratio for future requests.
+
+\subsection{Dynamic Programming}
+
+Viterbi-style dynamic programming \cite{viterbi1967} can find the minimum-latency placement by building a trellis over the space of (VNF index, substrate node) pairs and backtracking from the optimal final node. This approach runs in $O(K \cdot N^2)$ time (where $K$ is the number of VNFs and $N$ is the number of substrate nodes) and guarantees optimality with respect to the latency objective. However, it does not optimize resource utilization, risk, or tenancy, and it does not account for the long-term consequences of resource allocation decisions.
+
+\subsection{Meta-heuristics}
+
+Genetic algorithms (GAs) \cite{rankothge2017}, particle swarm optimization (PSO), and simulated annealing have been applied to SFC embedding. These approaches can explore large solution spaces and optimize multi-objective cost functions, but they require many evaluations per request, making them too slow for online scenarios. They also require careful tuning of their hyperparameters and may not converge to good solutions for complex constraint structures.
+
+\section{Reinforcement Learning for Network Resource Management}
+
+\subsection{Early RL Applications}
+
+The application of RL to network resource management was pioneered by Mao et al. \cite{mao2016} with the DeepRM system for cluster job scheduling. DeepRM trains a policy gradient agent to schedule incoming jobs onto a shared compute cluster, learning to minimize average job completion time without explicit knowledge of the job duration distribution. The key insight — that RL can learn resource management policies that outperform hand-crafted heuristics by exploiting distributional structure in the workload — has since been applied extensively to NFV and SFC scenarios.
+
+\subsection{RL for Virtual Network Embedding}
+
+Yan et al. \cite{yan2020} proposed a deep RL approach to VNE that uses a Graph Convolutional Network (GCN) to encode substrate node states and trains a policy gradient agent to embed virtual networks sequentially. Their approach achieves higher long-term revenue-to-cost ratios than classical heuristics by learning to leave room for future requests. Subsequent work by Vne-ddpg \cite{zhu2021} and others extended this to continuous action spaces and multi-agent settings.
+
+\subsection{RL for SFC Embedding}
+
+Heo et al. \cite{heo2020} applied deep Q-networks (DQN) to SFC embedding, encoding the substrate state as a matrix of normalized resource utilizations and training the agent on synthetic topologies. They demonstrated that the RL agent learns to balance load across nodes, leading to higher acceptance ratios than First-Fit and Best-Fit under heavy load. Dolati et al. \cite{dolati2021} extended this to multi-domain scenarios using multi-agent RL.
+
+A key limitation of early RL-based SFC methods is the handling of constraints: most approaches encode constraint violations as large negative rewards, which still allows the agent to take infeasible actions during training and inference, leading to occasional violations. This motivates the use of action masking.
+
+\subsection{Proximal Policy Optimization}
+
+PPO \cite{schulman2017} is a policy gradient method that stabilizes training by constraining the ratio between the updated and the old policy within a clipped region, preventing destructively large policy updates. PPO alternates between sampling rollouts from the current policy and performing multiple epochs of mini-batch updates on the collected data, making it significantly more sample-efficient than vanilla policy gradient methods. PPO has become one of the most widely used RL algorithms in practice due to its simplicity, stability, and strong empirical performance across a range of domains \cite{raffin2021}.
+
+\section{Action Masking in Reinforcement Learning}
+
+Action masking \cite{huang2020, vinyals2019} is a technique for enforcing hard constraints in RL by zeroing out the logits (or probabilities) of infeasible actions before the policy samples an action. The agent thus only ever chooses from the feasible action set, guaranteeing constraint satisfaction during both training and inference.
+
+Maskable PPO \cite{sb3contrib2021} extends PPO with action masking support. The environment provides a binary mask over actions at each step; the policy's softmax is computed only over unmasked (feasible) actions. Critically, the value function and policy gradient are also corrected to account for the restricted action set, avoiding bias in the critic's value estimates.
+
+In the context of SFC placement, the feasible action set at each step corresponds to substrate nodes that satisfy all resource, bandwidth, latency, security, and isolation constraints for the current VNF. Masking infeasible nodes eliminates wasted exploration of constraint-violating placements, dramatically improving sample efficiency \cite{huang2020}.
+
+\section{Graph Neural Networks}
+
+\subsection{Graph Convolutional Networks}
+
+Kipf and Welling \cite{kipf2017} introduced Graph Convolutional Networks (GCNs), which apply a spectral convolution approximated as a first-order Chebyshev polynomial to propagate and aggregate features across graph neighborhoods. For a graph with node feature matrix $\mathbf{X}$ and normalized adjacency $\hat{\mathbf{A}}$, a single GCN layer computes:
+\begin{equation}
+\mathbf{H}^{(l+1)} = \sigma\!\left(\hat{\mathbf{A}} \mathbf{H}^{(l)} \mathbf{W}^{(l)}\right),
+\end{equation}
+where $\hat{\mathbf{A}} = \tilde{\mathbf{D}}^{-1/2} \tilde{\mathbf{A}} \tilde{\mathbf{D}}^{-1/2}$, $\tilde{\mathbf{A}} = \mathbf{A} + \mathbf{I}$, $\tilde{\mathbf{D}}$ is the diagonal degree matrix, and $\sigma$ is a nonlinearity. GCNs have been applied to node classification, link prediction, and graph-level tasks, and have demonstrated strong performance on citation networks, social graphs, and molecular graphs \cite{kipf2017}.
+
+\subsection{Graph Attention Networks}
+
+Graph Attention Networks (GATs) \cite{velickovic2018} replace the fixed, degree-normalized aggregation of GCN with a learned attention mechanism that assigns different importance to different neighbors:
+\begin{equation}
+\mathbf{h}_i^{(l+1)} = \sigma\!\left(\sum_{j \in \mathcal{N}(i)} \alpha_{ij} \mathbf{W} \mathbf{h}_j^{(l)}\right),
+\end{equation}
+where $\alpha_{ij}$ are attention coefficients computed by a small neural network applied to the concatenated embeddings of node $i$ and its neighbor $j$, normalized via softmax over $\mathcal{N}(i)$. Multi-head attention \cite{vaswani2017} is commonly used to stabilize training and improve expressiveness. GATs are particularly well-suited to graphs where the relative importance of neighbors varies — as is the case in substrate networks where some nodes are bottlenecks and others are peripheral.
+
+\subsection{GraphSAGE}
+
+Hamilton et al. \cite{hamilton2017} proposed GraphSAGE (Graph Sample and Aggregate), an inductive learning framework that generates node embeddings by sampling and aggregating features from a fixed-size neighborhood:
+\begin{equation}
+\mathbf{h}_i^{(l+1)} = \sigma\!\left(\mathbf{W} \cdot \left[\mathbf{h}_i^{(l)} \,\|\, \text{AGGREGATE}\!\left(\left\{\mathbf{h}_j^{(l)} : j \in \mathcal{N}(i)\right\}\right)\right]\right),
+\end{equation}
+where $\|$ denotes concatenation and AGGREGATE is a permutation-invariant function (mean, max-pool, or LSTM). GraphSAGE is \textit{inductive}: the parameters are shared across nodes and graphs, enabling the model to generalize to unseen nodes and topologies at inference time without retraining. This is a particularly desirable property for SFC placement, where the substrate topology may evolve over time.
+
+\subsection{GNNs for Network Optimization}
+
+GNNs have been increasingly applied to network optimization problems. Lotfi et al. \cite{lotfi2022} applied GNNs to the VNE problem, learning topology-aware embeddings that capture the structural role of each substrate node. Shi et al. \cite{shi2021} used GNNs for link scheduling in wireless networks, demonstrating superior performance over MLP-based policies due to their ability to model interference patterns. GNNs have also been applied to traffic engineering \cite{rusek2020}, routing \cite{almasan2019}, and resource allocation in 5G networks \cite{guo2021}.
+
+\section{Risk-Aware Network Management}
+
+\subsection{Security in NFV}
+
+NFV introduces novel security challenges relative to hardware-based deployments \cite{pattaranantakul2016}. Hypervisor vulnerabilities, side-channel attacks between co-located VMs, and the expanded attack surface of commodity hardware all elevate the risk of security incidents in NFV environments. Furthermore, VNF co-location — multiple tenants sharing the same physical node — increases the exposure of each VNF to incidents originating from co-located functions.
+
+\subsection{Risk-Aware Placement}
+
+Several works have proposed risk-aware SFC or VNF placement approaches. Pattaranantakul et al. \cite{pattaranantakul2016} proposed a security-aware NFV service function chaining framework that models node security levels and routes SFC traffic through nodes meeting minimum security thresholds. Yu et al. \cite{yu2021} formulated a risk-minimizing VNF placement problem using a threat model based on the Common Vulnerability Scoring System (CVSS). However, these works model risk statically and do not account for dynamic incident pressure or stochastic failure events driven by load and historical incidents.
+
+\subsection{Stochastic Failure Models in Networks}
+
+Stochastic models of node and link failure have a long history in network reliability analysis \cite{barlow1975}. Bernoulli failure models, in which each node fails independently with a fixed probability, are widely used for their tractability. More realistic models incorporate load-dependent failure rates (higher utilization increases the failure probability) and correlated failures driven by shared vulnerability \cite{yago2019}. The risk model proposed in this thesis builds on these ideas, incorporating both security-dependent incident probability and accumulated incident pressure as a state variable that degrades node availability over time.
+
+\section{Summary and Research Gaps}
+
+The reviewed literature reveals the following gaps that motivate this thesis:
+
+\begin{enumerate}
+  \item Most RL-based SFC placement methods do not guarantee hard constraint satisfaction, relying instead on penalty-based soft constraints.
+  \item GNN-based policies for SFC placement are underexplored, particularly the combination of multi-architecture GNNs with Maskable PPO.
+  \item Operational risk — including security incidents driven by tenancy, load, and historical pressure — is rarely modeled in RL-based placement frameworks.
+  \item Evaluation frameworks typically do not align the request stream between RL and baseline algorithms, making fair comparison difficult.
+\end{enumerate}
+
+This thesis addresses all four gaps through the framework described in Chapters 3 and 4.

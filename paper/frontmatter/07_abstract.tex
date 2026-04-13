@@ -1,0 +1,19 @@
+\newpage
+\begin{center}
+\LARGE{\textbf{\textbf{Abstract}}}
+\end{center}
+\begin{center}
+\Large{Risk-Aware Service Function Chain Placement Using Maskable Proximal Policy Optimization with Graph Neural Networks}\\
+\Large{By}\\
+\Large{Ali Raheel}
+\end{center}
+
+The rapid proliferation of Network Function Virtualization (NFV) and Software-Defined Networking (SDN) has transformed the way network services are deployed and managed. Service Function Chains (SFCs) — ordered sequences of Virtual Network Functions (VNFs) — must be efficiently embedded onto substrate networks while satisfying stringent resource, latency, bandwidth, and security constraints. Classical placement algorithms are computationally expensive or rely on hand-crafted heuristics that fail to generalize across diverse network conditions. Furthermore, existing methods rarely account for the operational risk introduced by co-locating VNFs, security vulnerabilities, and stochastic failure events.
+
+This thesis proposes a risk-aware deep reinforcement learning framework for SFC placement that addresses these shortcomings. The framework models the placement problem as a Markov Decision Process (MDP) and trains a Maskable Proximal Policy Optimization (Maskable PPO) agent to sequentially place VNFs onto substrate nodes. Action masking is employed to strictly enforce all feasibility constraints — including resource availability, latency budget reservation, bandwidth along shortest paths, security requirements, and hard isolation — preventing the agent from exploring infeasible placements entirely.
+
+A key contribution of this work is a topology-aware policy that incorporates a Graph Neural Network (GNN) feature extractor. Three GNN architectures are investigated: Graph Convolutional Networks (GCN), Graph Attention Networks (GAT), and GraphSAGE. The GNN processes real-time substrate node embeddings through multiple message-passing layers, followed by an attention-weighted graph-level aggregation, and fuses the result with a global context vector encoding the current SFC request properties. This design enables the agent to learn topology-dependent placement strategies without requiring the network size to be fixed at training time.
+
+A novel composite risk model is introduced that quantifies operational risk as a weighted combination of VNF tenancy, SFC tenancy, inverse node security, a stochastic incident process, and time-exposure. The incident component models security breaches and failure events as Bernoulli trials whose probability depends on node load, security posture, and incident pressure accumulated from past events. The risk integral is coupled to the reward signal via a tunable penalty coefficient, steering the agent toward placements that are both efficient and operationally resilient.
+
+Experimental evaluation on a 25-node substrate network with 1000 SFC requests demonstrates that the Maskable PPO agent achieves competitive acceptance ratios relative to a risk-minimizing Best-Fit heuristic baseline, while incurring lower average risk integrals and fewer realized security incidents. The windowed acceptance ratio reward modifier further stabilizes training by providing curriculum-style feedback that adapts the reward magnitude to recent performance. Comprehensive metrics including acceptance ratio, average end-to-end latency, substrate utilization, SFC/VNF tenancy, and realized incident rates are reported and analyzed.

@@ -30,7 +30,7 @@ The proposed framework is an intelligent Deep Reinforcement Learning system for 
 \draw[arrow] (gen) -- (env);
 \draw[arrow] (env) -- node[right]{obs, mask} (gnn);
 \draw[arrow] (gnn) -- node[right]{embedding} (ppo);
-\draw[arrow] (ppo.east) to[bend left=40] node[right]{action} (env.east);
+\draw[arrow] (ppo.east) to[bend right=40] node[right]{action} (env.east);
 \draw[arrow] (env.west) to[bend right=30] node[left]{reward} (ppo.west);
 \end{tikzpicture}
 \caption{High-level system architecture of the proposed framework.}

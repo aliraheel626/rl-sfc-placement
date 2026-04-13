@@ -4,14 +4,14 @@
 
 \section{System Architecture}
 
-The proposed framework consists of five principal components, as illustrated in Figure~\ref{fig:architecture}:
+The proposed framework is an intelligent Deep Reinforcement Learning system for security posture aware SFC placement. It consists of five principal components, as illustrated in Figure~\ref{fig:architecture}:
 
 \begin{enumerate}
-  \item \textbf{Substrate Network}: a dynamic graph whose node resources and link bandwidths evolve as VNFs are allocated and expire.
+  \item \textbf{Substrate Network}: a dynamic graph whose node resources, link bandwidths, and security posture states evolve as VNFs are allocated, expire, and security incidents occur.
   \item \textbf{SFC Request Generator}: produces incoming SFC requests with random VNF demands and constraints.
-  \item \textbf{SFC Placement Environment}: a Gymnasium-compatible MDP environment implementing the state, action, reward, and constraint logic.
-  \item \textbf{Maskable PPO Agent}: trains on rollouts collected from the environment, updating its policy and value networks.
-  \item \textbf{GNN Feature Extractor}: encodes the substrate topology and node states into rich embeddings for the policy network.
+  \item \textbf{SFC Placement Environment}: a Gymnasium-compatible MDP environment implementing the state, action, security posture-aware reward, and constraint logic.
+  \item \textbf{Maskable PPO Agent}: the DRL backbone that trains on rollouts collected from the environment, updating its policy and value networks using the PPO objective.
+  \item \textbf{GNN Feature Extractor}: encodes the substrate topology and node states — including current security posture — into rich embeddings for the DRL policy network.
 \end{enumerate}
 
 \begin{figure}[!ht]
@@ -37,11 +37,11 @@ The proposed framework consists of five principal components, as illustrated in 
 \label{fig:architecture}
 \end{figure}
 
-\section{Maskable Proximal Policy Optimization}
+\section{Maskable Proximal Policy Optimization as the DRL Backbone}
 
 \subsection{PPO Background}
 
-PPO \cite{schulman2017} optimizes the following surrogate objective:
+Proximal Policy Optimization (PPO) \cite{schulman2017} is the Deep Reinforcement Learning algorithm used as the backbone of our framework. It optimizes the following surrogate objective:
 \begin{equation}
 L^{\text{CLIP}}(\theta) = \mathbb{E}_t\!\left[\min\!\left(r_t(\theta)\hat{A}_t,\; \text{clip}(r_t(\theta), 1-\epsilon, 1+\epsilon)\hat{A}_t\right)\right],
 \end{equation}
@@ -55,13 +55,13 @@ where $\delta_t = r_t + \gamma V(s_{t+1}) - V(s_t)$ is the TD residual.
 
 \subsection{Maskable PPO Extension}
 
-Maskable PPO \cite{sb3contrib2021} extends the standard PPO by accepting a binary action mask $\mathbf{m}_t \in \{0,1\}^{|\mathcal{A}|}$ at each step. The policy is defined as:
+Maskable PPO \cite{sb3contrib2021} extends the standard PPO DRL algorithm by accepting a binary action mask $\mathbf{m}_t \in \{0,1\}^{|\mathcal{A}|}$ at each step. The policy is defined as:
 \begin{equation}
 \pi_\theta(a \mid s_t) = \frac{\exp(z_a) \cdot m_a}{\sum_{a'} \exp(z_{a'}) \cdot m_{a'}},
 \end{equation}
 where $z_a$ are the raw logits from the policy network and $m_a \in \{0,1\}$ is the mask. In practice, this is implemented by replacing logits of masked actions with $-10^8$ before applying softmax.
 
-The key implication is that infeasible actions have zero probability under the policy for all time, guaranteeing that the agent never selects a constraint-violating node. This is in contrast to soft constraint methods, where infeasible actions are penalized but not forbidden.
+The key implication is that infeasible actions have zero probability under the policy for all time, guaranteeing that the agent never selects a constraint-violating node — including nodes that fail the security posture constraint. This is in contrast to soft constraint methods, where infeasible actions are penalized but not forbidden.
 
 \subsection{Training Configuration}
 
@@ -95,7 +95,7 @@ AR weight $\omega$ & 0.5 & AR modifier weight \\
 
 \subsection{Architecture Overview}
 
-The GNN Feature Extractor (`GNNFeaturesExtractor`) is embedded within the policy network as a Stable-Baselines3 `BaseFeaturesExtractor` \cite{raffin2021}. It processes the Dict observation $({\mathbf{F}},\; \mathbf{g},\; \mathbf{m}^P,\; \mathbf{m}^N)$ and produces a fixed-dimensional feature vector $\mathbf{e} \in \mathbb{R}^{d_f}$ (with $d_f = 256$) that is fed into the actor-critic MLP heads.
+The GNN Feature Extractor (`GNNFeaturesExtractor`) is embedded within the DRL policy network as a Stable-Baselines3 `BaseFeaturesExtractor` \cite{raffin2021}. It processes the Dict observation $({\mathbf{F}},\; \mathbf{g},\; \mathbf{m}^P,\; \mathbf{m}^N)$ — which includes each node's current security posture in the node feature matrix — and produces a fixed-dimensional feature vector $\mathbf{e} \in \mathbb{R}^{d_f}$ (with $d_f = 256$) that is fed into the actor-critic MLP heads.
 
 The forward pass proceeds in four stages:
 
@@ -164,18 +164,18 @@ The `action\_masks()` method of `SFCPlacementEnv` computes the binary feasibilit
 
 \section{Best-Fit Baseline}
 
-For comparison, a \textbf{Best-Fit by Minimum Risk} (\texttt{BestFitPlacement}) heuristic is implemented. For each VNF in the chain, it applies the same feasibility checks as the environment (including \texttt{apply\_incident\_view} for consistent constraint semantics), then selects the valid node with minimum `node\_risk\_score`, tie-breaking by resource waste (then node index):
+To assess the value of intelligent DRL-based security posture awareness over a greedy approach, a \textbf{Best-Fit by Minimum Risk} (\texttt{BestFitPlacement}) heuristic is implemented. For each VNF in the chain, it applies the same feasibility checks as the environment (including \texttt{apply\_incident\_view} for consistent constraint semantics), then selects the valid node with minimum `node\_risk\_score`, tie-breaking by resource waste (then node index):
 \begin{equation}
 n^* = \argmin_{n \in \mathcal{V}_t^{\text{valid}}} \left(\rho_n^{\text{node}},\; w_n^{\text{waste}},\; n\right),
 \end{equation}
 where $\rho_n^{\text{node}}$ is a per-node risk estimate (deterministic approximation of the full risk integral), and $w_n^{\text{waste}} = (r_n^{\text{ram}} - d_v^{\text{ram}}) + (r_n^{\text{cpu}} - d_v^{\text{cpu}}) + (r_n^{\text{stor}} - d_v^{\text{stor}})$.
 
-This baseline is a strong comparator: it explicitly minimizes risk at each step, matching the primary objective of the RL agent's risk penalty. It is used to assess whether the RL agent's learned policy provides any advantage over greedy risk minimization.
+This baseline is a strong comparator: it explicitly minimizes risk at each step, matching the primary objective of the DRL agent's security posture-aware risk penalty. It is used to assess whether the DRL agent's learned, intelligent policy provides any advantage over greedy risk minimization — in particular, whether the DRL agent exploits long-horizon reasoning about security posture dynamics that a myopic greedy strategy cannot.
 
 \section{Training Procedure}
 
 \begin{algorithm}[!ht]
-\caption{Training Procedure for Maskable PPO with GNN}
+\caption{Training Procedure for the Intelligent Security Posture Aware DRL Framework (Maskable PPO with GNN)}
 \label{alg:training}
 \begin{algorithmic}[1]
 \Require Config $\mathcal{C}$, total timesteps $T_{\text{total}}$, rollout steps $n_{\text{steps}}$

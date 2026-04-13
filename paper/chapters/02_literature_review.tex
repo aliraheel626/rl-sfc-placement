@@ -38,25 +38,25 @@ Viterbi-style dynamic programming \cite{viterbi1967} can find the minimum-latenc
 
 Genetic algorithms (GAs) \cite{rankothge2017}, particle swarm optimization (PSO), and simulated annealing have been applied to SFC embedding. These approaches can explore large solution spaces and optimize multi-objective cost functions, but they require many evaluations per request, making them too slow for online scenarios. They also require careful tuning of their hyperparameters and may not converge to good solutions for complex constraint structures.
 
-\section{Reinforcement Learning for Network Resource Management}
+\section{Deep Reinforcement Learning for Network Resource Management}
 
-\subsection{Early RL Applications}
+\subsection{Early DRL Applications}
 
-The application of RL to network resource management was pioneered by Mao et al. \cite{mao2016} with the DeepRM system for cluster job scheduling. DeepRM trains a policy gradient agent to schedule incoming jobs onto a shared compute cluster, learning to minimize average job completion time without explicit knowledge of the job duration distribution. The key insight — that RL can learn resource management policies that outperform hand-crafted heuristics by exploiting distributional structure in the workload — has since been applied extensively to NFV and SFC scenarios.
+The application of Deep Reinforcement Learning (DRL) to network resource management was pioneered by Mao et al. \cite{mao2016} with the DeepRM system for cluster job scheduling. DeepRM trains a policy gradient agent to schedule incoming jobs onto a shared compute cluster, learning to minimize average job completion time without explicit knowledge of the job duration distribution. The key insight — that DRL can learn resource management policies that outperform hand-crafted heuristics by exploiting distributional structure in the workload — has since been applied extensively to NFV and SFC scenarios.
 
-\subsection{RL for Virtual Network Embedding}
+\subsection{DRL for Virtual Network Embedding}
 
-Yan et al. \cite{yan2020} proposed a deep RL approach to VNE that uses a Graph Convolutional Network (GCN) to encode substrate node states and trains a policy gradient agent to embed virtual networks sequentially. Their approach achieves higher long-term revenue-to-cost ratios than classical heuristics by learning to leave room for future requests. Subsequent work by Vne-ddpg \cite{zhu2021} and others extended this to continuous action spaces and multi-agent settings.
+Yan et al. \cite{yan2020} proposed a DRL approach to VNE that uses a Graph Convolutional Network (GCN) to encode substrate node states and trains a policy gradient agent to embed virtual networks sequentially. Their approach achieves higher long-term revenue-to-cost ratios than classical heuristics by learning to leave room for future requests. Subsequent work by Vne-ddpg \cite{zhu2021} and others extended this to continuous action spaces and multi-agent settings.
 
-\subsection{RL for SFC Embedding}
+\subsection{DRL for SFC Embedding}
 
-Heo et al. \cite{heo2020} applied deep Q-networks (DQN) to SFC embedding, encoding the substrate state as a matrix of normalized resource utilizations and training the agent on synthetic topologies. They demonstrated that the RL agent learns to balance load across nodes, leading to higher acceptance ratios than First-Fit and Best-Fit under heavy load. Dolati et al. \cite{dolati2021} extended this to multi-domain scenarios using multi-agent RL.
+Heo et al. \cite{heo2020} applied deep Q-networks (DQN) to SFC embedding, encoding the substrate state as a matrix of normalized resource utilizations and training the agent on synthetic topologies. They demonstrated that the DRL agent learns to balance load across nodes, leading to higher acceptance ratios than First-Fit and Best-Fit under heavy load. Dolati et al. \cite{dolati2021} extended this to multi-domain scenarios using multi-agent DRL.
 
-A key limitation of early RL-based SFC methods is the handling of constraints: most approaches encode constraint violations as large negative rewards, which still allows the agent to take infeasible actions during training and inference, leading to occasional violations. This motivates the use of action masking.
+A key limitation of early DRL-based SFC methods is the handling of constraints: most approaches encode constraint violations as large negative rewards, which still allows the agent to take infeasible actions during training and inference, leading to occasional violations. None of these works incorporate security posture awareness — the ability to reason about the evolving vulnerability profile and incident history of substrate nodes — into the DRL policy or reward signal. This motivates the use of action masking combined with a security posture-aware reward.
 
 \subsection{Proximal Policy Optimization}
 
-PPO \cite{schulman2017} is a policy gradient method that stabilizes training by constraining the ratio between the updated and the old policy within a clipped region, preventing destructively large policy updates. PPO alternates between sampling rollouts from the current policy and performing multiple epochs of mini-batch updates on the collected data, making it significantly more sample-efficient than vanilla policy gradient methods. PPO has become one of the most widely used RL algorithms in practice due to its simplicity, stability, and strong empirical performance across a range of domains \cite{raffin2021}.
+PPO \cite{schulman2017} is a policy gradient DRL method that stabilizes training by constraining the ratio between the updated and the old policy within a clipped region, preventing destructively large policy updates. PPO alternates between sampling rollouts from the current policy and performing multiple epochs of mini-batch updates on the collected data, making it significantly more sample-efficient than vanilla policy gradient methods. PPO has become one of the most widely used DRL algorithms in practice due to its simplicity, stability, and strong empirical performance across a range of domains \cite{raffin2021}.
 
 \section{Action Masking in Reinforcement Learning}
 
@@ -96,29 +96,33 @@ where $\|$ denotes concatenation and AGGREGATE is a permutation-invariant functi
 
 GNNs have been increasingly applied to network optimization problems. Lotfi et al. \cite{lotfi2022} applied GNNs to the VNE problem, learning topology-aware embeddings that capture the structural role of each substrate node. Shi et al. \cite{shi2021} used GNNs for link scheduling in wireless networks, demonstrating superior performance over MLP-based policies due to their ability to model interference patterns. GNNs have also been applied to traffic engineering \cite{rusek2020}, routing \cite{almasan2019}, and resource allocation in 5G networks \cite{guo2021}.
 
-\section{Risk-Aware Network Management}
+\section{Security Posture-Aware Network Management}
 
-\subsection{Security in NFV}
+\subsection{Security Posture in NFV}
 
 NFV introduces novel security challenges relative to hardware-based deployments \cite{pattaranantakul2016}. Hypervisor vulnerabilities, side-channel attacks between co-located VMs, and the expanded attack surface of commodity hardware all elevate the risk of security incidents in NFV environments. Furthermore, VNF co-location — multiple tenants sharing the same physical node — increases the exposure of each VNF to incidents originating from co-located functions.
 
-\subsection{Risk-Aware Placement}
+The concept of \textit{security posture} extends beyond a static node security score. It captures the dynamic state of a node's vulnerability and resilience: a node that has recently experienced a security incident has degraded effective security — its posture has weakened — and should be treated with higher risk weight until its posture recovers. Modeling this temporal dimension of security is essential for realistic risk assessment in NFV placement.
 
-Several works have proposed risk-aware SFC or VNF placement approaches. Pattaranantakul et al. \cite{pattaranantakul2016} proposed a security-aware NFV service function chaining framework that models node security levels and routes SFC traffic through nodes meeting minimum security thresholds. Yu et al. \cite{yu2021} formulated a risk-minimizing VNF placement problem using a threat model based on the Common Vulnerability Scoring System (CVSS). However, these works model risk statically and do not account for dynamic incident pressure or stochastic failure events driven by load and historical incidents.
+\subsection{Security Posture-Aware Placement}
+
+Several works have proposed security- or risk-aware SFC or VNF placement approaches. Pattaranantakul et al. \cite{pattaranantakul2016} proposed a security-aware NFV service function chaining framework that models node security levels and routes SFC traffic through nodes meeting minimum security thresholds. Yu et al. \cite{yu2021} formulated a risk-minimizing VNF placement problem using a threat model based on the Common Vulnerability Scoring System (CVSS). However, these works model security statically and do not account for dynamic incident pressure — the accumulation and decay of security posture degradation due to historical incidents — or stochastic failure events driven by load and security posture.
+
+The framework proposed in this thesis addresses this gap by modeling security posture as a dynamic, time-varying state variable, and incorporating it directly into the DRL reward and constraint mechanisms.
 
 \subsection{Stochastic Failure Models in Networks}
 
-Stochastic models of node and link failure have a long history in network reliability analysis \cite{barlow1975}. Bernoulli failure models, in which each node fails independently with a fixed probability, are widely used for their tractability. More realistic models incorporate load-dependent failure rates (higher utilization increases the failure probability) and correlated failures driven by shared vulnerability \cite{yago2019}. The risk model proposed in this thesis builds on these ideas, incorporating both security-dependent incident probability and accumulated incident pressure as a state variable that degrades node availability over time.
+Stochastic models of node and link failure have a long history in network reliability analysis \cite{barlow1975}. Bernoulli failure models, in which each node fails independently with a fixed probability, are widely used for their tractability. More realistic models incorporate load-dependent failure rates (higher utilization increases the failure probability) and correlated failures driven by shared vulnerability \cite{yago2019}. The security posture risk model proposed in this thesis builds on these ideas, incorporating both security posture-dependent incident probability and accumulated incident pressure as a state variable that degrades node availability over time.
 
 \section{Summary and Research Gaps}
 
 The reviewed literature reveals the following gaps that motivate this thesis:
 
 \begin{enumerate}
-  \item Most RL-based SFC placement methods do not guarantee hard constraint satisfaction, relying instead on penalty-based soft constraints.
-  \item GNN-based policies for SFC placement are underexplored, particularly the combination of multi-architecture GNNs with Maskable PPO.
-  \item Operational risk — including security incidents driven by tenancy, load, and historical pressure — is rarely modeled in RL-based placement frameworks.
-  \item Evaluation frameworks typically do not align the request stream between RL and baseline algorithms, making fair comparison difficult.
+  \item Most DRL-based SFC placement methods do not guarantee hard constraint satisfaction, relying instead on penalty-based soft constraints.
+  \item GNN-based policies for SFC placement are underexplored, particularly the combination of multi-architecture GNNs with Maskable PPO as the DRL backbone.
+  \item Security posture awareness — including dynamic incident pressure, security score degradation, and stochastic incident events driven by tenancy, load, and historical pressure — is absent from existing DRL-based placement frameworks.
+  \item Evaluation frameworks typically do not align the request stream between DRL and baseline algorithms, making fair comparison difficult.
 \end{enumerate}
 
-This thesis addresses all four gaps through the framework described in Chapters 3 and 4.
+This thesis addresses all four gaps through the intelligent security posture aware DRL framework described in Chapters 3 and 4.

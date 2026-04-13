@@ -38,13 +38,13 @@ Classical approaches to SFC placement fall into three broad categories:
 
 A fundamental limitation shared by all of the above is that they \textit{do not learn from experience}. Each incoming SFC request is solved in isolation, without leveraging patterns learned from prior requests. Moreover, virtually no existing practical method incorporates a realistic model of operational risk — the possibility that VNF co-location, node security vulnerabilities, or accumulated load may lead to security incidents, failures, or degraded service quality over time.
 
-\section{Reinforcement Learning for SFC Placement}
+\section{Deep Reinforcement Learning for SFC Placement}
 
-Reinforcement Learning (RL) offers a compelling alternative: an agent learns a placement policy through interaction with the environment, receiving reward signals that encode the desired optimization objectives. The agent improves its policy over many episodes, ultimately learning to make globally informed placement decisions that account for long-term consequences \cite{mao2016}.
+Deep Reinforcement Learning (DRL) offers a compelling alternative to classical approaches: an agent learns a placement policy through interaction with the environment, receiving reward signals that encode the desired optimization objectives. The agent improves its policy over many episodes, ultimately learning to make \textit{intelligent}, globally informed placement decisions that account for long-term consequences — including evolving security posture — rather than treating each request in isolation \cite{mao2016}.
 
-Recent work has demonstrated the viability of deep RL for network resource management problems, including virtual machine placement \cite{mao2016}, VNE \cite{yan2020}, and SFC embedding \cite{heo2020}. A key advantage of RL-based approaches is their ability to generalize: once trained, the policy executes in milliseconds, making it highly suitable for online, real-time placement. Furthermore, RL policies can naturally encode multi-objective trade-offs through the reward function, incorporating resource efficiency, latency minimization, security, and risk simultaneously.
+Recent work has demonstrated the viability of DRL for network resource management problems, including virtual machine placement \cite{mao2016}, VNE \cite{yan2020}, and SFC embedding \cite{heo2020}. A key advantage of DRL-based approaches is their ability to generalize: once trained, the policy executes in milliseconds, making it highly suitable for online, real-time placement. Furthermore, DRL policies can naturally encode multi-objective trade-offs through the reward function, incorporating resource efficiency, latency minimization, security posture awareness, and operational risk simultaneously.
 
-However, applying standard RL to combinatorial placement problems with hard constraints presents a major challenge: the agent may waste a significant fraction of training exploring infeasible actions, leading to slow convergence and unstable learning. \textbf{Action masking} \cite{vinyals2019, huang2020} is a well-established technique that addresses this by dynamically pruning the action space to include only feasible choices, drastically improving sample efficiency and guaranteeing constraint satisfaction during both training and inference.
+However, applying standard DRL to combinatorial placement problems with hard constraints presents a major challenge: the agent may waste a significant fraction of training exploring infeasible actions, leading to slow convergence and unstable learning. \textbf{Action masking} \cite{vinyals2019, huang2020} is a well-established technique that addresses this by dynamically pruning the action space to include only feasible choices, drastically improving sample efficiency and guaranteeing constraint satisfaction during both training and inference.
 
 \section{Graph Neural Networks for Topology-Aware Placement}
 
@@ -54,22 +54,22 @@ Graph Neural Networks (GNNs) \cite{kipf2017, velickovic2018, hamilton2017} learn
 
 \section{Research Motivation and Objectives}
 
-Despite significant progress in applying RL and GNNs to network resource management, several gaps remain:
+Despite significant progress in applying DRL and GNNs to network resource management, several gaps remain:
 
 \begin{enumerate}
-  \item \textbf{Operational risk is largely ignored.} Existing RL-based SFC placement methods optimize for acceptance ratio, latency, and resource utilization, but do not model the security and reliability risk associated with specific placements.
-  \item \textbf{Stochastic failure dynamics are not modeled.} Real networks experience security incidents and node failures whose probability depends on load, security posture, and historical incident pressure. Ignoring this leads to placements that are efficient in the short term but risky in operation.
-  \item \textbf{Hard constraint satisfaction is not guaranteed.} Many RL agents learn to respect constraints softly through penalty terms in the reward, resulting in occasional constraint violations during inference.
+  \item \textbf{Security posture awareness is absent.} Existing DRL-based SFC placement methods optimize for acceptance ratio, latency, and resource utilization, but do not model the evolving security posture of substrate nodes — their vulnerability profile, accumulated incident pressure, and effective security score over time.
+  \item \textbf{Stochastic failure dynamics are not modeled.} Real networks experience security incidents and node failures whose probability depends on load, security posture, and historical incident pressure. Ignoring this leads to placements that are efficient in the short term but operationally fragile.
+  \item \textbf{Hard constraint satisfaction is not guaranteed.} Many DRL agents learn to respect constraints softly through penalty terms in the reward, resulting in occasional constraint violations during inference.
   \item \textbf{Topology-agnostic policies fail to generalize.} Policies trained on fixed-size networks do not transfer to different topologies without retraining.
 \end{enumerate}
 
 This thesis addresses all four gaps through the following research objectives:
 
 \begin{enumerate}
-  \item Design a Maskable PPO-based RL framework for SFC placement that \textit{guarantees} feasibility of all placements through hard action masking.
-  \item Develop a composite risk model that quantifies operational risk as a function of tenancy, security, stochastic incident dynamics, and exposure time, and incorporate it into the reward signal.
-  \item Integrate a GNN-based feature extractor into the RL policy to capture topology-aware node embeddings that enable globally informed placement decisions.
-  \item Evaluate the proposed framework against a risk-minimizing Best-Fit heuristic on comprehensive metrics including acceptance ratio, latency, substrate utilization, tenancy, and realized incident rates.
+  \item Design an intelligent Deep Reinforcement Learning framework for SFC placement — based on Maskable PPO — that \textit{guarantees} feasibility of all placements through hard action masking.
+  \item Develop a composite security posture and risk model that quantifies operational risk as a function of node security posture, tenancy, stochastic incident dynamics, and exposure time, and incorporate it into the DRL reward signal.
+  \item Integrate a GNN-based feature extractor into the DRL policy to capture topology-aware node embeddings that enable globally informed, security posture-conscious placement decisions.
+  \item Evaluate the proposed framework against a risk-minimizing Best-Fit heuristic on comprehensive metrics including acceptance ratio, latency, security margin, substrate utilization, tenancy, and realized incident rates.
 \end{enumerate}
 
 \section{Thesis Contributions}
@@ -77,14 +77,14 @@ This thesis addresses all four gaps through the following research objectives:
 The principal contributions of this thesis are:
 
 \begin{enumerate}
-  \item \textbf{A Maskable PPO framework for SFC placement} with hard action masking that enforces all five constraint types (resource, latency, bandwidth, security, isolation) at every step, guaranteeing the feasibility of every accepted placement.
-  \item \textbf{A composite risk model} integrating VNF tenancy, SFC tenancy, inverse security, stochastic incident dynamics with pressure accumulation and decay, and TTL-proportional exposure into a single normalized risk integral $\rho \in [0,1]$.
-  \item \textbf{A topology-aware GNN feature extractor} (supporting GCN, GAT, and GraphSAGE architectures) with attention-weighted graph aggregation and MLP-based global context fusion, embedded within the Maskable PPO policy.
-  \item \textbf{A windowed acceptance ratio reward modifier} that provides curriculum-style feedback by scaling terminal rewards according to recent placement success rates, improving training stability.
-  \item \textbf{A fair evaluation framework} that aligns the random number generator state across all algorithms so that the RL agent and baseline receive identical SFC request streams, enabling unbiased comparison.
+  \item \textbf{An intelligent Deep Reinforcement Learning framework for security posture aware SFC placement}, instantiated as Maskable PPO, with hard action masking that enforces all five constraint types (resource, latency, bandwidth, security, isolation) at every step, guaranteeing the feasibility of every accepted placement.
+  \item \textbf{A composite security posture and risk model} integrating node security score, incident pressure dynamics, VNF tenancy, SFC tenancy, stochastic incident dynamics with pressure accumulation and decay, and TTL-proportional exposure into a single normalized risk integral $\rho \in [0,1]$.
+  \item \textbf{A topology-aware GNN feature extractor} (supporting GCN, GAT, and GraphSAGE architectures) with attention-weighted graph aggregation and MLP-based global context fusion, embedded within the DRL policy to encode each node's structural role and current security posture.
+  \item \textbf{A windowed acceptance ratio reward modifier} that provides curriculum-style feedback by scaling terminal rewards according to recent placement success rates, improving training stability of the DRL agent.
+  \item \textbf{A fair evaluation framework} that aligns the random number generator state across all algorithms so that the DRL agent and baseline receive identical SFC request streams, enabling unbiased comparison.
   \item \textbf{Comprehensive experimental analysis} across acceptance ratio, latency, security margin, substrate utilization, SFC/VNF tenancy, risk integral, expected and realized incident rates, and incident cost.
 \end{enumerate}
 
 \section{Thesis Organization}
 
-The remainder of this thesis is organized as follows. Chapter~2 provides a review of the relevant literature on NFV/SFC, RL for network resource management, GNNs, action masking, and risk-aware networking. Chapter~3 formalizes the system model and problem formulation, including the MDP definition and risk model. Chapter~4 presents the proposed methodology in detail, covering the Maskable PPO algorithm, GNN feature extractor, reward design, and training procedure. Chapter~5 describes the experimental setup and presents results and analysis. Chapter~6 concludes the thesis and outlines directions for future work.
+The remainder of this thesis is organized as follows. Chapter~2 provides a review of the relevant literature on NFV/SFC, DRL for network resource management, GNNs, action masking, and security posture-aware networking. Chapter~3 formalizes the system model and problem formulation, including the MDP definition and security posture risk model. Chapter~4 presents the proposed methodology in detail, covering the Maskable PPO algorithm as the DRL backbone, the GNN feature extractor, reward design incorporating security posture, and the training procedure. Chapter~5 describes the experimental setup and presents results and analysis. Chapter~6 concludes the thesis and outlines directions for future work.

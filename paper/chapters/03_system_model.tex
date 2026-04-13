@@ -158,25 +158,27 @@ r_T^{\text{rej}} = R_{\text{rej}} \cdot \left(1 + \omega \cdot (1 - \overline{\t
 \end{equation}
 where $R_{\text{rej}} = -1$ is the base rejection penalty. The flipped AR modifier increases the penalty magnitude when the agent has been frequently rejecting (low AR), providing stronger training signal to correct poor behavior.
 
-\section{Risk Model}
+\section{Security Posture and Risk Model}
 
-\subsection{Effective Node Security}
+\subsection{Security Posture Model}
 
-The \textit{effective security} of node $n$ at time $t$ is reduced by accumulated incident pressure $p_n(t)$:
+The \textit{security posture} of a substrate node captures its current vulnerability and resilience state, combining its static security score with the accumulated effect of past security incidents. Formally, the \textit{effective security} of node $n$ at time $t$ is reduced by accumulated incident pressure $p_n(t)$:
 \begin{equation}
 s_n^{\text{eff}}(t) = s_n \cdot \left(1 - \eta \cdot p_n(t)\right),
 \end{equation}
 where $\eta \in [0,1]$ is the security penalty coefficient. When $\eta = 0$ (as in our configuration), effective security equals raw security, but the pressure still blocks nodes when $p_n(t) \geq \theta_{\text{block}}$.
 
-Incident pressure decays geometrically between requests:
+Incident pressure models the temporal degradation of a node's security posture following a security event, and recovers geometrically as the node is remediated:
 \begin{equation}
 p_n(t+1) = \gamma_p \cdot p_n(t),
 \end{equation}
 where $\gamma_p = 0.92$ is the decay factor. Upon a security incident on node $n$, pressure increases: $p_n \leftarrow p_n + \Delta_p$ with $\Delta_p = 0.20$.
 
-\subsection{Risk Integral}
+This dynamic security posture model ensures that the DRL agent's placement decisions reflect the real-time security state of the substrate, not merely its static configuration.
 
-For an accepted placement $\pi_r$ with TTL $\tau_r$, the risk integral $\rho_r \in [0,1]$ is computed as a weighted sum of five components:
+\subsection{Security Posture Risk Integral}
+
+For an accepted placement $\pi_r$ with TTL $\tau_r$, the security posture risk integral $\rho_r \in [0,1]$ is computed as a weighted sum of five components:
 
 \begin{equation}
 \rho_r = \frac{1}{\sum_k w_k} \left( w_1 \rho^{\text{vnf}} + w_2 \rho^{\text{sfc}} + w_3 \rho^{\text{sec}} + w_4 \rho^{\text{inc}} + w_5 \rho^{\text{exp}} \right),
@@ -214,8 +216,8 @@ Incident nodes receive a pressure increment $\Delta_p$.
 
 \section{Optimization Objective}
 
-The agent seeks to maximize the expected cumulative discounted reward over an episode of $T = 300$ requests:
+The DRL agent seeks to maximize the expected cumulative discounted reward over an episode of $T = 300$ requests:
 \begin{equation}
 J(\pi) = \mathbb{E}_{\pi}\!\left[\sum_{t=0}^{T} \gamma^t r_t\right],
 \end{equation}
-with discount factor $\gamma = 0.99$. This objective simultaneously captures acceptance ratio (via the $R_{\text{acc}} / R_{\text{rej}}$ terms), latency efficiency (via intermediate latency penalties), and operational risk (via the $\lambda \rho_r$ penalty), providing a holistic measure of placement quality.
+with discount factor $\gamma = 0.99$. This objective simultaneously captures acceptance ratio (via the $R_{\text{acc}} / R_{\text{rej}}$ terms), latency efficiency (via intermediate latency penalties), and security posture-weighted operational risk (via the $\lambda \rho_r$ penalty), providing a holistic measure of intelligent, security-posture-aware placement quality.

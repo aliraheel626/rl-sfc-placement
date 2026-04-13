@@ -152,19 +152,30 @@ def node_risk_score(
     sfcs_per_node = substrate.get_sfcs_per_node()
     occupied_vnf_nodes = [v for v in vnfs_per_node.values() if v > 0]
     occupied_sfc_nodes = [v for v in sfcs_per_node.values() if v > 0]
-    vnf_ref = max(
-        risk_cfg.get("load_ref_floor", 1.0),
-        float(np.percentile(occupied_vnf_nodes, 75)) if occupied_vnf_nodes else 0.0,
-    )
-    sfc_ref = max(
-        risk_cfg.get("tenancy_ref_floor", 1.0),
-        float(np.percentile(occupied_sfc_nodes, 75)) if occupied_sfc_nodes else 0.0,
-    )
-    vnf_count = float(vnfs_per_node.get(node_id, 0))
-    sfc_count = float(sfcs_per_node.get(node_id, 0))
-    vnf_tenancy_risk = robust_ratio(vnf_count, vnf_ref)
-    sfc_tenancy_risk = robust_ratio(sfc_count, sfc_ref)
+    num_total_nodes = max(len(sfcs_per_node), 1)
 
+    # Concentration-aware tenancy risk (same formula as compute_placement_risk).
+    # substrate_util is shared: any node with SFCs also has VNFs and vice versa.
+    num_occupied = len(occupied_sfc_nodes)
+    substrate_util = num_occupied / num_total_nodes
+
+    total_active_sfcs = sum(sfcs_per_node.values())
+    avg_sfc_tenancy = sum(occupied_sfc_nodes) / num_occupied if occupied_sfc_nodes else 0.0
+    sfc_tenancy_risk = (
+        avg_sfc_tenancy * (1.0 - substrate_util) / total_active_sfcs
+        if total_active_sfcs > 0 else 0.0
+    )
+    sfc_tenancy_risk = min(max(sfc_tenancy_risk, 0.0), 1.0)
+
+    total_active_vnfs = sum(vnfs_per_node.values())
+    avg_vnf_tenancy = sum(occupied_vnf_nodes) / num_occupied if occupied_vnf_nodes else 0.0
+    vnf_tenancy_risk = (
+        avg_vnf_tenancy * (1.0 - substrate_util) / total_active_vnfs
+        if total_active_vnfs > 0 else 0.0
+    )
+    vnf_tenancy_risk = min(max(vnf_tenancy_risk, 0.0), 1.0)
+
+    vnf_count = float(vnfs_per_node.get(node_id, 0))
     load_reference = max(
         risk_cfg.get("load_ref_floor", 1.0),
         float(np.percentile(list(vnfs_per_node.values()), 75)) if vnfs_per_node else 0.0,
@@ -222,23 +233,31 @@ def compute_placement_risk(
     vnfs_per_node = substrate.get_vnfs_per_node()
     occupied_sfc_nodes = [v for v in sfcs_per_node.values() if v > 0]
     occupied_vnf_nodes = [v for v in vnfs_per_node.values() if v > 0]
+    num_total_nodes = max(len(sfcs_per_node), 1)
 
-    avg_sfc_tenancy = (
-        sum(occupied_sfc_nodes) / len(occupied_sfc_nodes) if occupied_sfc_nodes else 0.0
+    # Concentration-aware tenancy risk:
+    #   risk = avg_tenancy_occupied × (1 − substrate_util) / total_active
+    # High tenancy on few nodes while many nodes are idle → high risk.
+    # High tenancy when most nodes are occupied → lower risk (packing unavoidable).
+    # substrate_util is shared: any node with SFCs also has VNFs and vice versa.
+    num_occupied = len(occupied_sfc_nodes)
+    substrate_util = num_occupied / num_total_nodes
+
+    total_active_sfcs = sum(sfcs_per_node.values())
+    avg_sfc_tenancy = sum(occupied_sfc_nodes) / num_occupied if occupied_sfc_nodes else 0.0
+    sfc_tenancy_risk = (
+        avg_sfc_tenancy * (1.0 - substrate_util) / total_active_sfcs
+        if total_active_sfcs > 0 else 0.0
     )
-    avg_vnf_tenancy = (
-        sum(occupied_vnf_nodes) / len(occupied_vnf_nodes) if occupied_vnf_nodes else 0.0
+    sfc_tenancy_risk = min(max(sfc_tenancy_risk, 0.0), 1.0)
+
+    total_active_vnfs = sum(vnfs_per_node.values())
+    avg_vnf_tenancy = sum(occupied_vnf_nodes) / num_occupied if occupied_vnf_nodes else 0.0
+    vnf_tenancy_risk = (
+        avg_vnf_tenancy * (1.0 - substrate_util) / total_active_vnfs
+        if total_active_vnfs > 0 else 0.0
     )
-    sfc_reference = max(
-        risk_cfg["tenancy_ref_floor"],
-        float(np.percentile(occupied_sfc_nodes, 75)) if occupied_sfc_nodes else 0.0,
-    )
-    vnf_reference = max(
-        risk_cfg["tenancy_ref_floor"],
-        float(np.percentile(occupied_vnf_nodes, 75)) if occupied_vnf_nodes else 0.0,
-    )
-    sfc_tenancy_risk = robust_ratio(avg_sfc_tenancy, sfc_reference)
-    vnf_tenancy_risk = robust_ratio(avg_vnf_tenancy, vnf_reference)
+    vnf_tenancy_risk = min(max(vnf_tenancy_risk, 0.0), 1.0)
 
     placement_nodes = sorted(set(placement))
     n_nodes = len(placement_nodes)

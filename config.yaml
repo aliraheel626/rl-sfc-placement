@@ -75,7 +75,7 @@ sfc:
 
 # Training Configuration (PPO tuning for create_maskable_ppo)
 training:
-  total_timesteps: 100000
+  total_timesteps: 200000
   # Learning rate: constant 1e-4, or linear decay from 3e-4 (set use_linear_lr_schedule: true)
   learning_rate: 0.0001 # 1e-4 (final value when using schedule)
   use_linear_lr_schedule: false
@@ -102,14 +102,14 @@ rewards:
 # Risk + Incident realism (full replacement model)
 risk:
   enabled: true
-  lambda: 4 # Reward penalty: reward -= lambda * risk_integral
+  lambda: 20 # Reward penalty: reward -= lambda * risk_integral
 
   # Risk composition weights (normalized internally by sum of weights)
-  w_vnf_tenancy: 0.22
-  w_sfc_tenancy: 0.18
-  w_inverse_security: 0.22
-  w_incidents: 0.28
-  w_exposure: 0.10
+  w_vnf_tenancy: 0.18
+  w_sfc_tenancy: 0.14
+  w_inverse_security: 0.40
+  w_incidents: 0.20
+  w_exposure: 0.08
 
   # Robust normalization floors (scale-aware and topology-agnostic)
   tenancy_ref_floor: 1.0

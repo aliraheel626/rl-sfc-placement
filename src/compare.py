@@ -264,7 +264,7 @@ def evaluate_baseline(
     avg_incident_cost = total_incident_cost / total if total > 0 else 0.0
     avg_risk_integral = total_risk_integral / total if total > 0 else 0.0
 
-    # Baselines do not track rejection reason; use 0 for latency violation ratio
+        # Baselines do not track rejection reason; use 0 for latency violation ratio
     latency_violation_ratio = 0.0
 
     return {
@@ -293,6 +293,7 @@ def evaluate_baseline(
         "risk_score_samples": risk_score_samples,
         "realized_incident_samples": realized_incident_samples,
         "incident_cost_samples": incident_cost_samples,
+        "security_margin_samples": security_margins,
     }
 
 
@@ -528,6 +529,7 @@ def evaluate_rl_agent(
         "risk_score_samples": risk_score_samples,
         "realized_incident_samples": realized_incident_samples,
         "incident_cost_samples": incident_cost_samples,
+        "security_margin_samples": security_margins,
     }
 
 # BOOKMARK, IMPORTANT: THIS IS THE FUNCTION THAT IS USED TO EVALUATE THE RL AGENT.
@@ -840,15 +842,7 @@ def plot_comparison_models(
         "sfc_ppo_acceptance_ratio.png",
     )
 
-    # 2) Latency violation ratio (fraction of rejections caused by latency)
-    _bar_chart(
-        "latency_violation_ratio",
-        "Latency Violations / Total Rejections",
-        "Latency Violation Ratio by Algorithm (comparison)",
-        "sfc_ppo_rejection_ratio.png",
-    )
-
-    # 3) Risk integral (rolling)
+    # 2) Risk integral (rolling)
     _rolling_chart(
         "risk_score_samples",
         "Risk Integral (lower is better)",
@@ -856,7 +850,7 @@ def plot_comparison_models(
         "sfc_risk_training.png",
     )
 
-    # 4) Substrate utilisation (rolling)
+    # 3) Substrate utilisation (rolling)
     _rolling_chart(
         "substrate_utilization_samples",
         "Substrate Utilisation",
@@ -865,7 +859,7 @@ def plot_comparison_models(
         as_percent=True,
     )
 
-    # 5) SFCs per occupied node (rolling)
+    # 4) SFCs per occupied node (rolling)
     _rolling_chart(
         "sfc_tenancy_samples",
         "Avg SFCs per Occupied Node",
@@ -873,12 +867,36 @@ def plot_comparison_models(
         "sfc_per_node_training.png",
     )
 
-    # 6) VNFs per occupied node (rolling)
+    # 5) VNFs per occupied node (rolling)
     _rolling_chart(
         "vnf_tenancy_samples",
         "Avg VNFs per Occupied Node",
         f"Avg VNFs per Occupied Node over Requests (window={window_size})",
         "vnf_per_node_training.png",
+    )
+
+    # 6) Avg security margin (rolling)
+    _rolling_chart(
+        "security_margin_samples",
+        "Avg Security Margin (node score − req min)",
+        f"Avg Security Margin over Requests (window={window_size})",
+        "security_score_training.png",
+    )
+
+    # 7) Avg realized incidents per request (rolling)
+    _rolling_chart(
+        "realized_incident_samples",
+        "Avg Realized Incidents per Request",
+        f"Avg Realized Incidents over Requests (window={window_size})",
+        "realized_incidents_training.png",
+    )
+
+    # 8) Avg incident cost per request (rolling)
+    _rolling_chart(
+        "incident_cost_samples",
+        "Avg Incident Cost per Request",
+        f"Avg Incident Cost over Requests (window={window_size})",
+        "incident_cost_training.png",
     )
 
 
@@ -1014,6 +1032,9 @@ def run_multi_episode_eval(
         "avg_sfc_tenancy",
         "avg_vnf_tenancy",
         "avg_substrate_utilization",
+        "avg_sec_margin",
+        "avg_realized_incidents",
+        "avg_incident_cost",
     ]
 
     import copy
@@ -1094,10 +1115,12 @@ def plot_comparison_episodes(
     ma_colors = {
         "acceptance_ratio": "orange",
         "avg_risk_integral": "purple",
-        "latency_violation_ratio": "darkred",
         "avg_substrate_utilization": "indigo",
         "avg_sfc_tenancy": "darkblue",
         "avg_vnf_tenancy": "darkgreen",
+        "avg_sec_margin": "teal",
+        "avg_realized_incidents": "saddlebrown",
+        "avg_incident_cost": "firebrick",
     }
 
     def _moving_avg(y, window):
@@ -1161,13 +1184,6 @@ def plot_comparison_episodes(
         "sfc_risk_training.png",
     )
     _ep_plot(
-        "latency_violation_ratio",
-        "Latency Violations / Total Rejections",
-        "Latency Violation % of Rejections vs Episode",
-        "sfc_ppo_rejection_ratio.png",
-        ylim=(0, 1.05),
-    )
-    _ep_plot(
         "avg_substrate_utilization",
         "Substrate Utilisation",
         "Substrate Utilisation vs Episode Number",
@@ -1186,6 +1202,24 @@ def plot_comparison_episodes(
         "Avg VNFs per Occupied Node",
         "Avg VNFs per Occupied Node vs Episode Number",
         "vnf_per_node_training.png",
+    )
+    _ep_plot(
+        "avg_sec_margin",
+        "Avg Security Margin (node score − req min)",
+        "Avg Security Margin vs Episode Number",
+        "security_score_training.png",
+    )
+    _ep_plot(
+        "avg_realized_incidents",
+        "Avg Realized Incidents per Request",
+        "Avg Realized Incidents vs Episode Number",
+        "realized_incidents_training.png",
+    )
+    _ep_plot(
+        "avg_incident_cost",
+        "Avg Incident Cost per Request",
+        "Avg Incident Cost vs Episode Number",
+        "incident_cost_training.png",
     )
 
 
@@ -1302,11 +1336,11 @@ def main():
         # lower-is-better metrics: negative diff means PPO wins (flagged accordingly)
         METRICS = [
             ("acceptance_ratio",          "Acceptance Ratio",       True),
-            ("latency_violation_ratio",   "Latency Violation Ratio",False),
             ("avg_risk_integral",         "Avg Risk Integral",      False),
             ("avg_substrate_utilization", "Substrate Utilisation",  True),
             ("avg_sfc_tenancy",           "Avg SFCs / Node",        True),
-            ("avg_vnf_tenancy",           "Avg VNFs / Node",        True),
+            ("avg_vnf_tenancy",           "Avg VNFs / Node",        False),
+            ("avg_sec_margin",            "Avg Security Margin",    True),
         ]
 
         col_w = [32, 14, 14, 12, 10]

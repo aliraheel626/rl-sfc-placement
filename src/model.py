@@ -931,19 +931,16 @@ class TrainingEvalCallback(BaseCallback):
                     if algo_name not in self.by_algo:
                         self.by_algo[algo_name] = {
                             "acceptance_ratio": [],
-                            "latency_violation_ratio": [],
                             "avg_sfc_tenancy": [],
                             "avg_vnf_tenancy": [],
                             "avg_substrate_utilization": [],
                             "avg_risk_integral": [],
                             "avg_realized_incidents": [],
                             "avg_incident_cost": [],
+                            "avg_sec_margin": [],
                         }
                     self.by_algo[algo_name]["acceptance_ratio"].append(
                         res["acceptance_ratio"]
-                    )
-                    self.by_algo[algo_name]["latency_violation_ratio"].append(
-                        res.get("latency_violation_ratio", 0.0)
                     )
                     self.by_algo[algo_name]["avg_sfc_tenancy"].append(
                         res.get("avg_sfc_tenancy", 0.0)
@@ -962,6 +959,9 @@ class TrainingEvalCallback(BaseCallback):
                     )
                     self.by_algo[algo_name]["avg_incident_cost"].append(
                         res.get("avg_incident_cost", 0.0)
+                    )
+                    self.by_algo[algo_name]["avg_sec_margin"].append(
+                        res.get("avg_sec_margin", 0.0)
                     )
 
                 if self.logger is not None:
@@ -1072,43 +1072,7 @@ class TrainingEvalCallback(BaseCallback):
         plt.savefig(os.path.join(self.save_dir, "sfc_risk_training.png"))
         plt.close()
 
-        # 3) Latency violation ratio
-        fig, ax = plt.subplots(figsize=(10, 6))
-        for algo in algos:
-            vals = self.by_algo[algo]["latency_violation_ratio"]
-            ax.plot(
-                self.episodes,
-                vals,
-                alpha=0.6,
-                label=algo,
-                linewidth=0.5,
-                color=color_map[algo],
-            )
-            if algo == "MaskablePPO" and len(vals) > 10:
-                window = min(50, len(vals) // 5)
-                if window > 1:
-                    x_ma, y_ma = moving_avg(vals, window)
-                    if x_ma is not None:
-                        ax.plot(
-                            x_ma,
-                            y_ma,
-                            color="darkred",
-                            linewidth=2,
-                            label=f"Moving Avg ({window} ep)",
-                        )
-        ax.set_title(
-            "Latency Violation % of Rejections vs Episode (eval 1000 req/episode)"
-        )
-        ax.set_xlabel("Episode")
-        ax.set_ylabel("Latency Violations / Total Rejections")
-        ax.set_ylim(0, 1.05)
-        ax.grid(True, linestyle="--", alpha=0.7)
-        ax.legend()
-        plt.tight_layout()
-        plt.savefig(os.path.join(self.save_dir, "sfc_ppo_rejection_ratio.png"))
-        plt.close()
-
-        # 4) Substrate utilization
+        # 3) Substrate utilization
         fig, ax = plt.subplots(figsize=(10, 6))
         for algo in algos:
             vals = self.by_algo[algo]["avg_substrate_utilization"]
@@ -1215,6 +1179,117 @@ class TrainingEvalCallback(BaseCallback):
         ax.legend()
         plt.tight_layout()
         plt.savefig(os.path.join(self.save_dir, "vnf_per_node_training.png"))
+        plt.close()
+
+        # 7) Avg security margin
+        fig, ax = plt.subplots(figsize=(10, 6))
+        for algo in algos:
+            vals = self.by_algo[algo].get("avg_sec_margin", [])
+            if not vals:
+                continue
+            ax.plot(
+                self.episodes,
+                vals,
+                alpha=0.6,
+                label=algo,
+                linewidth=0.5,
+                color=color_map[algo],
+            )
+            if algo == "MaskablePPO" and len(vals) > 10:
+                window = min(50, len(vals) // 5)
+                if window > 1:
+                    x_ma, y_ma = moving_avg(vals, window)
+                    if x_ma is not None:
+                        ax.plot(
+                            x_ma,
+                            y_ma,
+                            color="teal",
+                            linewidth=2,
+                            label=f"Moving Avg ({window} ep)",
+                        )
+        ax.set_title(
+            "Avg Security Margin vs Episode Number (eval 1000 req/episode)"
+        )
+        ax.set_xlabel("Episode")
+        ax.set_ylabel("Avg Security Margin (node score \u2212 req min)")
+        ax.grid(True, linestyle="--", alpha=0.7)
+        ax.legend()
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.save_dir, "security_score_training.png"))
+        plt.close()
+
+        # 8) Avg realized incidents per request
+        fig, ax = plt.subplots(figsize=(10, 6))
+        for algo in algos:
+            vals = self.by_algo[algo].get("avg_realized_incidents", [])
+            if not vals:
+                continue
+            ax.plot(
+                self.episodes,
+                vals,
+                alpha=0.6,
+                label=algo,
+                linewidth=0.5,
+                color=color_map[algo],
+            )
+            if algo == "MaskablePPO" and len(vals) > 10:
+                window = min(50, len(vals) // 5)
+                if window > 1:
+                    x_ma, y_ma = moving_avg(vals, window)
+                    if x_ma is not None:
+                        ax.plot(
+                            x_ma,
+                            y_ma,
+                            color="saddlebrown",
+                            linewidth=2,
+                            label=f"Moving Avg ({window} ep)",
+                        )
+        ax.set_title(
+            "Avg Realized Incidents vs Episode Number (eval 1000 req/episode)"
+        )
+        ax.set_xlabel("Episode")
+        ax.set_ylabel("Avg Realized Incidents per Request")
+        ax.grid(True, linestyle="--", alpha=0.7)
+        ax.legend()
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.save_dir, "realized_incidents_training.png"))
+        plt.close()
+
+        # 9) Avg incident cost per request
+        fig, ax = plt.subplots(figsize=(10, 6))
+        for algo in algos:
+            vals = self.by_algo[algo].get("avg_incident_cost", [])
+            if not vals:
+                continue
+            ax.plot(
+                self.episodes,
+                vals,
+                alpha=0.6,
+                label=algo,
+                linewidth=0.5,
+                color=color_map[algo],
+            )
+            if algo == "MaskablePPO" and len(vals) > 10:
+                window = min(50, len(vals) // 5)
+                if window > 1:
+                    x_ma, y_ma = moving_avg(vals, window)
+                    if x_ma is not None:
+                        ax.plot(
+                            x_ma,
+                            y_ma,
+                            color="firebrick",
+                            linewidth=2,
+                            label=f"Moving Avg ({window} ep)",
+                        )
+        ax.set_title(
+            "Avg Incident Cost vs Episode Number (eval 1000 req/episode)"
+        )
+        ax.set_xlabel("Episode")
+        ax.set_ylabel("Avg Incident Cost per Request")
+        ax.grid(True, linestyle="--", alpha=0.7)
+        ax.legend()
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.save_dir, "incident_cost_training.png"))
         plt.close()
 
         if self.verbose > 1:

@@ -47,17 +47,32 @@ def decay_incident_pressure(
             node_incident_pressure[node_id] = 0.0
 
 
+def decrement_node_downtime(node_downtime: dict[int, int]) -> None:
+    """Decrement downtime counters by one request tick. Remove when zero."""
+    for node_id in list(node_downtime.keys()):
+        if node_downtime[node_id] > 0:
+            node_downtime[node_id] -= 1
+        if node_downtime[node_id] <= 0:
+            del node_downtime[node_id]
+
+
 def apply_incident_view(
     substrate: SubstrateNetwork,
     node_incident_pressure: dict[int, float],
     risk_cfg: dict,
     max_security: float,
+    node_downtime: dict[int, int] | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
-    Temporarily project incident pressure into substrate feasibility fields
-    so baseline planners see the same temporary node degradation as RL masking.
+    Temporarily project incident state into substrate feasibility fields
+    so baseline planners see the same node degradation as RL masking.
+
+    Nodes with active downtime (node_downtime[i] > 0) have their resources
+    zeroed so baselines cannot place on them, mirroring the RL action mask.
     Returns backups for restore_incident_view.
     """
+    if node_downtime is None:
+        node_downtime = {}
     original_resource_matrix = substrate.resource_matrix.copy()
     original_security = np.array(
         [substrate.node_resources[i]["security_score"] for i in range(substrate.num_nodes)],
@@ -76,9 +91,7 @@ def apply_incident_view(
         dtype=np.float32,
     )
     penalty = risk_cfg["incident_security_penalty"]
-    block_threshold = risk_cfg["incident_block_threshold"]
     for node_id in range(substrate.num_nodes):
-        pressure = node_incident_pressure.get(node_id, 0.0)
         eff_security, _ = effective_node_security(
             substrate,
             node_id,
@@ -88,7 +101,7 @@ def apply_incident_view(
         )
         substrate.node_resources[node_id]["security_score"] = eff_security
         substrate.resource_matrix[node_id, 3] = eff_security
-        if pressure >= block_threshold:
+        if node_downtime.get(node_id, 0) > 0:
             substrate.node_resources[node_id]["ram"] = 0.0
             substrate.node_resources[node_id]["cpu"] = 0.0
             substrate.node_resources[node_id]["storage"] = 0.0
@@ -179,6 +192,7 @@ def compute_placement_risk_score(
     max_security: float,
     max_ttl: int,
     node_incident_pressure: dict[int, float],
+    node_downtime: dict[int, int],
 ) -> tuple[float, float, float, float]:
     """
     TTL-aware expected-loss risk integral and stochastic incident metrics.
@@ -186,8 +200,16 @@ def compute_placement_risk_score(
     risk_integral is fully deterministic:
         risk = min(mean_i(p_base_i × sfcs_i) × exposure_steps / T_max, 1.0)
 
-    Monte Carlo rolls are retained only to produce realized_incidents / incident_cost.
-    Mutates node_incident_pressure in-place when incidents occur.
+    Monte Carlo rolls produce realized_incidents and trigger node downtime.
+    When a node takes a hit it is marked unavailable for incident_downtime_steps
+    request ticks (mutates node_downtime in-place).
+
+    incident_cost = Σ_{nodes_with_hits} sfcs_on_node × revenue_per_ttl_step
+                    × incident_downtime_steps
+    This reflects revenue lost by ALL SFCs on the downed node, not just the
+    current request.
+
+    Mutates node_incident_pressure and node_downtime in-place.
 
     Returns:
         (risk_integral, realized_incidents, incident_cost, expected_incidents)
@@ -237,7 +259,12 @@ def compute_placement_risk_score(
     hits = rolls < p_base[np.newaxis, :]
     expected_incidents = float(p_base.sum() * exposure_steps)
     realized_incidents = float(hits.sum())
+
+    revenue_per_ttl_step = risk_cfg.get("revenue_per_ttl_step", 1.0)
+    downtime_steps = int(risk_cfg.get("incident_downtime_steps", 2))
     pressure_gain = risk_cfg["incident_pressure_gain"]
+    incident_cost = 0.0
+
     for idx, node_id in enumerate(placement_nodes):
         node_hits = int(hits[:, idx].sum())
         if node_hits > 0:
@@ -245,8 +272,13 @@ def compute_placement_risk_score(
                 1.0,
                 node_incident_pressure.get(node_id, 0.0) + pressure_gain * node_hits,
             )
+            # Mark node unavailable for downtime_steps request ticks.
+            node_downtime[node_id] = max(
+                node_downtime.get(node_id, 0), downtime_steps
+            )
+            # Revenue lost = every SFC on this node loses downtime_steps ticks of revenue.
+            incident_cost += sfc_counts[idx] * revenue_per_ttl_step * downtime_steps
 
-    incident_cost = realized_incidents * risk_cfg["incident_cost_per_event"]
     return (
         float(risk_integral),
         float(realized_incidents),

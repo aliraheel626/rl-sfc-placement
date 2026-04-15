@@ -937,6 +937,9 @@ class TrainingEvalCallback(BaseCallback):
                             "avg_risk_integral": [],
                             "avg_realized_incidents": [],
                             "avg_incident_cost": [],
+                            "total_realized_incidents": [],
+                            "total_incident_cost": [],
+                            "total_revenue": [],
                             "avg_sec_margin": [],
                         }
                     self.by_algo[algo_name]["acceptance_ratio"].append(
@@ -959,6 +962,15 @@ class TrainingEvalCallback(BaseCallback):
                     )
                     self.by_algo[algo_name]["avg_incident_cost"].append(
                         res.get("avg_incident_cost", 0.0)
+                    )
+                    self.by_algo[algo_name]["total_realized_incidents"].append(
+                        res.get("total_realized_incidents", 0.0)
+                    )
+                    self.by_algo[algo_name]["total_incident_cost"].append(
+                        res.get("total_incident_cost", 0.0)
+                    )
+                    self.by_algo[algo_name]["total_revenue"].append(
+                        res.get("total_revenue", 0.0)
                     )
                     self.by_algo[algo_name]["avg_sec_margin"].append(
                         res.get("avg_sec_margin", 0.0)
@@ -1218,10 +1230,10 @@ class TrainingEvalCallback(BaseCallback):
         plt.savefig(os.path.join(self.save_dir, "security_score_training.png"))
         plt.close()
 
-        # 8) Avg realized incidents per request
+        # 8) Total realized incidents per episode
         fig, ax = plt.subplots(figsize=(10, 6))
         for algo in algos:
-            vals = self.by_algo[algo].get("avg_realized_incidents", [])
+            vals = self.by_algo[algo].get("total_realized_incidents", [])
             if not vals:
                 continue
             ax.plot(
@@ -1245,20 +1257,20 @@ class TrainingEvalCallback(BaseCallback):
                             label=f"Moving Avg ({window} ep)",
                         )
         ax.set_title(
-            "Avg Realized Incidents vs Episode Number (eval 1000 req/episode)"
+            "Total Realized Incidents vs Episode Number (eval 1000 req/episode)"
         )
         ax.set_xlabel("Episode")
-        ax.set_ylabel("Avg Realized Incidents per Request")
+        ax.set_ylabel("Total Realized Incidents (episode sum)")
         ax.grid(True, linestyle="--", alpha=0.7)
         ax.legend()
         plt.tight_layout()
         plt.savefig(os.path.join(self.save_dir, "realized_incidents_training.png"))
         plt.close()
 
-        # 9) Avg incident cost per request
+        # 9) Total incident cost per episode
         fig, ax = plt.subplots(figsize=(10, 6))
         for algo in algos:
-            vals = self.by_algo[algo].get("avg_incident_cost", [])
+            vals = self.by_algo[algo].get("total_incident_cost", [])
             if not vals:
                 continue
             ax.plot(
@@ -1282,14 +1294,51 @@ class TrainingEvalCallback(BaseCallback):
                             label=f"Moving Avg ({window} ep)",
                         )
         ax.set_title(
-            "Avg Incident Cost vs Episode Number (eval 1000 req/episode)"
+            "Total Incident Cost vs Episode Number (eval 1000 req/episode)"
         )
         ax.set_xlabel("Episode")
-        ax.set_ylabel("Avg Incident Cost per Request")
+        ax.set_ylabel("Total Incident Cost (episode sum)")
         ax.grid(True, linestyle="--", alpha=0.7)
         ax.legend()
         plt.tight_layout()
         plt.savefig(os.path.join(self.save_dir, "incident_cost_training.png"))
+        plt.close()
+
+        # 10) Total revenue per episode
+        fig, ax = plt.subplots(figsize=(10, 6))
+        for algo in algos:
+            vals = self.by_algo[algo].get("total_revenue", [])
+            if not vals:
+                continue
+            ax.plot(
+                self.episodes,
+                vals,
+                alpha=0.6,
+                label=algo,
+                linewidth=0.5,
+                color=color_map[algo],
+            )
+            if algo == "MaskablePPO" and len(vals) > 10:
+                window = min(50, len(vals) // 5)
+                if window > 1:
+                    x_ma, y_ma = moving_avg(vals, window)
+                    if x_ma is not None:
+                        ax.plot(
+                            x_ma,
+                            y_ma,
+                            color="seagreen",
+                            linewidth=2,
+                            label=f"Moving Avg ({window} ep)",
+                        )
+        ax.set_title(
+            "Total Revenue vs Episode Number (eval 1000 req/episode)"
+        )
+        ax.set_xlabel("Episode")
+        ax.set_ylabel("Total Revenue (episode sum, higher is better)")
+        ax.grid(True, linestyle="--", alpha=0.7)
+        ax.legend()
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.save_dir, "revenue_training.png"))
         plt.close()
 
         if self.verbose > 1:

@@ -24,6 +24,7 @@ from src.risk import (
     compute_node_risk_score,
     compute_placement_risk_score,
     decay_incident_pressure,
+    decrement_node_downtime,
     effective_node_security,
     robust_ratio,
 )
@@ -124,11 +125,11 @@ class SFCPlacementEnv(gym.Env):
         self.incident_steps_cap = int(risk_cfg.get("incident_steps_cap", 12))
         self.incident_pressure_gain = float(risk_cfg.get("incident_pressure_gain", 0.20))
         self.incident_pressure_decay = float(risk_cfg.get("incident_pressure_decay", 0.92))
-        self.incident_block_threshold = float(risk_cfg.get("incident_block_threshold", 0.85))
+        self.incident_downtime_steps = int(risk_cfg.get("incident_downtime_steps", 2))
         self.incident_security_penalty = float(
             risk_cfg.get("incident_security_penalty", 0.60)
         )
-        self.incident_cost_per_event = float(risk_cfg.get("incident_cost_per_event", 0.2))
+        self.revenue_per_ttl_step = float(risk_cfg.get("revenue_per_ttl_step", 1.0))
         self.incident_cost_reward_scale = float(
             risk_cfg.get("incident_cost_reward_scale", 0.05)
         )
@@ -166,6 +167,7 @@ class SFCPlacementEnv(gym.Env):
         self.episode_expected_incidents: list[float] = []
         self.episode_incident_costs: list[float] = []
         self.episode_risk_integrals: list[float] = []
+        self.episode_revenues: list[float] = []
 
         # Global statistics tracking (across all episodes)
         self.total_requests = 0
@@ -175,7 +177,9 @@ class SFCPlacementEnv(gym.Env):
         self.total_incident_cost: float = 0.0
         self.total_expected_incidents: float = 0.0
         self.total_risk_integral: float = 0.0
+        self.total_revenue: float = 0.0
         self.node_incident_pressure: dict[int, float] = {}
+        self.node_downtime: dict[int, int] = {}
 
         # Rejection reason tracking
         self.rejection_reasons = {
@@ -267,7 +271,9 @@ class SFCPlacementEnv(gym.Env):
         self.episode_expected_incidents = []
         self.episode_incident_costs = []
         self.episode_risk_integrals = []
+        self.episode_revenues = []
         self.node_incident_pressure = {node_id: 0.0 for node_id in range(self.num_nodes)}
+        self.node_downtime = {}
         self.total_episodes += 1
 
         # Generate first SFC request for this episode
@@ -286,6 +292,7 @@ class SFCPlacementEnv(gym.Env):
         decay_incident_pressure(
             self.node_incident_pressure, self.incident_pressure_decay
         )
+        decrement_node_downtime(self.node_downtime)
 
         # Generate new SFC request
         self.current_request = self.request_generator.generate_request()
@@ -395,6 +402,9 @@ class SFCPlacementEnv(gym.Env):
         self.total_expected_incidents += expected_incidents
         self.total_incident_cost += incident_cost
         self.total_risk_integral += risk_integral
+        request_revenue = self.revenue_per_ttl_step * (self.current_request.ttl if self.current_request is not None else 1)
+        self.episode_revenues.append(request_revenue)
+        self.total_revenue += request_revenue
         reward = (
             self.acceptance_reward
             - self.risk_lambda * risk_integral
@@ -424,6 +434,7 @@ class SFCPlacementEnv(gym.Env):
         info["request_expected_incidents"] = expected_incidents
         info["request_incidents"] = realized_incidents
         info["request_incident_cost"] = incident_cost
+        info["request_revenue"] = request_revenue
         return observation, reward, terminated, False, info
 
     def _handle_rejection(
@@ -439,6 +450,7 @@ class SFCPlacementEnv(gym.Env):
         self.episode_incidents.append(realized_incidents)
         self.episode_expected_incidents.append(expected_incidents)
         self.episode_incident_costs.append(incident_cost)
+        self.episode_revenues.append(0.0)
 
         # Track rejection reason
         self.episode_rejections += 1
@@ -510,7 +522,8 @@ class SFCPlacementEnv(gym.Env):
             "incident_beta": self.incident_beta,
             "incident_pressure_gain": self.incident_pressure_gain,
             "incident_security_penalty": self.incident_security_penalty,
-            "incident_cost_per_event": self.incident_cost_per_event,
+            "revenue_per_ttl_step": self.revenue_per_ttl_step,
+            "incident_downtime_steps": self.incident_downtime_steps,
         }
 
     def _compute_request_risk(
@@ -526,6 +539,7 @@ class SFCPlacementEnv(gym.Env):
             self.max_security,
             self.max_ttl,
             self.node_incident_pressure,
+            self.node_downtime,
         )
 
     def _sample_substrate_metrics(self):
@@ -833,6 +847,7 @@ class SFCPlacementEnv(gym.Env):
             if self.episode_incident_costs
             else 0.0
         )
+        episode_total_revenue = sum(self.episode_revenues)
         episode_avg_risk_integral = (
             sum(self.episode_risk_integrals) / len(self.episode_risk_integrals)
             if self.episode_risk_integrals
@@ -862,6 +877,7 @@ class SFCPlacementEnv(gym.Env):
             "episode_avg_incidents": episode_avg_incidents,
             "episode_avg_expected_incidents": episode_avg_expected_incidents,
             "episode_avg_incident_cost": episode_avg_incident_cost,
+            "episode_total_revenue": episode_total_revenue,
             "episode_avg_risk_integral": episode_avg_risk_integral,
             # Global stats
             "total_requests": self.total_requests,
@@ -870,6 +886,7 @@ class SFCPlacementEnv(gym.Env):
             "total_incidents": self.total_incidents,
             "total_expected_incidents": self.total_expected_incidents,
             "total_incident_cost": self.total_incident_cost,
+            "total_revenue": self.total_revenue,
             "total_risk_integral": self.total_risk_integral,
             "acceptance_ratio": (
                 self.accepted_requests / self.total_requests
@@ -883,7 +900,7 @@ class SFCPlacementEnv(gym.Env):
         """Check if an action is valid for the current state."""
         if action < 0 or action >= self.num_nodes:
             return False  # Padded nodes or out-of-range
-        if self.node_incident_pressure.get(action, 0.0) >= self.incident_block_threshold:
+        if self.node_downtime.get(action, 0) > 0:
             return False
 
         current_vnf = self.current_request.vnfs[self.current_vnf_index]
@@ -955,7 +972,7 @@ class SFCPlacementEnv(gym.Env):
         feasible_mask = self.substrate.get_feasible_nodes(current_vnf, min_security)
         feasible_indices = np.where(feasible_mask)[0]
         for node_id in feasible_indices:
-            if self.node_incident_pressure.get(node_id, 0.0) >= self.incident_block_threshold:
+            if self.node_downtime.get(node_id, 0) > 0:
                 feasible_mask[node_id] = False
                 continue
             eff_sec, _ = effective_node_security(

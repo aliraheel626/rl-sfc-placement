@@ -26,6 +26,7 @@ from src.risk import (
     apply_incident_view,
     compute_placement_risk_score,
     decay_incident_pressure,
+    decrement_node_downtime,
     restore_incident_view,
 )
 
@@ -44,8 +45,8 @@ def _build_risk_config(config: dict) -> dict:
         "incident_pressure_gain": float(risk.get("incident_pressure_gain", 0.20)),
         "incident_pressure_decay": float(risk.get("incident_pressure_decay", 0.92)),
         "incident_security_penalty": float(risk.get("incident_security_penalty", 0.60)),
-        "incident_cost_per_event": float(risk.get("incident_cost_per_event", 0.2)),
-        "incident_block_threshold": float(risk.get("incident_block_threshold", 0.85)),
+        "revenue_per_ttl_step": float(risk.get("revenue_per_ttl_step", 1.0)),
+        "incident_downtime_steps": int(risk.get("incident_downtime_steps", 2)),
         "risk_lambda": float(risk.get("lambda", 0.0)),
     }
 
@@ -93,7 +94,9 @@ def evaluate_baseline(
     total_realized_incidents = 0.0
     total_incident_cost = 0.0
     total_risk_integral = 0.0
+    total_revenue = 0.0
     node_incident_pressure = {node_id: 0.0 for node_id in range(substrate_copy.num_nodes)}
+    node_downtime: dict[int, int] = {}
 
     start_time = time.perf_counter()
 
@@ -108,6 +111,7 @@ def evaluate_baseline(
             node_incident_pressure,
             risk_cfg["incident_pressure_decay"],
         )
+        decrement_node_downtime(node_downtime)
 
         # Generate a new request
         request = request_generator.generate_request()
@@ -124,6 +128,7 @@ def evaluate_baseline(
             node_incident_pressure,
             risk_cfg,
             max_security,
+            node_downtime,
         )
         placement = algorithm.place(
             substrate_copy,
@@ -190,6 +195,7 @@ def evaluate_baseline(
                 max_security,
                 max_ttl,
                 node_incident_pressure,
+                node_downtime,
             )
             risk_score_samples.append(risk_integral)
             realized_incident_samples.append(realized_incidents)
@@ -198,6 +204,7 @@ def evaluate_baseline(
             total_realized_incidents += realized_incidents
             total_incident_cost += incident_cost
             total_risk_integral += risk_integral
+            total_revenue += risk_cfg.get("revenue_per_ttl_step", 1.0) * request.ttl
 
         # Sample tenancy metrics after each request (regardless of accept/reject)
         sfcs_per_node = substrate_copy.get_sfcs_per_node()
@@ -280,6 +287,9 @@ def evaluate_baseline(
         "avg_expected_incidents": avg_expected_incidents,
         "avg_realized_incidents": avg_realized_incidents,
         "avg_incident_cost": avg_incident_cost,
+        "total_realized_incidents": total_realized_incidents,
+        "total_incident_cost": total_incident_cost,
+        "total_revenue": total_revenue,
         "latencies": latencies,
         # Per-request samples for rolling average plots
         "sfc_tenancy_samples": sfc_tenancy_samples,
@@ -356,6 +366,7 @@ def evaluate_rl_agent(
     total_realized_incidents = 0.0
     total_incident_cost = 0.0
     total_risk_integral = 0.0
+    total_revenue = 0.0
 
     # Reset environment once
     obs, info = env.reset()
@@ -425,6 +436,7 @@ def evaluate_rl_agent(
                 total_realized_incidents += realized_incidents
                 total_incident_cost += incident_cost
                 total_risk_integral += risk_score
+                total_revenue += info.get("request_revenue", 0.0)
             else:
                 rejected += 1
                 if info.get("rejection_reason") == "latency_violation":
@@ -516,6 +528,9 @@ def evaluate_rl_agent(
         "avg_expected_incidents": avg_expected_incidents,
         "avg_realized_incidents": avg_realized_incidents,
         "avg_incident_cost": avg_incident_cost,
+        "total_realized_incidents": total_realized_incidents,
+        "total_incident_cost": total_incident_cost,
+        "total_revenue": total_revenue,
         "latencies": latencies,
         # Per-request samples for rolling average plots
         "sfc_tenancy_samples": sfc_tenancy_samples,
@@ -1030,6 +1045,9 @@ def run_multi_episode_eval(
         "avg_sec_margin",
         "avg_realized_incidents",
         "avg_incident_cost",
+        "total_realized_incidents",
+        "total_incident_cost",
+        "total_revenue",
     ]
 
     import copy
@@ -1114,8 +1132,9 @@ def plot_comparison_episodes(
         "avg_sfc_tenancy": "darkblue",
         "avg_vnf_tenancy": "darkgreen",
         "avg_sec_margin": "teal",
-        "avg_realized_incidents": "saddlebrown",
-        "avg_incident_cost": "firebrick",
+        "total_realized_incidents": "saddlebrown",
+        "total_incident_cost": "firebrick",
+        "total_revenue": "seagreen",
     }
 
     def _moving_avg(y, window):
@@ -1205,16 +1224,22 @@ def plot_comparison_episodes(
         "security_score_training.png",
     )
     _ep_plot(
-        "avg_realized_incidents",
-        "Avg Realized Incidents per Request",
-        "Avg Realized Incidents vs Episode Number",
+        "total_realized_incidents",
+        "Total Realized Incidents (episode sum)",
+        "Total Realized Incidents vs Episode Number",
         "realized_incidents_training.png",
     )
     _ep_plot(
-        "avg_incident_cost",
-        "Avg Incident Cost per Request",
-        "Avg Incident Cost vs Episode Number",
+        "total_incident_cost",
+        "Total Lost Revenue (episode sum)",
+        "Total Lost Revenue vs Episode Number",
         "incident_cost_training.png",
+    )
+    _ep_plot(
+        "total_revenue",
+        "Total Revenue (episode sum, higher is better)",
+        "Total Revenue vs Episode Number",
+        "revenue_training.png",
     )
 
 
@@ -1336,6 +1361,9 @@ def main():
             ("avg_sfc_tenancy",           "Avg SFCs / Node",        False),
             ("avg_vnf_tenancy",           "Avg VNFs / Node",        False),
             ("avg_sec_margin",            "Avg Security Margin",    True),
+            ("total_realized_incidents",  "Total Realized Incidents", False),
+            ("total_incident_cost",       "Total Lost Revenue",     False),
+            ("total_revenue",             "Total Revenue",          True),
         ]
 
         col_w = [32, 14, 14, 12, 10]

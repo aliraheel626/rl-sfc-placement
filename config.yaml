@@ -118,11 +118,12 @@ risk:
   # Incident pressure state (temporary node degradation, decays each request tick)
   incident_pressure_gain: 0.20
   incident_pressure_decay: 0.92
-  incident_block_threshold: 1.01 # Nodes above this pressure are temporarily unavailable
+  incident_downtime_steps: 2 # Request ticks a node is unavailable after an incident
   incident_security_penalty: 0.00 # Effective security multiplier: (1 - penalty * pressure)
 
-  # Incident consequence and reward coupling
-  incident_cost_per_event: 0.20
+  # Revenue model: revenue per accepted SFC = revenue_per_ttl_step × TTL
+  # Incident cost = lost revenue: realized_incidents × revenue_per_ttl_step × request_ttl
+  revenue_per_ttl_step: 1.0
   incident_cost_reward_scale: 0.05
 
 # Evaluation Configuration

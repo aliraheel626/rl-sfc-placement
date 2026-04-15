@@ -103,7 +103,7 @@ rewards:
 # Risk + Incident realism (full replacement model)
 risk:
   enabled: true
-  lambda: 20 # Reward penalty: reward -= lambda * risk_integral
+  lambda: 300 # Reward penalty: reward -= lambda * risk_integral
 
   # Robust normalization floors (scale-aware and topology-agnostic)
   tenancy_ref_floor: 1.0

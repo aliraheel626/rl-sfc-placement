@@ -1338,7 +1338,7 @@ def main():
             ("acceptance_ratio",          "Acceptance Ratio",       True),
             ("avg_risk_integral",         "Avg Risk Integral",      False),
             ("avg_substrate_utilization", "Substrate Utilisation",  True),
-            ("avg_sfc_tenancy",           "Avg SFCs / Node",        True),
+            ("avg_sfc_tenancy",           "Avg SFCs / Node",        False),
             ("avg_vnf_tenancy",           "Avg VNFs / Node",        False),
             ("avg_sec_margin",            "Avg Security Margin",    True),
         ]

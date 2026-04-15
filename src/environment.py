@@ -36,7 +36,9 @@ class SFCPlacementEnv(gym.Env):
     latency constraint is validated.
 
     Observation Space (Dict):
-        - node_features: (max_nodes, 6) - [RAM, CPU, Storage, Security, AvgBW, DistToPrev]
+        - node_features: (max_nodes, 14) - [RAM, CPU, Storage, Security, AvgBW, DistToPrev,
+          RAMGlobalShare, CPUGlobalShare, StorageGlobalShare, VNFGlobalShare, SFCTenancy,
+          FitRAM, FitCPU, FitStorage]
         - global_context: (15,) - [VNF_RAM, VNF_CPU, VNF_Storage, SFC_Sec, SFC_Lat, SFC_BW,
           VNF_Progress, HardIsolation, LatencyProgress, TTL,
           RemainingVNFs, RemainingRAM, RemainingCPU, RemainingStorage, WindowedAR]
@@ -199,7 +201,7 @@ class SFCPlacementEnv(gym.Env):
         self.observation_space = spaces.Dict(
             {
                 "node_features": spaces.Box(
-                    0.0, 1.0, (self.max_nodes, 6), dtype=np.float32
+                    0.0, 1.0, (self.max_nodes, 14), dtype=np.float32
                 ),
                 "global_context": spaces.Box(0.0, 1.0, (15,), dtype=np.float32),
                 "placement_mask": spaces.Box(
@@ -225,6 +227,7 @@ class SFCPlacementEnv(gym.Env):
         self.max_vnf_ram = self.config["sfc"]["vnf_resources"]["ram"]["max"]
         self.max_vnf_cpu = self.config["sfc"]["vnf_resources"]["cpu"]["max"]
         self.max_vnf_storage = self.config["sfc"]["vnf_resources"]["storage"]["max"]
+        self.min_vnf_storage = self.config["sfc"]["vnf_resources"]["storage"]["min"]
 
     def reset(
         self, seed: Optional[int] = None, options: Optional[dict] = None
@@ -565,7 +568,7 @@ class SFCPlacementEnv(gym.Env):
         N = self.num_nodes
         M = self.max_nodes
 
-        # 1. Node Feature Matrix: (num_nodes, 6) → padded to (max_nodes, 6)
+        # 1. Node Feature Matrix: (num_nodes, 14) → padded to (max_nodes, 14)
         # a. Basic Resources: (num_nodes, 4) [RAM, CPU, Storage, Security]
         base_resources = self.substrate.get_all_node_resources()
 
@@ -583,9 +586,68 @@ class SFCPlacementEnv(gym.Env):
         else:
             distances = np.zeros((N, 1), dtype=np.float32)
 
-        # Combine real node features: (num_nodes, 6)
+        # d. Global resource shares + tenancy: (num_nodes, 5)
+        #    [RAMGlobalShare, CPUGlobalShare, StorageGlobalShare, VNFGlobalShare, SFCTenancy]
+        # Resource global shares: used_i / Σ_j used_j  ("what fraction of all consumed
+        #   RAM/CPU/Storage is on this node?") — orthogonal to the local remaining-fraction
+        #   features which answer "how much capacity is left on this node."
+        # VNFGlobalShare: vnfs_i / Σ_j vnfs_j — instance-count concentration.
+        # SFCTenancy:     sfcs_i / max(vnfs_i, 1) — chain diversity / blast-radius proxy.
+        vnfs_per_node = self.substrate.get_vnfs_per_node()
+        sfcs_per_node = self.substrate.get_sfcs_per_node()
+
+        used_ram = np.array(
+            [self.substrate.original_resources[i]["ram"] - self.substrate.node_resources[i]["ram"]
+             for i in range(N)], dtype=np.float32,
+        )
+        used_cpu = np.array(
+            [self.substrate.original_resources[i]["cpu"] - self.substrate.node_resources[i]["cpu"]
+             for i in range(N)], dtype=np.float32,
+        )
+        used_storage = np.array(
+            [self.substrate.original_resources[i]["storage"] - self.substrate.node_resources[i]["storage"]
+             for i in range(N)], dtype=np.float32,
+        )
+        ram_global_share = (used_ram / max(used_ram.sum(), 1e-6)).reshape(-1, 1)
+        cpu_global_share = (used_cpu / max(used_cpu.sum(), 1e-6)).reshape(-1, 1)
+        storage_global_share = (used_storage / max(used_storage.sum(), 1e-6)).reshape(-1, 1)
+
+        total_vnfs = max(sum(vnfs_per_node.values()), 1)
+        vnf_global_share = np.array(
+            [vnfs_per_node.get(i, 0) / total_vnfs for i in range(N)],
+            dtype=np.float32,
+        ).reshape(-1, 1)
+        sfc_tenancy = np.array(
+            [sfcs_per_node.get(i, 0) / max(vnfs_per_node.get(i, 0), 1) for i in range(N)],
+            dtype=np.float32,
+        ).reshape(-1, 1)
+
+        # e. VNF fit ratios: (num_nodes, 3) [FitRAM, FitCPU, FitStorage]
+        # vnf_demand / remaining_capacity — how much of the node's remaining
+        # headroom this VNF would consume. Near 0 = barely dents it, 1 = fills it.
+        if self.current_vnf_index < self.current_request.num_vnfs:
+            cur_vnf = self.current_request.vnfs[self.current_vnf_index]
+            fit_ram = np.array(
+                [cur_vnf.ram / max(self.substrate.node_resources[i]["ram"], 1e-6)
+                 for i in range(N)], dtype=np.float32,
+            ).reshape(-1, 1)
+            fit_cpu = np.array(
+                [cur_vnf.cpu / max(self.substrate.node_resources[i]["cpu"], 1e-6)
+                 for i in range(N)], dtype=np.float32,
+            ).reshape(-1, 1)
+            fit_storage = np.array(
+                [cur_vnf.storage / max(self.substrate.node_resources[i]["storage"], 1e-6)
+                 for i in range(N)], dtype=np.float32,
+            ).reshape(-1, 1)
+        else:
+            fit_ram = fit_cpu = fit_storage = np.zeros((N, 1), dtype=np.float32)
+
+        # Combine real node features (num_nodes, 14)
         real_node_features = np.concatenate(
-            [base_resources, connectivity, distances], axis=1
+            [base_resources, connectivity, distances,
+             ram_global_share, cpu_global_share, storage_global_share,
+             vnf_global_share, sfc_tenancy,
+             fit_ram, fit_cpu, fit_storage], axis=1
         )
         # Expose incident-degraded security to the policy.
         for node_id in range(N):
@@ -598,8 +660,8 @@ class SFCPlacementEnv(gym.Env):
             )
             real_node_features[node_id, 3] = sec_norm
 
-        # Pad to (max_nodes, 6)
-        node_features = np.zeros((M, 6), dtype=np.float32)
+        # Pad to (max_nodes, 14)
+        node_features = np.zeros((M, 14), dtype=np.float32)
         node_features[:N] = np.clip(real_node_features, 0.0, 1.0)
 
         # 2. Global context: (15,)

@@ -45,7 +45,7 @@ class GNNFeaturesExtractor(BaseFeaturesExtractor):
         self,
         observation_space: gym.spaces.Dict,
         edge_getter: Callable[[], torch.Tensor],
-        node_feat_dim: int = 14,
+        node_feat_dim: int = 19,
         hidden_dim: int = 64,
         features_dim: int = 256,
         gnn_type: str = "sage",
@@ -58,7 +58,7 @@ class GNNFeaturesExtractor(BaseFeaturesExtractor):
         Args:
             observation_space: Dict observation space from the environment
             edge_getter: Callable that returns current edge_index (2, num_edges)
-            node_feat_dim: Dimension of per-node features (default: 14)
+            node_feat_dim: Dimension of per-node features (default: 19)
             hidden_dim: Hidden dimension for GNN layers
             features_dim: Output dimension of the feature extractor
             gnn_type: Type of GNN layer ("gcn", "gat", "sage")
@@ -175,7 +175,7 @@ class GNNFeaturesExtractor(BaseFeaturesExtractor):
 
         Args:
             observations: Dict with keys:
-                - node_features:  (batch, max_nodes, 14)
+                - node_features:  (batch, max_nodes, 19)
                 - global_context: (batch, global_context_dim)
                 - placement_mask: (batch, max_nodes)
                 - node_mask:      (batch, max_nodes)
@@ -186,7 +186,7 @@ class GNNFeaturesExtractor(BaseFeaturesExtractor):
         device = observations["node_features"].device
         batch_size = observations["node_features"].shape[0]
 
-        node_feats = observations["node_features"]  # (B, M, 14)
+        node_feats = observations["node_features"]  # (B, M, 19)
         global_context = observations["global_context"]  # (B, global_context_dim)
         placement_mask = observations["placement_mask"]  # (B, M)
         node_mask = observations["node_mask"]  # (B, M)
@@ -201,7 +201,7 @@ class GNNFeaturesExtractor(BaseFeaturesExtractor):
             return self.fusion(combined)
 
         # Slice to real nodes only — no GNN compute on padding
-        node_feats_real = node_feats[:, :N_real, :]  # (B, N_real, 14)
+        node_feats_real = node_feats[:, :N_real, :]  # (B, N_real, 19)
         placement_real = placement_mask[:, :N_real].unsqueeze(2)  # (B, N_real, 1)
 
         # Combine node features with placement mask → (B, N_real, 7)

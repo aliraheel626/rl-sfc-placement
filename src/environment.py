@@ -21,9 +21,11 @@ from src.requests import (
     load_config,
 )
 from src.risk import (
-    compute_placement_risk,
+    compute_node_risk_score,
+    compute_placement_risk_score,
     decay_incident_pressure,
     effective_node_security,
+    robust_ratio,
 )
 
 
@@ -36,9 +38,10 @@ class SFCPlacementEnv(gym.Env):
     latency constraint is validated.
 
     Observation Space (Dict):
-        - node_features: (max_nodes, 14) - [RAM, CPU, Storage, Security, AvgBW, DistToPrev,
+        - node_features: (max_nodes, 19) - [RAM, CPU, Storage, Security, AvgBW, DistToPrev,
           RAMGlobalShare, CPUGlobalShare, StorageGlobalShare, VNFGlobalShare, SFCTenancy,
-          FitRAM, FitCPU, FitStorage]
+          FitRAM, FitCPU, FitStorage, IncidentPressure, LoadNorm, PBase, ExpectedIncidents,
+          NodeRiskScore]
         - global_context: (15,) - [VNF_RAM, VNF_CPU, VNF_Storage, SFC_Sec, SFC_Lat, SFC_BW,
           VNF_Progress, HardIsolation, LatencyProgress, TTL,
           RemainingVNFs, RemainingRAM, RemainingCPU, RemainingStorage, WindowedAR]
@@ -113,13 +116,6 @@ class SFCPlacementEnv(gym.Env):
         risk_cfg = self.config.get("risk", {})
         self.risk_enabled = risk_cfg.get("enabled", False)
         self.risk_lambda = float(risk_cfg.get("lambda", 0.0))
-        self.risk_weights = {
-            "vnf_tenancy": float(risk_cfg.get("w_vnf_tenancy", 0.22)),
-            "sfc_tenancy": float(risk_cfg.get("w_sfc_tenancy", 0.18)),
-            "inverse_security": float(risk_cfg.get("w_inverse_security", 0.22)),
-            "incidents": float(risk_cfg.get("w_incidents", 0.28)),
-            "exposure": float(risk_cfg.get("w_exposure", 0.10)),
-        }
         self.tenancy_ref_floor = float(risk_cfg.get("tenancy_ref_floor", 1.0))
         self.load_ref_floor = float(risk_cfg.get("load_ref_floor", 1.0))
         self.incident_base_rate = float(risk_cfg.get("incident_base_rate", 0.025))
@@ -201,7 +197,7 @@ class SFCPlacementEnv(gym.Env):
         self.observation_space = spaces.Dict(
             {
                 "node_features": spaces.Box(
-                    0.0, 1.0, (self.max_nodes, 14), dtype=np.float32
+                    0.0, 1.0, (self.max_nodes, 19), dtype=np.float32
                 ),
                 "global_context": spaces.Box(0.0, 1.0, (15,), dtype=np.float32),
                 "placement_mask": spaces.Box(
@@ -503,7 +499,7 @@ class SFCPlacementEnv(gym.Env):
         return observation, reward, terminated, False, info
 
     def _placement_risk_cfg(self) -> dict:
-        """Risk parameters for compute_placement_risk (shared with baselines / compare)."""
+        """Risk parameters for compute_placement_risk_score (shared with baselines / compare)."""
         return {
             "enabled": self.risk_enabled,
             "tenancy_ref_floor": self.tenancy_ref_floor,
@@ -515,11 +511,6 @@ class SFCPlacementEnv(gym.Env):
             "incident_pressure_gain": self.incident_pressure_gain,
             "incident_security_penalty": self.incident_security_penalty,
             "incident_cost_per_event": self.incident_cost_per_event,
-            "w_vnf_tenancy": self.risk_weights["vnf_tenancy"],
-            "w_sfc_tenancy": self.risk_weights["sfc_tenancy"],
-            "w_inverse_security": self.risk_weights["inverse_security"],
-            "w_incidents": self.risk_weights["incidents"],
-            "w_exposure": self.risk_weights["exposure"],
         }
 
     def _compute_request_risk(
@@ -527,7 +518,7 @@ class SFCPlacementEnv(gym.Env):
     ) -> tuple[float, float, float, float]:
         """Compute stochastic, time-integrated risk for one accepted request."""
         ttl = self.current_request.ttl if self.current_request is not None else 1
-        return compute_placement_risk(
+        return compute_placement_risk_score(
             self.substrate,
             placement,
             ttl,
@@ -568,7 +559,7 @@ class SFCPlacementEnv(gym.Env):
         N = self.num_nodes
         M = self.max_nodes
 
-        # 1. Node Feature Matrix: (num_nodes, 14) → padded to (max_nodes, 14)
+        # 1. Node Feature Matrix: (num_nodes, 19) → padded to (max_nodes, 19)
         # a. Basic Resources: (num_nodes, 4) [RAM, CPU, Storage, Security]
         base_resources = self.substrate.get_all_node_resources()
 
@@ -642,26 +633,69 @@ class SFCPlacementEnv(gym.Env):
         else:
             fit_ram = fit_cpu = fit_storage = np.zeros((N, 1), dtype=np.float32)
 
-        # Combine real node features (num_nodes, 14)
+        # f. Incident features: (num_nodes, 4)
+        #    [IncidentPressure, LoadNorm, PBase, ExpectedIncidents]
+        #    These are the direct drivers of p_base — giving the agent the same
+        #    signals the risk formula and baselines use, closing the obs asymmetry.
+        load_reference = max(
+            self.load_ref_floor,
+            float(np.percentile(list(vnfs_per_node.values()), 75)) if vnfs_per_node else 0.0,
+        )
+        exposure_steps_obs = int(max(1, min(self.incident_steps_cap, self.current_request.ttl)))
+        incident_pressure_arr = np.array(
+            [self.node_incident_pressure.get(i, 0.0) for i in range(N)],
+            dtype=np.float32,
+        ).reshape(-1, 1)
+        load_norm_arr = np.array(
+            [robust_ratio(float(vnfs_per_node.get(i, 0)), load_reference) for i in range(N)],
+            dtype=np.float32,
+        ).reshape(-1, 1)
+        # p_base computed using effective (incident-degraded) security norms from base_resources col 3
+        # (overwritten below); compute here using the same effective_node_security call.
+        p_base_arr = np.zeros(N, dtype=np.float32)
+        for i in range(N):
+            _, sec_norm = effective_node_security(
+                self.substrate, i, self.max_security,
+                self.node_incident_pressure, self.incident_security_penalty,
+            )
+            p_i = self.incident_base_rate * (1.0 - sec_norm) ** self.incident_alpha
+            p_i *= 1.0 + self.incident_beta * float(load_norm_arr[i, 0])
+            p_i *= 1.0 + self.node_incident_pressure.get(i, 0.0)
+            p_base_arr[i] = min(max(p_i, 0.0), 1.0)
+            # Reuse the security norm computed here to overwrite col 3.
+            base_resources[i, 3] = sec_norm
+        p_base_col = p_base_arr.reshape(-1, 1)
+        # ExpectedIncidents per node normalized by steps_cap so it stays in [0, 1].
+        expected_inc_arr = np.clip(
+            p_base_arr * exposure_steps_obs / max(self.incident_steps_cap, 1),
+            0.0, 1.0,
+        ).reshape(-1, 1)
+
+        # g. Node risk score: (num_nodes, 1) [NodeRiskScore]
+        #    compute_node_risk_score per node — the composite expected-loss signal
+        #    the baseline uses for placement decisions, now directly visible to the agent.
+        risk_cfg_obs = self._placement_risk_cfg()
+        node_risk_arr = np.array(
+            [compute_node_risk_score(
+                self.substrate, i, risk_cfg_obs,
+                self.node_incident_pressure, self.max_security,
+                self.current_request.ttl, self.max_ttl,
+             ) for i in range(N)],
+            dtype=np.float32,
+        ).reshape(-1, 1)
+
+        # Combine real node features (num_nodes, 19)
         real_node_features = np.concatenate(
             [base_resources, connectivity, distances,
              ram_global_share, cpu_global_share, storage_global_share,
              vnf_global_share, sfc_tenancy,
-             fit_ram, fit_cpu, fit_storage], axis=1
+             fit_ram, fit_cpu, fit_storage,
+             incident_pressure_arr, load_norm_arr, p_base_col, expected_inc_arr,
+             node_risk_arr], axis=1
         )
-        # Expose incident-degraded security to the policy.
-        for node_id in range(N):
-            _, sec_norm = effective_node_security(
-                self.substrate,
-                node_id,
-                self.max_security,
-                self.node_incident_pressure,
-                self.incident_security_penalty,
-            )
-            real_node_features[node_id, 3] = sec_norm
 
-        # Pad to (max_nodes, 14)
-        node_features = np.zeros((M, 14), dtype=np.float32)
+        # Pad to (max_nodes, 19)
+        node_features = np.zeros((M, 19), dtype=np.float32)
         node_features[:N] = np.clip(real_node_features, 0.0, 1.0)
 
         # 2. Global context: (15,)

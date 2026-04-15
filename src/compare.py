@@ -24,7 +24,7 @@ from src.model import create_masked_env, load_model
 from src.baselines import BasePlacement, BestFitPlacement
 from src.risk import (
     apply_incident_view,
-    compute_placement_risk,
+    compute_placement_risk_score,
     decay_incident_pressure,
     restore_incident_view,
 )
@@ -35,11 +35,6 @@ def _build_risk_config(config: dict) -> dict:
     risk = config.get("risk", {})
     return {
         "enabled": bool(risk.get("enabled", False)),
-        "w_vnf_tenancy": float(risk.get("w_vnf_tenancy", 0.22)),
-        "w_sfc_tenancy": float(risk.get("w_sfc_tenancy", 0.18)),
-        "w_inverse_security": float(risk.get("w_inverse_security", 0.22)),
-        "w_incidents": float(risk.get("w_incidents", 0.28)),
-        "w_exposure": float(risk.get("w_exposure", 0.10)),
         "tenancy_ref_floor": float(risk.get("tenancy_ref_floor", 1.0)),
         "load_ref_floor": float(risk.get("load_ref_floor", 1.0)),
         "incident_base_rate": float(risk.get("incident_base_rate", 0.025)),
@@ -187,7 +182,7 @@ def evaluate_baseline(
                 realized_incidents,
                 incident_cost,
                 expected_incidents,
-            ) = compute_placement_risk(
+            ) = compute_placement_risk_score(
                 substrate_copy,
                 placement,
                 request.ttl,

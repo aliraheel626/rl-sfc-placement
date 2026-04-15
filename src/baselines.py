@@ -10,7 +10,7 @@ from typing import Optional
 
 from src.substrate import SubstrateNetwork
 from src.requests import SFCRequest, VNF
-from src.risk import node_risk_score
+from src.risk import compute_node_risk_score
 
 
 class BasePlacement(ABC):
@@ -145,7 +145,7 @@ class BestFitPlacement(BasePlacement):
                 return None
 
             def key(n: int):
-                risk = node_risk_score(
+                risk = compute_node_risk_score(
                     substrate, n, risk_cfg or {}, pressure, max_sec,
                     request_ttl=request.ttl,
                     max_ttl=max_ttl,

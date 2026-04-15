@@ -105,13 +105,6 @@ risk:
   enabled: true
   lambda: 20 # Reward penalty: reward -= lambda * risk_integral
 
-  # Risk composition weights (normalized internally by sum of weights)
-  w_vnf_tenancy: 0.20
-  w_sfc_tenancy: 0.30
-  w_inverse_security: 0.32
-  w_incidents: 0.14
-  w_exposure: 0.04
-
   # Robust normalization floors (scale-aware and topology-agnostic)
   tenancy_ref_floor: 1.0
   load_ref_floor: 1.0

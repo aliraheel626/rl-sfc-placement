@@ -122,7 +122,7 @@ def restore_incident_view(
         substrate.node_resources[node_id]["storage"] = float(original_storage[node_id])
 
 
-def node_risk_score(
+def compute_node_risk_score(
     substrate: SubstrateNetwork,
     node_id: int,
     risk_cfg: dict,
@@ -132,8 +132,12 @@ def node_risk_score(
     max_ttl: int = 1,
 ) -> float:
     """
-    Per-node risk score for greedy baselines (deterministic expected incident term).
-    Same 5-component weighting as compute_placement_risk. Lower is better.
+    Per-node expected-loss risk score for greedy baselines. Deterministic.
+
+    score = p_base_i × sfcs_i × min(TTL, steps_cap) / T_max
+
+    Symmetrical with compute_placement_risk_score: placement risk = mean of per-node scores.
+    Lower is better.
     """
     if not risk_cfg.get("enabled", False):
         return 0.0
@@ -145,69 +149,29 @@ def node_risk_score(
         node_incident_pressure,
         risk_cfg.get("incident_security_penalty", 0.6),
     )
-    inverse_security_risk = 1.0 - security_norm
     pressure = node_incident_pressure.get(node_id, 0.0)
 
     vnfs_per_node = substrate.get_vnfs_per_node()
-    sfcs_per_node = substrate.get_sfcs_per_node()
-    occupied_vnf_nodes = [v for v in vnfs_per_node.values() if v > 0]
-    occupied_sfc_nodes = [v for v in sfcs_per_node.values() if v > 0]
-    num_total_nodes = max(len(sfcs_per_node), 1)
-
-    # Concentration-aware tenancy risk (same formula as compute_placement_risk).
-    # substrate_util is shared: any node with SFCs also has VNFs and vice versa.
-    num_occupied = len(occupied_sfc_nodes)
-    substrate_util = num_occupied / num_total_nodes
-
-    total_active_sfcs = sum(sfcs_per_node.values())
-    avg_sfc_tenancy = sum(occupied_sfc_nodes) / num_occupied if occupied_sfc_nodes else 0.0
-    sfc_tenancy_risk = (
-        avg_sfc_tenancy * (1.0 - substrate_util) / total_active_sfcs
-        if total_active_sfcs > 0 else 0.0
-    )
-    sfc_tenancy_risk = min(max(sfc_tenancy_risk, 0.0), 1.0)
-
-    total_active_vnfs = sum(vnfs_per_node.values())
-    avg_vnf_tenancy = sum(occupied_vnf_nodes) / num_occupied if occupied_vnf_nodes else 0.0
-    vnf_tenancy_risk = (
-        avg_vnf_tenancy * (1.0 - substrate_util) / total_active_vnfs
-        if total_active_vnfs > 0 else 0.0
-    )
-    vnf_tenancy_risk = min(max(vnf_tenancy_risk, 0.0), 1.0)
-
-    vnf_count = float(vnfs_per_node.get(node_id, 0))
     load_reference = max(
         risk_cfg.get("load_ref_floor", 1.0),
         float(np.percentile(list(vnfs_per_node.values()), 75)) if vnfs_per_node else 0.0,
     )
-    load_norm = robust_ratio(vnf_count, load_reference)
-    incident_base_rate = risk_cfg.get("incident_base_rate", 0.025)
-    incident_alpha = risk_cfg.get("incident_alpha", 1.6)
-    incident_beta = risk_cfg.get("incident_beta", 0.7)
-    p_base = incident_base_rate * (1.0 - security_norm) ** incident_alpha
-    p_base *= 1.0 + incident_beta * load_norm
+    load_norm = robust_ratio(float(vnfs_per_node.get(node_id, 0)), load_reference)
+
+    p_base = risk_cfg.get("incident_base_rate", 0.025) * (1.0 - security_norm) ** risk_cfg.get("incident_alpha", 1.6)
+    p_base *= 1.0 + risk_cfg.get("incident_beta", 0.7) * load_norm
     p_base *= 1.0 + pressure
-    incident_risk = min(max(p_base, 0.0), 1.0)
+    p_base = min(max(p_base, 0.0), 1.0)
 
-    ttl_exposure_risk = min(request_ttl / max(max_ttl, 1), 1.0)
+    sfcs_per_node = substrate.get_sfcs_per_node()
+    sfc_count = float(sfcs_per_node.get(node_id, 0))
+    exposure_steps = int(max(1, min(risk_cfg.get("incident_steps_cap", 12), request_ttl)))
+    ttl_exposure = exposure_steps / max(max_ttl, 1)
 
-    w_inv = risk_cfg.get("w_inverse_security", 0.22)
-    w_vnf = risk_cfg.get("w_vnf_tenancy", 0.22)
-    w_sfc = risk_cfg.get("w_sfc_tenancy", 0.18)
-    w_inc = risk_cfg.get("w_incidents", 0.28)
-    w_exp = risk_cfg.get("w_exposure", 0.10)
-    weight_sum = max(w_inv + w_vnf + w_sfc + w_inc + w_exp, 1e-6)
-    risk = (
-        w_inv * inverse_security_risk
-        + w_vnf * vnf_tenancy_risk
-        + w_sfc * sfc_tenancy_risk
-        + w_inc * incident_risk
-        + w_exp * ttl_exposure_risk
-    ) / weight_sum
-    return min(max(risk, 0.0), 1.0)
+    return min(p_base * sfc_count * ttl_exposure, 1.0)
 
 
-def compute_placement_risk(
+def compute_placement_risk_score(
     substrate: SubstrateNetwork,
     placement: list[int],
     request_ttl: int,
@@ -217,9 +181,13 @@ def compute_placement_risk(
     node_incident_pressure: dict[int, float],
 ) -> tuple[float, float, float, float]:
     """
-    Stochastic, TTL-aware risk integral and incident metrics for one accepted placement.
+    TTL-aware expected-loss risk integral and stochastic incident metrics.
 
-    Mutates node_incident_pressure in-place when incidents occur (same as env / compare).
+    risk_integral is fully deterministic:
+        risk = min(mean_i(p_base_i × sfcs_i) × exposure_steps / T_max, 1.0)
+
+    Monte Carlo rolls are retained only to produce realized_incidents / incident_cost.
+    Mutates node_incident_pressure in-place when incidents occur.
 
     Returns:
         (risk_integral, realized_incidents, incident_cost, expected_incidents)
@@ -228,64 +196,29 @@ def compute_placement_risk(
         return 0.0, 0.0, 0.0, 0.0
 
     penalty = risk_cfg["incident_security_penalty"]
-
     sfcs_per_node = substrate.get_sfcs_per_node()
     vnfs_per_node = substrate.get_vnfs_per_node()
-    occupied_sfc_nodes = [v for v in sfcs_per_node.values() if v > 0]
-    occupied_vnf_nodes = [v for v in vnfs_per_node.values() if v > 0]
-    num_total_nodes = max(len(sfcs_per_node), 1)
-
-    # Concentration-aware tenancy risk:
-    #   risk = avg_tenancy_occupied × (1 − substrate_util) / total_active
-    # High tenancy on few nodes while many nodes are idle → high risk.
-    # High tenancy when most nodes are occupied → lower risk (packing unavoidable).
-    # substrate_util is shared: any node with SFCs also has VNFs and vice versa.
-    num_occupied = len(occupied_sfc_nodes)
-    substrate_util = num_occupied / num_total_nodes
-
-    total_active_sfcs = sum(sfcs_per_node.values())
-    avg_sfc_tenancy = sum(occupied_sfc_nodes) / num_occupied if occupied_sfc_nodes else 0.0
-    sfc_tenancy_risk = (
-        avg_sfc_tenancy * (1.0 - substrate_util) / total_active_sfcs
-        if total_active_sfcs > 0 else 0.0
-    )
-    sfc_tenancy_risk = min(max(sfc_tenancy_risk, 0.0), 1.0)
-
-    total_active_vnfs = sum(vnfs_per_node.values())
-    avg_vnf_tenancy = sum(occupied_vnf_nodes) / num_occupied if occupied_vnf_nodes else 0.0
-    vnf_tenancy_risk = (
-        avg_vnf_tenancy * (1.0 - substrate_util) / total_active_vnfs
-        if total_active_vnfs > 0 else 0.0
-    )
-    vnf_tenancy_risk = min(max(vnf_tenancy_risk, 0.0), 1.0)
 
     placement_nodes = sorted(set(placement))
     n_nodes = len(placement_nodes)
 
-    security_norms = np.empty(n_nodes, dtype=np.float64)
-    for idx, node_id in enumerate(placement_nodes):
-        _, security_norms[idx] = effective_node_security(
-            substrate,
-            node_id,
-            max_security,
-            node_incident_pressure,
-            penalty,
-        )
-    inverse_security_risk = float(np.mean(1.0 - security_norms))
-    inverse_security_risk = min(max(inverse_security_risk, 0.0), 1.0)
-
     exposure_steps = int(max(1, min(risk_cfg["incident_steps_cap"], request_ttl)))
-    ttl_exposure = min(request_ttl / max(max_ttl, 1), 1.0)
     load_reference = max(
         risk_cfg["load_ref_floor"],
         float(np.percentile(list(vnfs_per_node.values()), 75)) if vnfs_per_node else 0.0,
     )
 
+    security_norms = np.empty(n_nodes, dtype=np.float64)
     load_norms = np.empty(n_nodes, dtype=np.float64)
     pressures = np.empty(n_nodes, dtype=np.float64)
+    sfc_counts = np.empty(n_nodes, dtype=np.float64)
     for idx, node_id in enumerate(placement_nodes):
+        _, security_norms[idx] = effective_node_security(
+            substrate, node_id, max_security, node_incident_pressure, penalty,
+        )
         load_norms[idx] = robust_ratio(vnfs_per_node.get(node_id, 0), load_reference)
         pressures[idx] = node_incident_pressure.get(node_id, 0.0)
+        sfc_counts[idx] = float(sfcs_per_node.get(node_id, 0))
 
     p_base = risk_cfg["incident_base_rate"] * np.power(
         1.0 - security_norms, risk_cfg["incident_alpha"]
@@ -294,6 +227,12 @@ def compute_placement_risk(
     p_base *= 1.0 + pressures
     np.clip(p_base, 0.0, 1.0, out=p_base)
 
+    # Deterministic risk integral: mean expected loss per node × TTL exposure.
+    # Symmetrical with compute_node_risk_score: placement_risk = mean(compute_node_risk_score_i).
+    ttl_exposure = exposure_steps / max(max_ttl, 1)
+    risk_integral = min(float(np.mean(p_base * sfc_counts)) * ttl_exposure, 1.0)
+
+    # Stochastic incident simulation (for realized_incidents / incident_cost only).
     rolls = np.random.random((exposure_steps, n_nodes))
     hits = rolls < p_base[np.newaxis, :]
     expected_incidents = float(p_base.sum() * exposure_steps)
@@ -307,24 +246,6 @@ def compute_placement_risk(
                 node_incident_pressure.get(node_id, 0.0) + pressure_gain * node_hits,
             )
 
-    trials = max(n_nodes * exposure_steps, 1)
-    incident_risk = min(realized_incidents / trials, 1.0)
-    weight_sum = max(
-        risk_cfg["w_vnf_tenancy"]
-        + risk_cfg["w_sfc_tenancy"]
-        + risk_cfg["w_inverse_security"]
-        + risk_cfg["w_incidents"]
-        + risk_cfg["w_exposure"],
-        1e-6,
-    )
-    risk_score = (
-        risk_cfg["w_vnf_tenancy"] * vnf_tenancy_risk
-        + risk_cfg["w_sfc_tenancy"] * sfc_tenancy_risk
-        + risk_cfg["w_inverse_security"] * inverse_security_risk
-        + risk_cfg["w_incidents"] * incident_risk
-        + risk_cfg["w_exposure"] * ttl_exposure
-    ) / weight_sum
-    risk_integral = min(max(risk_score, 0.0), 1.0)
     incident_cost = realized_incidents * risk_cfg["incident_cost_per_event"]
     return (
         float(risk_integral),

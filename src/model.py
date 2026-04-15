@@ -96,7 +96,7 @@ def create_maskable_ppo(
     policy_kwargs["features_extractor_class"] = GNNFeaturesExtractor
     policy_kwargs["features_extractor_kwargs"] = {
         "edge_getter": edge_getter,
-        "node_feat_dim": 14,  # [RAM, CPU, Storage, Security, AvgBW, DistToPrev, RAMGlobalShare, CPUGlobalShare, StorageGlobalShare, VNFGlobalShare, SFCTenancy, FitRAM, FitCPU, FitStorage]
+        "node_feat_dim": 19,  # [RAM, CPU, Storage, Security, AvgBW, DistToPrev, RAMGlobalShare, CPUGlobalShare, StorageGlobalShare, VNFGlobalShare, SFCTenancy, FitRAM, FitCPU, FitStorage, IncidentPressure, LoadNorm, PBase, ExpectedIncidents, NodeRiskScore]
         "hidden_dim": gnn_hidden_dim,
         "features_dim": gnn_features_dim,
         "gnn_type": gnn_type,

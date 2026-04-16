@@ -39,10 +39,10 @@ class SFCPlacementEnv(gym.Env):
     latency constraint is validated.
 
     Observation Space (Dict):
-        - node_features: (max_nodes, 19) - [RAM, CPU, Storage, Security, AvgBW, DistToPrev,
+        - node_features: (max_nodes, 20) - [RAM, CPU, Storage, Security, AvgBW, DistToPrev,
           RAMGlobalShare, CPUGlobalShare, StorageGlobalShare, VNFGlobalShare, SFCTenancy,
           FitRAM, FitCPU, FitStorage, IncidentPressure, LoadNorm, PBase, ExpectedIncidents,
-          NodeRiskScore]
+          NodeRiskScore (=PBase), ExpectedLostRevenue]
         - global_context: (15,) - [VNF_RAM, VNF_CPU, VNF_Storage, SFC_Sec, SFC_Lat, SFC_BW,
           VNF_Progress, HardIsolation, LatencyProgress, TTL,
           RemainingVNFs, RemainingRAM, RemainingCPU, RemainingStorage, WindowedAR]
@@ -201,7 +201,7 @@ class SFCPlacementEnv(gym.Env):
         self.observation_space = spaces.Dict(
             {
                 "node_features": spaces.Box(
-                    0.0, 1.0, (self.max_nodes, 19), dtype=np.float32
+                    0.0, 1.0, (self.max_nodes, 20), dtype=np.float32
                 ),
                 "global_context": spaces.Box(0.0, 1.0, (15,), dtype=np.float32),
                 "placement_mask": spaces.Box(
@@ -392,6 +392,7 @@ class SFCPlacementEnv(gym.Env):
             realized_incidents,
             incident_cost,
             expected_incidents,
+            expected_lost_revenue,
         ) = self._compute_request_risk(completed_placement)
         self.episode_risk_scores.append(risk_integral)
         self.episode_risk_integrals.append(risk_integral)
@@ -408,7 +409,7 @@ class SFCPlacementEnv(gym.Env):
         reward = (
             self.acceptance_reward
             - self.risk_lambda * risk_integral
-            - self.incident_cost_reward_scale * incident_cost
+            - self.incident_cost_reward_scale * expected_lost_revenue
         )
 
         self.recent_outcomes.append(1.0)
@@ -434,6 +435,7 @@ class SFCPlacementEnv(gym.Env):
         info["request_expected_incidents"] = expected_incidents
         info["request_incidents"] = realized_incidents
         info["request_incident_cost"] = incident_cost
+        info["request_expected_lost_revenue"] = expected_lost_revenue
         info["request_revenue"] = request_revenue
         return observation, reward, terminated, False, info
 
@@ -528,7 +530,7 @@ class SFCPlacementEnv(gym.Env):
 
     def _compute_request_risk(
         self, placement: list[int]
-    ) -> tuple[float, float, float, float]:
+    ):
         """Compute stochastic, time-integrated risk for one accepted request."""
         ttl = self.current_request.ttl if self.current_request is not None else 1
         return compute_placement_risk_score(
@@ -573,7 +575,7 @@ class SFCPlacementEnv(gym.Env):
         N = self.num_nodes
         M = self.max_nodes
 
-        # 1. Node Feature Matrix: (num_nodes, 19) → padded to (max_nodes, 19)
+        # 1. Node Feature Matrix: (num_nodes, 20) → padded to (max_nodes, 20)
         # a. Basic Resources: (num_nodes, 4) [RAM, CPU, Storage, Security]
         base_resources = self.substrate.get_all_node_resources()
 
@@ -685,31 +687,36 @@ class SFCPlacementEnv(gym.Env):
             0.0, 1.0,
         ).reshape(-1, 1)
 
-        # g. Node risk score: (num_nodes, 1) [NodeRiskScore]
-        #    compute_node_risk_score per node — the composite expected-loss signal
-        #    the baseline uses for placement decisions, now directly visible to the agent.
-        risk_cfg_obs = self._placement_risk_cfg()
-        node_risk_arr = np.array(
-            [compute_node_risk_score(
-                self.substrate, i, risk_cfg_obs,
-                self.node_incident_pressure, self.max_security,
-                self.current_request.ttl, self.max_ttl,
-             ) for i in range(N)],
-            dtype=np.float32,
-        ).reshape(-1, 1)
+        # g. Node risk score: (num_nodes, 1) [NodeRiskScore = PBase]
+        #    p_base is the primary risk signal — sfcs × TTL scaling is already
+        #    captured by other features, so the agent just needs raw p_base here.
+        node_risk_arr = p_base_col  # same as index 16, explicit risk slot
 
-        # Combine real node features (num_nodes, 19)
+        # h. Expected lost revenue per node: (num_nodes, 1) [ExpectedLostRevenue]
+        #    E[lost_revenue_i] = P(node i hit) × sfcs_i × revenue_per_ttl_step × downtime_steps
+        #    P(node i hit) = 1 - (1 - p_base_i)^exposure_steps
+        #    Inverse-normalized: 1 - 1/(1 + x)  →  [0, 1) without a fixed ceiling.
+        downtime_steps_obs = float(self.incident_downtime_steps)
+        p_hit_arr = 1.0 - np.power(
+            np.maximum(1.0 - p_base_arr, 0.0), float(exposure_steps_obs)
+        )
+        elr_raw = p_hit_arr * np.array(
+            [float(sfcs_per_node.get(i, 0)) for i in range(N)], dtype=np.float32
+        ) * self.revenue_per_ttl_step * downtime_steps_obs
+        elr_arr = (1.0 - 1.0 / (1.0 + elr_raw)).reshape(-1, 1).astype(np.float32)
+
+        # Combine real node features (num_nodes, 20)
         real_node_features = np.concatenate(
             [base_resources, connectivity, distances,
              ram_global_share, cpu_global_share, storage_global_share,
              vnf_global_share, sfc_tenancy,
              fit_ram, fit_cpu, fit_storage,
              incident_pressure_arr, load_norm_arr, p_base_col, expected_inc_arr,
-             node_risk_arr], axis=1
+             node_risk_arr, elr_arr], axis=1
         )
 
-        # Pad to (max_nodes, 19)
-        node_features = np.zeros((M, 19), dtype=np.float32)
+        # Pad to (max_nodes, 20)
+        node_features = np.zeros((M, 20), dtype=np.float32)
         node_features[:N] = np.clip(real_node_features, 0.0, 1.0)
 
         # 2. Global context: (15,)

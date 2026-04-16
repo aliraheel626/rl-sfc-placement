@@ -29,6 +29,11 @@ from src.risk import (
     decrement_node_downtime,
     restore_incident_view,
 )
+from src.eval_reporting import (
+    COMPARISON_TABLE_ROWS,
+    append_eval_result_to_by_algo,
+    plot_eval_curves,
+)
 
 
 def _build_risk_config(config: dict) -> dict:
@@ -187,6 +192,7 @@ def evaluate_baseline(
                 realized_incidents,
                 incident_cost,
                 expected_incidents,
+                _expected_lost_revenue,
             ) = compute_placement_risk_score(
                 substrate_copy,
                 placement,
@@ -265,8 +271,10 @@ def evaluate_baseline(
     avg_realized_incidents = total_realized_incidents / total if total > 0 else 0.0
     avg_incident_cost = total_incident_cost / total if total > 0 else 0.0
     avg_risk_integral = total_risk_integral / total if total > 0 else 0.0
+    avg_revenue_per_request = total_revenue / total if total > 0 else 0.0
+    avg_lost_revenue_per_request = total_incident_cost / total if total > 0 else 0.0
 
-        # Baselines do not track rejection reason; use 0 for latency violation ratio
+    # Baselines do not track rejection reason; use 0 for latency violation ratio
     latency_violation_ratio = 0.0
 
     return {
@@ -287,6 +295,8 @@ def evaluate_baseline(
         "avg_expected_incidents": avg_expected_incidents,
         "avg_realized_incidents": avg_realized_incidents,
         "avg_incident_cost": avg_incident_cost,
+        "avg_revenue_per_request": avg_revenue_per_request,
+        "avg_lost_revenue_per_request": avg_lost_revenue_per_request,
         "total_realized_incidents": total_realized_incidents,
         "total_incident_cost": total_incident_cost,
         "total_revenue": total_revenue,
@@ -509,6 +519,8 @@ def evaluate_rl_agent(
     avg_realized_incidents = total_realized_incidents / total if total > 0 else 0.0
     avg_incident_cost = total_incident_cost / total if total > 0 else 0.0
     avg_risk_integral = total_risk_integral / total if total > 0 else 0.0
+    avg_revenue_per_request = total_revenue / total if total > 0 else 0.0
+    avg_lost_revenue_per_request = total_incident_cost / total if total > 0 else 0.0
 
     return {
         "algorithm": "MaskablePPO",
@@ -528,6 +540,8 @@ def evaluate_rl_agent(
         "avg_expected_incidents": avg_expected_incidents,
         "avg_realized_incidents": avg_realized_incidents,
         "avg_incident_cost": avg_incident_cost,
+        "avg_revenue_per_request": avg_revenue_per_request,
+        "avg_lost_revenue_per_request": avg_lost_revenue_per_request,
         "total_realized_incidents": total_realized_incidents,
         "total_incident_cost": total_incident_cost,
         "total_revenue": total_revenue,
@@ -1035,21 +1049,6 @@ def run_multi_episode_eval(
             }
         }
     """
-    _METRICS = [
-        "acceptance_ratio",
-        "latency_violation_ratio",
-        "avg_risk_integral",
-        "avg_sfc_tenancy",
-        "avg_vnf_tenancy",
-        "avg_substrate_utilization",
-        "avg_sec_margin",
-        "avg_realized_incidents",
-        "avg_incident_cost",
-        "total_realized_incidents",
-        "total_incident_cost",
-        "total_revenue",
-    ]
-
     import copy
 
     # Pre-load model once so we don't call load_model (which re-seeds global RNG
@@ -1091,10 +1090,7 @@ def run_multi_episode_eval(
         )
 
         for algo, res in results.items():
-            if algo not in by_algo:
-                by_algo[algo] = {m: [] for m in _METRICS}
-            for m in _METRICS:
-                by_algo[algo][m].append(res.get(m, 0.0))
+            append_eval_result_to_by_algo(by_algo, algo, res)
 
     return {"episodes": episodes, "by_algo": by_algo}
 
@@ -1105,141 +1101,18 @@ def plot_comparison_episodes(
     num_requests: int = 1000,
 ) -> None:
     """
-    Generate the same six plots as the training callback but using per-episode
-    comparison data produced by *run_multi_episode_eval*.
+    Generate the same eval curve plots as the training callback using per-episode
+    comparison data from *run_multi_episode_eval*.
 
-    Saves to *output_dir* with the training-style filenames so they can be viewed
-    alongside (or replace) the training plots.
-
-    Args:
-        multi_ep_data: Return value of run_multi_episode_eval
-        output_dir:    Directory to write plots into (created if missing)
-        num_requests:  Requests per episode – used in axis/title labels
+    Plot list and filenames are defined in *src.eval_reporting* (single source of truth).
     """
-    out = Path(output_dir)
-    out.mkdir(parents=True, exist_ok=True)
-
-    episodes = multi_ep_data["episodes"]
-    by_algo = multi_ep_data["by_algo"]
-    algos = list(by_algo.keys())
-    colors = plt.cm.tab10(np.linspace(0, 1, max(len(algos), 10)))[: len(algos)]
-    color_map = dict(zip(algos, colors))
-
-    ma_colors = {
-        "acceptance_ratio": "orange",
-        "avg_risk_integral": "purple",
-        "avg_substrate_utilization": "indigo",
-        "avg_sfc_tenancy": "darkblue",
-        "avg_vnf_tenancy": "darkgreen",
-        "avg_sec_margin": "teal",
-        "total_realized_incidents": "saddlebrown",
-        "total_incident_cost": "firebrick",
-        "total_revenue": "seagreen",
-    }
-
-    def _moving_avg(y, window):
-        if len(y) < window or window < 2:
-            return None, None
-        k = np.ones(window) / window
-        ma = np.convolve(y, k, mode="valid")
-        x = episodes[window - 1 :]
-        return x, ma
-
-    def _ep_plot(metric_key, ylabel, title, filename, ylim=None, as_percent=False):
-        fig, ax = plt.subplots(figsize=(10, 6))
-        for algo in algos:
-            vals = by_algo[algo][metric_key]
-            ax.plot(
-                episodes,
-                vals,
-                alpha=0.6,
-                label=algo,
-                linewidth=0.8,
-                color=color_map[algo],
-            )
-            if algo == "MaskablePPO" and len(vals) > 10:
-                window = min(50, len(vals) // 5)
-                if window > 1:
-                    x_ma, y_ma = _moving_avg(vals, window)
-                    if x_ma is not None:
-                        ax.plot(
-                            x_ma,
-                            y_ma,
-                            color=ma_colors.get(metric_key, "orange"),
-                            linewidth=2,
-                            label=f"Moving Avg ({window} ep)",
-                        )
-        ax.set_xlabel("Episode", fontsize=12)
-        ax.set_ylabel(ylabel, fontsize=12)
-        ax.set_title(f"{title} ({num_requests} req/episode)", fontsize=13)
-        if ylim:
-            ax.set_ylim(*ylim)
-        if as_percent:
-            ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0%}"))
-        ax.grid(True, linestyle="--", alpha=0.7)
-        ax.legend(loc="best", fontsize=10)
-        plt.tight_layout()
-        save_path = out / filename
-        plt.savefig(save_path, dpi=150, bbox_inches="tight")
-        print(f"Plot saved to: {save_path}")
-        plt.close()
-
-    _ep_plot(
-        "acceptance_ratio",
-        "Acceptance Ratio (per episode)",
-        "Episode Acceptance Ratio vs Episode Number",
-        "sfc_ppo_acceptance_ratio.png",
-        ylim=(0, 1.05),
-    )
-    _ep_plot(
-        "avg_risk_integral",
-        "Risk Integral (lower is better)",
-        "Avg Risk Integral vs Episode Number",
-        "sfc_risk_training.png",
-    )
-    _ep_plot(
-        "avg_substrate_utilization",
-        "Substrate Utilisation",
-        "Substrate Utilisation vs Episode Number",
-        "substrate_util_training.png",
-        ylim=(0, 1.05),
-        as_percent=True,
-    )
-    _ep_plot(
-        "avg_sfc_tenancy",
-        "Avg SFCs per Occupied Node",
-        "Avg SFCs per Occupied Node vs Episode Number",
-        "sfc_per_node_training.png",
-    )
-    _ep_plot(
-        "avg_vnf_tenancy",
-        "Avg VNFs per Occupied Node",
-        "Avg VNFs per Occupied Node vs Episode Number",
-        "vnf_per_node_training.png",
-    )
-    _ep_plot(
-        "avg_sec_margin",
-        "Avg Security Margin (node score − req min)",
-        "Avg Security Margin vs Episode Number",
-        "security_score_training.png",
-    )
-    _ep_plot(
-        "total_realized_incidents",
-        "Total Realized Incidents (episode sum)",
-        "Total Realized Incidents vs Episode Number",
-        "realized_incidents_training.png",
-    )
-    _ep_plot(
-        "total_incident_cost",
-        "Total Lost Revenue (episode sum)",
-        "Total Lost Revenue vs Episode Number",
-        "incident_cost_training.png",
-    )
-    _ep_plot(
-        "total_revenue",
-        "Total Revenue (episode sum, higher is better)",
-        "Total Revenue vs Episode Number",
-        "revenue_training.png",
+    plot_eval_curves(
+        multi_ep_data["episodes"],
+        multi_ep_data["by_algo"],
+        output_dir,
+        num_requests,
+        verbose_print=True,
+        linewidth=0.8,
     )
 
 
@@ -1352,20 +1225,6 @@ def main():
     ppo_key = next((k for k in by_algo if "PPO" in k or "Maskable" in k), None)
 
     if bf_key and ppo_key:
-        # higher-is-better metrics: positive diff means PPO wins
-        # lower-is-better metrics: negative diff means PPO wins (flagged accordingly)
-        METRICS = [
-            ("acceptance_ratio",          "Acceptance Ratio",       True),
-            ("avg_risk_integral",         "Avg Risk Integral",      False),
-            ("avg_substrate_utilization", "Substrate Utilisation",  True),
-            ("avg_sfc_tenancy",           "Avg SFCs / Node",        False),
-            ("avg_vnf_tenancy",           "Avg VNFs / Node",        False),
-            ("avg_sec_margin",            "Avg Security Margin",    True),
-            ("total_realized_incidents",  "Total Realized Incidents", False),
-            ("total_incident_cost",       "Total Lost Revenue",     False),
-            ("total_revenue",             "Total Revenue",          True),
-        ]
-
         col_w = [32, 14, 14, 12, 10]
         sep = "-" * sum(col_w)
         header = (
@@ -1388,9 +1247,9 @@ def main():
                 f"{ppo_ep_count} – comparison uses the first {n_paired} episode(s) only."
             )
 
-        for key, label, higher_better in METRICS:
-            bf_vals  = by_algo[bf_key].get(key,  [])[:n_paired]
-            ppo_vals = by_algo[ppo_key].get(key, [])[:n_paired]
+        for row in COMPARISON_TABLE_ROWS:
+            bf_vals  = by_algo[bf_key].get(row.key,  [])[:n_paired]
+            ppo_vals = by_algo[ppo_key].get(row.key, [])[:n_paired]
             if not bf_vals or not ppo_vals:
                 continue
             bf_mean  = float(np.mean(bf_vals))
@@ -1401,12 +1260,12 @@ def main():
                 pct = float("nan")
             if np.isnan(pct):
                 winner = "–"
-            elif higher_better:
+            elif row.higher_is_better:
                 winner = "PPO" if pct > 0 else ("BestFit" if pct < 0 else "tie")
             else:
                 winner = "PPO" if pct < 0 else ("BestFit" if pct > 0 else "tie")
             print(
-                f"{label:<{col_w[0]}}"
+                f"{row.label:<{col_w[0]}}"
                 f"{bf_mean:>{col_w[1]}.4f}"
                 f"{ppo_mean:>{col_w[2]}.4f}"
                 f"{pct:>{col_w[3]}.2f}%"

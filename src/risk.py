@@ -193,7 +193,7 @@ def compute_placement_risk_score(
     max_ttl: int,
     node_incident_pressure: dict[int, float],
     node_downtime: dict[int, int],
-) -> tuple[float, float, float, float]:
+):
     """
     TTL-aware expected-loss risk integral and stochastic incident metrics.
 
@@ -204,15 +204,19 @@ def compute_placement_risk_score(
     When a node takes a hit it is marked unavailable for incident_downtime_steps
     request ticks (mutates node_downtime in-place).
 
-    incident_cost = Σ_{nodes_with_hits} sfcs_on_node × revenue_per_ttl_step
-                    × incident_downtime_steps
-    This reflects revenue lost by ALL SFCs on the downed node, not just the
-    current request.
+    incident_cost (stochastic) = Σ_{nodes_with_hits} sfcs_on_node
+                                  × revenue_per_ttl_step × downtime_steps
+
+    expected_lost_revenue (deterministic) = Σ_i P(node i hit) × sfcs_i
+                                             × revenue_per_ttl_step × downtime_steps
+    where P(node i hit) = 1 - (1 - p_base_i)^exposure_steps
+    This is the learnable, noise-free version used in the reward signal.
 
     Mutates node_incident_pressure and node_downtime in-place.
 
     Returns:
-        (risk_integral, realized_incidents, incident_cost, expected_incidents)
+        (risk_integral, realized_incidents, incident_cost,
+         expected_incidents, expected_lost_revenue)
     """
     if not risk_cfg.get("enabled", False) or not placement:
         return 0.0, 0.0, 0.0, 0.0
@@ -279,9 +283,17 @@ def compute_placement_risk_score(
             # Revenue lost = every SFC on this node loses downtime_steps ticks of revenue.
             incident_cost += sfc_counts[idx] * revenue_per_ttl_step * downtime_steps
 
+    # Deterministic expected lost revenue: P(node hit) × sfcs × revenue × downtime.
+    # P(node i hit in exposure_steps steps) = 1 - (1 - p_base_i)^exposure_steps
+    p_hit = 1.0 - np.power(np.maximum(1.0 - p_base, 0.0), exposure_steps)
+    expected_lost_revenue = float(
+        np.sum(p_hit * sfc_counts) * revenue_per_ttl_step * downtime_steps
+    )
+
     return (
         float(risk_integral),
         float(realized_incidents),
         float(incident_cost),
         float(expected_incidents),
+        expected_lost_revenue,
     )

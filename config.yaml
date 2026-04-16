@@ -129,6 +129,6 @@ risk:
 # Evaluation Configuration
 evaluation:
   num_requests: 1000
-  num_episodes: 20
+  num_episodes: 5
   use_training_substrate: true
   use_training_request_generator: false

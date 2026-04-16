@@ -29,3 +29,6 @@ torch = [{ index = "pytorch-cu128", marker = "platform_system == 'Windows'" }]
 name = "pytorch-cu128"
 url = "https://download.pytorch.org/whl/cu128"
 explicit = true
+
+[tool.pyright]
+extraPaths = ["."]

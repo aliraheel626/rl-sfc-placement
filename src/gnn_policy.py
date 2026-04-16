@@ -45,7 +45,7 @@ class GNNFeaturesExtractor(BaseFeaturesExtractor):
         self,
         observation_space: gym.spaces.Dict,
         edge_getter: Callable[[], torch.Tensor],
-        node_feat_dim: int = 19,
+        node_feat_dim: int = 20,
         hidden_dim: int = 64,
         features_dim: int = 256,
         gnn_type: str = "sage",
@@ -58,7 +58,7 @@ class GNNFeaturesExtractor(BaseFeaturesExtractor):
         Args:
             observation_space: Dict observation space from the environment
             edge_getter: Callable that returns current edge_index (2, num_edges)
-            node_feat_dim: Dimension of per-node features (default: 19)
+            node_feat_dim: Dimension of per-node features (default: 20)
             hidden_dim: Hidden dimension for GNN layers
             features_dim: Output dimension of the feature extractor
             gnn_type: Type of GNN layer ("gcn", "gat", "sage")

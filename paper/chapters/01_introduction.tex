@@ -67,9 +67,9 @@ This thesis addresses all four gaps through the following research objectives:
 
 \begin{enumerate}
   \item Design an intelligent Deep Reinforcement Learning framework for SFC placement — based on Maskable PPO — that \textit{guarantees} feasibility of all placements through hard action masking.
-  \item Develop a composite security posture and risk model that quantifies operational risk as a function of node security posture, tenancy, stochastic incident dynamics, and exposure time, and incorporate it into the DRL reward signal.
+  \item Develop an expected-loss security posture risk model that quantifies operational risk as a function of per-node incident probability, chain co-location (blast radius), and time-exposure, together with a deterministic expected lost revenue signal for smooth policy optimization, and incorporate both into the DRL reward signal.
   \item Integrate a GNN-based feature extractor into the DRL policy to capture topology-aware node embeddings that enable globally informed, security posture-conscious placement decisions.
-  \item Evaluate the proposed framework against a risk-minimizing Best-Fit heuristic on comprehensive metrics including acceptance ratio, latency, security margin, substrate utilization, tenancy, and realized incident rates.
+  \item Evaluate the proposed framework against a risk-minimizing Best-Fit heuristic on comprehensive metrics including acceptance ratio, risk integral, security margin, substrate utilization, tenancy, revenue, expected lost revenue, and realized incident rates.
 \end{enumerate}
 
 \section{Thesis Contributions}
@@ -78,11 +78,11 @@ The principal contributions of this thesis are:
 
 \begin{enumerate}
   \item \textbf{An intelligent Deep Reinforcement Learning framework for security posture aware SFC placement}, instantiated as Maskable PPO, with hard action masking that enforces all five constraint types (resource, latency, bandwidth, security, isolation) at every step, guaranteeing the feasibility of every accepted placement.
-  \item \textbf{A composite security posture and risk model} integrating node security score, incident pressure dynamics, VNF tenancy, SFC tenancy, stochastic incident dynamics with pressure accumulation and decay, and TTL-proportional exposure into a single normalized risk integral $\rho \in [0,1]$.
+  \item \textbf{An expected-loss security posture risk model} that computes the risk integral $\rho \in [0,1]$ as the mean per-node product of incident probability (driven by security posture, load, and incident pressure), chain co-location count, and TTL-proportional exposure, paired with a deterministic expected lost revenue penalty that provides low-variance gradient signal for policy optimization.
   \item \textbf{A topology-aware GNN feature extractor} (supporting GCN, GAT, and GraphSAGE architectures) with attention-weighted graph aggregation and MLP-based global context fusion, embedded within the DRL policy to encode each node's structural role and current security posture.
   \item \textbf{A windowed acceptance ratio reward modifier} that provides curriculum-style feedback by scaling terminal rewards according to recent placement success rates, improving training stability of the DRL agent.
   \item \textbf{A fair evaluation framework} that aligns the random number generator state across all algorithms so that the DRL agent and baseline receive identical SFC request streams, enabling unbiased comparison.
-  \item \textbf{Comprehensive experimental analysis} across acceptance ratio, latency, security margin, substrate utilization, SFC/VNF tenancy, risk integral, expected and realized incident rates, and incident cost.
+  \item \textbf{Comprehensive experimental analysis} across acceptance ratio, risk integral, security margin, substrate utilization, SFC/VNF tenancy, total revenue, expected lost revenue, and realized incident rates.
 \end{enumerate}
 
 \section{Thesis Organization}

@@ -96,15 +96,16 @@ Table~\ref{tab:results} presents the comparative evaluation of the Maskable PPO 
 \hline
 \textbf{Metric} & \textbf{Maskable PPO} & \textbf{Best-Fit} \\ \hline
 Acceptance Ratio & -- & -- \\
-Avg. Latency (ms) & -- & -- \\
-Avg. Security Margin & -- & -- \\
-Avg. SFC/Node & -- & -- \\
-Avg. VNF/Node & -- & -- \\
-Substrate Utilization & -- & -- \\
 Avg. Risk Integral $\rho$ & -- & -- \\
-Avg. Realized Incidents & -- & -- \\
-Avg. Expected Incidents & -- & -- \\
-Avg. Incident Cost & -- & -- \\
+Substrate Utilization & -- & -- \\
+Avg. SFCs/Node & -- & -- \\
+Avg. VNFs/Node & -- & -- \\
+Avg. Security Margin & -- & -- \\
+Total Realized Incidents & -- & -- \\
+Total Lost Revenue & -- & -- \\
+Total Revenue & -- & -- \\
+Avg. Revenue / Request & -- & -- \\
+Avg. Lost Revenue / Request & -- & -- \\
 Avg. Decision Time (ms) & -- & -- \\
 \hline
 \multicolumn{3}{l}{\footnotesize Note: Values to be populated from experimental runs via \texttt{python -m src.compare}.}\\
@@ -133,6 +134,46 @@ Figure~\ref{fig:risk_compare} shows the rolling average risk integral for both a
 \includegraphics[width=0.8\textwidth]{compare/sfc_risk_training.png}
 \caption{Rolling average risk integral for Maskable PPO and Best-Fit over the evaluation horizon.}
 \label{fig:risk_compare}
+\end{figure}
+
+\subsection{Security Margin}
+
+Figure~\ref{fig:sec_margin} shows the rolling average security margin — the surplus of the placement node's effective security score over the SFC's minimum requirement — across the evaluation. A higher margin indicates that the algorithm consistently selects nodes with stronger security posture than strictly necessary.
+
+\begin{figure}[!ht]
+\centering
+\includegraphics[width=0.8\textwidth]{compare/security_score_training.png}
+\caption{Rolling average security margin for Maskable PPO and Best-Fit over the evaluation horizon.}
+\label{fig:sec_margin}
+\end{figure}
+
+\subsection{Revenue and Incident Cost}
+
+Figure~\ref{fig:revenue} presents the total revenue earned per evaluation episode and Figure~\ref{fig:lost_revenue} presents the total expected lost revenue due to incidents. Together these metrics capture the economic impact of placement quality: a higher revenue indicates more SFCs accepted for longer durations, while a lower lost revenue indicates fewer incident-induced service disruptions.
+
+\begin{figure}[!ht]
+\centering
+\includegraphics[width=0.8\textwidth]{compare/revenue_training.png}
+\caption{Total revenue per episode for Maskable PPO and Best-Fit.}
+\label{fig:revenue}
+\end{figure}
+
+\begin{figure}[!ht]
+\centering
+\includegraphics[width=0.8\textwidth]{compare/incident_cost_training.png}
+\caption{Total lost revenue (incident cost) per episode for Maskable PPO and Best-Fit.}
+\label{fig:lost_revenue}
+\end{figure}
+
+\subsection{Realized Incidents}
+
+Figure~\ref{fig:incidents_compare} shows the total realized incidents per evaluation episode. This metric captures the Monte Carlo outcome of the stochastic incident process and validates that the deterministic risk integral $\rho_r$ correlates with actual incident occurrences.
+
+\begin{figure}[!ht]
+\centering
+\includegraphics[width=0.8\textwidth]{compare/realized_incidents_training.png}
+\caption{Total realized incidents per episode for Maskable PPO and Best-Fit.}
+\label{fig:incidents_compare}
 \end{figure}
 
 \section{Analysis and Discussion}

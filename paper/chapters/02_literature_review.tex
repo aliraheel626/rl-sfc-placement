@@ -415,10 +415,13 @@ structure; ``Fair Eval.'' indicates whether comparison aligns the
 request stream across algorithms. (\checkmark: yes; \textendash: no;
 $\circ$: partial.)}
 \label{tab:lr_comparison}
-\small
-\begin{tabularx}{\textwidth}{l X c c c c c}
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.15}
+\newcommand{\rothead}[1]{\rotatebox[origin=c]{60}{\textbf{#1}}}
+\begin{tabularx}{\textwidth}{@{}p{3.1cm} X *{5}{c}@{}}
 \toprule
-\textbf{Work} & \textbf{Technique} & \textbf{Sec.} & \textbf{Dyn.~Sec.} & \textbf{Hard Constr.} & \textbf{Graph Policy} & \textbf{Fair Eval.} \\
+\textbf{Work} & \textbf{Technique} & \rothead{Sec.} & \rothead{Dyn.~Sec.} & \rothead{Hard Constr.} & \rothead{Graph Policy} & \rothead{Fair Eval.} \\
 \midrule
 Yang \textit{et al.}~\cite{yang_efficient_2024}            & Heuristic (ESSFCD-DO)                    & \checkmark   & \textendash & \textendash & \textendash & \textendash \\
 Sun \textit{et al.}~\cite{sun_security-aware_2023}         & Security-time scheduling                 & \checkmark   & \textendash & \textendash & \textendash & \textendash \\

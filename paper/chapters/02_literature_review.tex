@@ -2,127 +2,565 @@
 \chapter{Literature Review}
 % ===========================================================================
 
-\section{Network Function Virtualization and Service Function Chaining}
+The title of this thesis --- \textit{Intelligent Security Posture
+Aware Service Function Chain Placement Using Deep Reinforcement
+Learning} --- commits to four coupled claims: (i) that \textbf{SFC
+placement} is a technically meaningful research problem; (ii) that an
+\textbf{intelligent, learning-based} placement policy offers
+advantages over classical heuristic and optimization approaches; (iii)
+that \textbf{security posture} --- the dynamic, load- and
+incident-dependent security state of each substrate node --- is a
+first-class placement concern that must be modelled explicitly; and
+(iv) that \textbf{deep reinforcement learning (DRL)}, appropriately
+extended with hard-constraint masking and topology-aware policy
+representations, is the right class of intelligent method to deliver
+all of the above simultaneously.
 
-\subsection{Fundamentals of NFV}
+This chapter validates each of these four claims against the recent
+literature. Section~\ref{sec:lr_sfc_placement_problem} establishes
+that SFC placement is an active, unresolved research problem whose
+multi-dimensional constraints justify sustained study.
+Section~\ref{sec:lr_security_aware} surveys security-aware placement
+work, and Section~\ref{sec:lr_posture_gap} extracts from it the
+specific \emph{dynamic security posture} gap that the thesis title
+addresses. Section~\ref{sec:lr_drl} reviews DRL-based placement and
+shows both that DRL is the emerging technique of choice and that no
+prior DRL work is simultaneously posture-aware, hard-constrained, and
+topology-aware. Section~\ref{sec:lr_classical} surveys classical
+optimization and heuristic approaches to motivate the
+\textit{intelligent, learning-based} stance taken by the thesis.
+Finally, Section~\ref{sec:lr_synthesis} presents a comparative
+summary, mapping each of the four title components to concrete gaps
+in the literature and showing how the proposed framework is the
+first, to our knowledge, to close all four simultaneously.
 
-The European Telecommunications Standards Institute (ETSI) formalized the NFV framework in 2013 \cite{etsi2013}, proposing a reference architecture that separates the NFV Infrastructure (NFVI), the VNF software components, and the NFV Management and Orchestration (MANO) layer. The NFVI encompasses compute, storage, and networking resources pooled across data centers; VNFs are software implementations of network functions executed as virtual machines or containers on the NFVI; and MANO provides lifecycle management of VNFs and the services they compose.
+\section{SFC Placement: A Multi-Constraint Online Problem}
+\label{sec:lr_sfc_placement_problem}
 
-Key motivations for NFV include: consolidation of diverse network appliances onto standard hardware; elastic scaling of VNF instances in response to traffic load; rapid service innovation through software-based function development; and reduced total cost of ownership through commodity hardware and centralized management \cite{mijumbi2016}.
+The first claim implicit in the title is that \textit{SFC placement}
+continues to warrant dedicated research. The breadth of activity
+surveyed in this chapter confirms it: recent work attacks SFC
+placement through heuristics, meta-heuristics, mathematical
+programming, learning-augmented optimization, and deep reinforcement
+learning --- each motivated by a different combination of objectives
+(delay, cost, energy, reliability, security) and deployment contexts
+(cloud, edge, fog, multi-domain, multi-vendor, IoT, air traffic
+networks). Saidi~et~al. prove that VNF placement and chaining remains
+NP-complete even under restrictive assumptions on infrastructure and
+chain size, motivating the continued search for efficient online
+methods~\cite{saidi_constrained_2024}; Han, Meng, and Fan show that
+even basic choices such as ``cloud versus edge'' placement have
+non-trivial consequences for substrate
+utilization~\cite{han_sfc_2024}; Liang~et~al. demonstrate that
+seemingly lower-level concerns such as the \emph{position} of packet
+loss within a chain can dominate end-to-end
+cost~\cite{liang_position-aware_2024}. The problem therefore is not
+merely open, it is multi-dimensional, dynamic, and rich with
+sub-problems that continue to generate new formulations.
 
-\subsection{Service Function Chaining}
+\section{Security-Aware SFC Placement}
+\label{sec:lr_security_aware}
 
-RFC 7665 \cite{halpern2015} defines an SFC as an ordered set of abstract service functions and ordering constraints that together define the required treatment for packets and/or flows. The Service Function Chaining problem has two core sub-problems: \textit{function chain composition} (determining which VNFs constitute a service) and \textit{function chain embedding} (mapping the abstract chain to concrete infrastructure). This thesis focuses on the embedding problem.
+The second title claim --- that placement must be \textit{security
+posture aware} --- begins with the observation that security is now a
+first-class placement objective in virtualized networks. The surveyed
+works in this area differ along three axes: (i) how the security
+requirement is modelled, (ii) what is optimized (cost, delay, revenue,
+protection), and (iii) how much of the \emph{dynamic} security state
+is taken into account during placement. Crucially, as will be shown in
+Section~\ref{sec:lr_posture_gap}, the third axis is where the existing
+literature is weakest and where the posture-aware framing of this
+thesis finds its justification.
 
-Formally, an SFC request $r$ is a tuple $r = \langle \mathcal{V}_r, \mathbf{c}_r, \ell_r^{\max}, b_r^{\min}, s_r^{\min}, \tau_r, \delta_r \rangle$ where $\mathcal{V}_r = \{v_1, v_2, \ldots, v_{K_r}\}$ is the ordered sequence of VNFs, $\mathbf{c}_r$ encodes per-VNF resource demands, $\ell_r^{\max}$ is the maximum end-to-end latency, $b_r^{\min}$ is the minimum link bandwidth, $s_r^{\min}$ is the minimum node security score, $\tau_r$ is the time-to-live (TTL), and $\delta_r \in \{0,1\}$ indicates whether hard isolation is required.
+\subsection{Static-Level Security and Delay Optimization}
 
-\subsection{Challenges in SFC Embedding}
+An influential strand of work treats security as a static property of
+each substrate node against which a service-specified minimum level
+must be enforced. Yang~et~al. develop an air-traffic-information
+network placement method, ESSFCD-DO, in which VNF aggregation
+(VNFAA-SRCO), topology-aware VNF deployment (VNFD-TA), and $k$-shortest
+path routing are composed to minimize end-to-end delay while
+respecting security and resource budgets; the authors report
+improvements in both delay and long-term revenue-to-cost
+ratio~\cite{yang_efficient_2024}. Sun~et~al. study the same family of
+objectives for edge-cloud task scheduling of DNN-based IoT services,
+combining a security-related risk model with time-guaranteed domain
+construction and security-aware task ranking, and demonstrating gains
+over several delay- or security-only
+baselines~\cite{sun_security-aware_2023}.
 
-The SFC embedding problem is NP-hard as it generalizes the Virtual Network Embedding (VNE) problem \cite{yu2008}. The combinatorial explosion of feasible mappings, coupled with the need to jointly optimize multiple objectives (resource efficiency, latency, security, cost), makes exact optimization intractable for large networks. Additional challenges include: \textit{online arrivals} (requests arrive dynamically and must be processed in real time); \textit{resource fragmentation} (accepted SFCs hold resources for their TTL, potentially blocking future requests); \textit{multi-dimensional resource constraints} (CPU, RAM, storage, bandwidth must all be simultaneously satisfied); and \textit{fairness} (the placement policy must balance the load across substrate nodes to avoid hotspots) \cite{nfv5g2017}.
+While effective, both approaches model security as a per-node scalar
+checked at placement time. They do not track incident history, do not
+let node security degrade under load, and cannot preempt placements
+that would concentrate risk on already-stressed nodes.
 
-\section{Classical SFC Placement Algorithms}
+\subsection{Security-Aware Scheduling and Cost Optimization}
 
-\subsection{Integer Linear Programming}
+Dubba and Killi formulate the dynamic SFC scheduling problem with
+simultaneous security, cost, and deadline constraints and prove it
+NP-hard. They propose two particle-swarm heuristics --- PSO-SFCS and a
+group-learning variant GLPSO-SFCS --- over a three-level security
+model that distinguishes the security posture of both VNFs and
+physical machines, reporting sizable reductions in security-violation,
+deadline-violation, and SLA-violation
+ratios~\cite{dubba_security-aware_2024}. Wang~et~al. consider
+security-aware SFC embedding with \textit{asymmetric dedicated
+protection}: each service function has multiple versions with
+different security guarantees and costs, and their APPF-DSI augmenting-path
+algorithm jointly chooses the version, builds a primary-first
+disjoint backup chain, and embeds both, improving cost over benchmarks
+extended from the state of the
+art~\cite{wang_security-aware_2024}. Wang~et~al. extend this line of
+work to multi-vendor edge networks, identifying the ``redundancy
+security accumulation'' phenomenon caused by directly summing the
+security levels of chained functions, and propose the
+security-cost-balance SCB-SD heuristic, which is shown to be a
+logarithmic-approximation of the
+optimum~\cite{wang_towards_2025}. Both Wang contributions integrate
+security into the \emph{composition} of the chain itself, not just the
+\emph{embedding}; however, the threat model remains static and
+agnostic of load.
 
-ILP formulations \cite{cohen2015, bari2015} model the SFC embedding as an optimization problem over binary placement variables, with constraints encoding resource, latency, bandwidth, and security requirements. These approaches are exact and can incorporate complex multi-objective cost functions. However, ILP is NP-hard, and practical instances with tens of nodes and VNFs require hours to solve, making ILP infeasible for online placement \cite{nfv5g2017}.
+\subsection{Attack-Aware and Dynamically Defensive Placement}
 
-\subsection{Greedy Heuristics}
+A third group of works admits the idea that the security state of the
+infrastructure is itself a dynamic variable. Iffl\"ander, Beierlieb,
+and Kounev present an \textit{attack-aware} security function chain
+reordering framework that changes the order of security functions
+(e.g., firewall, IDS, DPI) as a function of observed malicious
+traffic, empirically showing that chain order materially affects
+detection performance and that no single static order dominates in
+every situation~\cite{ifflander_attack-aware_2024}. Jia~et~al.
+combine federated learning with SFC in mobile edge computing in the
+FL-SFC framework, using a CNN-GRU anomaly-detection model at the edge
+and a sparsification-plus-quantization compression scheme to lower
+communication cost during training; the resulting pipeline produces
+dynamic service policies and detects
+anomalies~\cite{jia_efficient_2025}. Song~et~al. go further by coupling
+a consortium blockchain for malicious-device detection with a DRL
+placement agent (CB-DRL) built around an LSTM sequence-to-sequence
+policy, demonstrating improvements in load-balancing and acceptance
+ratio under DDoS-attack traffic in an IoT
+scenario~\cite{song_end--end_2025}.
 
-First-Fit (FF) and Best-Fit (BF) algorithms process VNFs sequentially, selecting the first or best-scoring feasible node at each step. Their key advantage is computational efficiency (linear in the number of nodes per VNF), making them suitable for online scenarios. The Best-Fit criterion is typically defined as minimizing resource waste (the excess capacity after VNF allocation), though variants that minimize cost, latency, or risk have been proposed \cite{bhamare2016}. The primary limitation of greedy algorithms is their myopic nature: locally optimal decisions may globally fragment resources and reduce the acceptance ratio for future requests.
+These papers are the closest in spirit to the present thesis: they
+acknowledge that placement must react to the security state of the
+infrastructure. However, as argued next, none of them implement the
+continuous, dynamic security posture concept that the thesis title
+explicitly invokes.
 
-\subsection{Dynamic Programming}
+\subsection{Validating the ``Security Posture Aware'' Claim: The Dynamic-Posture Gap}
+\label{sec:lr_posture_gap}
 
-Viterbi-style dynamic programming \cite{viterbi1967} can find the minimum-latency placement by building a trellis over the space of (VNF index, substrate node) pairs and backtracking from the optimal final node. This approach runs in $O(K \cdot N^2)$ time (where $K$ is the number of VNFs and $N$ is the number of substrate nodes) and guarantees optimality with respect to the latency objective. However, it does not optimize resource utilization, risk, or tenancy, and it does not account for the long-term consequences of resource allocation decisions.
-
-\subsection{Meta-heuristics}
-
-Genetic algorithms (GAs) \cite{rankothge2017}, particle swarm optimization (PSO), and simulated annealing have been applied to SFC embedding. These approaches can explore large solution spaces and optimize multi-objective cost functions, but they require many evaluations per request, making them too slow for online scenarios. They also require careful tuning of their hyperparameters and may not converge to good solutions for complex constraint structures.
-
-\section{Deep Reinforcement Learning for Network Resource Management}
-
-\subsection{Early DRL Applications}
-
-The application of Deep Reinforcement Learning (DRL) to network resource management was pioneered by Mao et al. \cite{mao2016} with the DeepRM system for cluster job scheduling. DeepRM trains a policy gradient agent to schedule incoming jobs onto a shared compute cluster, learning to minimize average job completion time without explicit knowledge of the job duration distribution. The key insight — that DRL can learn resource management policies that outperform hand-crafted heuristics by exploiting distributional structure in the workload — has since been applied extensively to NFV and SFC scenarios.
-
-\subsection{DRL for Virtual Network Embedding}
-
-Yan et al. \cite{yan2020} proposed a DRL approach to VNE that uses a Graph Convolutional Network (GCN) to encode substrate node states and trains a policy gradient agent to embed virtual networks sequentially. Their approach achieves higher long-term revenue-to-cost ratios than classical heuristics by learning to leave room for future requests. Subsequent work by Vne-ddpg \cite{zhu2021} and others extended this to continuous action spaces and multi-agent settings.
-
-\subsection{DRL for SFC Embedding}
-
-Heo et al. \cite{heo2020} applied deep Q-networks (DQN) to SFC embedding, encoding the substrate state as a matrix of normalized resource utilizations and training the agent on synthetic topologies. They demonstrated that the DRL agent learns to balance load across nodes, leading to higher acceptance ratios than First-Fit and Best-Fit under heavy load. Dolati et al. \cite{dolati2021} extended this to multi-domain scenarios using multi-agent DRL.
-
-A key limitation of early DRL-based SFC methods is the handling of constraints: most approaches encode constraint violations as large negative rewards, which still allows the agent to take infeasible actions during training and inference, leading to occasional violations. None of these works incorporate security posture awareness — the ability to reason about the evolving vulnerability profile and incident history of substrate nodes — into the DRL policy or reward signal. This motivates the use of action masking combined with a security posture-aware reward.
-
-\subsection{Proximal Policy Optimization}
-
-PPO \cite{schulman2017} is a policy gradient DRL method that stabilizes training by constraining the ratio between the updated and the old policy within a clipped region, preventing destructively large policy updates. PPO alternates between sampling rollouts from the current policy and performing multiple epochs of mini-batch updates on the collected data, making it significantly more sample-efficient than vanilla policy gradient methods. PPO has become one of the most widely used DRL algorithms in practice due to its simplicity, stability, and strong empirical performance across a range of domains \cite{raffin2021}.
-
-\section{Action Masking in Reinforcement Learning}
-
-Action masking \cite{huang2020, vinyals2019} is a technique for enforcing hard constraints in RL by zeroing out the logits (or probabilities) of infeasible actions before the policy samples an action. The agent thus only ever chooses from the feasible action set, guaranteeing constraint satisfaction during both training and inference.
-
-Maskable PPO \cite{sb3contrib2021} extends PPO with action masking support. The environment provides a binary mask over actions at each step; the policy's softmax is computed only over unmasked (feasible) actions. Critically, the value function and policy gradient are also corrected to account for the restricted action set, avoiding bias in the critic's value estimates.
-
-In the context of SFC placement, the feasible action set at each step corresponds to substrate nodes that satisfy all resource, bandwidth, latency, security, and isolation constraints for the current VNF. Masking infeasible nodes eliminates wasted exploration of constraint-violating placements, dramatically improving sample efficiency \cite{huang2020}.
-
-\section{Graph Neural Networks}
-
-\subsection{Graph Convolutional Networks}
-
-Kipf and Welling \cite{kipf2017} introduced Graph Convolutional Networks (GCNs), which apply a spectral convolution approximated as a first-order Chebyshev polynomial to propagate and aggregate features across graph neighborhoods. For a graph with node feature matrix $\mathbf{X}$ and normalized adjacency $\hat{\mathbf{A}}$, a single GCN layer computes:
-\begin{equation}
-\mathbf{H}^{(l+1)} = \sigma\!\left(\hat{\mathbf{A}} \mathbf{H}^{(l)} \mathbf{W}^{(l)}\right),
-\end{equation}
-where $\hat{\mathbf{A}} = \tilde{\mathbf{D}}^{-1/2} \tilde{\mathbf{A}} \tilde{\mathbf{D}}^{-1/2}$, $\tilde{\mathbf{A}} = \mathbf{A} + \mathbf{I}$, $\tilde{\mathbf{D}}$ is the diagonal degree matrix, and $\sigma$ is a nonlinearity. GCNs have been applied to node classification, link prediction, and graph-level tasks, and have demonstrated strong performance on citation networks, social graphs, and molecular graphs \cite{kipf2017}.
-
-\subsection{Graph Attention Networks}
-
-Graph Attention Networks (GATs) \cite{velickovic2018} replace the fixed, degree-normalized aggregation of GCN with a learned attention mechanism that assigns different importance to different neighbors:
-\begin{equation}
-\mathbf{h}_i^{(l+1)} = \sigma\!\left(\sum_{j \in \mathcal{N}(i)} \alpha_{ij} \mathbf{W} \mathbf{h}_j^{(l)}\right),
-\end{equation}
-where $\alpha_{ij}$ are attention coefficients computed by a small neural network applied to the concatenated embeddings of node $i$ and its neighbor $j$, normalized via softmax over $\mathcal{N}(i)$. Multi-head attention \cite{vaswani2017} is commonly used to stabilize training and improve expressiveness. GATs are particularly well-suited to graphs where the relative importance of neighbors varies — as is the case in substrate networks where some nodes are bottlenecks and others are peripheral.
-
-\subsection{GraphSAGE}
-
-Hamilton et al. \cite{hamilton2017} proposed GraphSAGE (Graph Sample and Aggregate), an inductive learning framework that generates node embeddings by sampling and aggregating features from a fixed-size neighborhood:
-\begin{equation}
-\mathbf{h}_i^{(l+1)} = \sigma\!\left(\mathbf{W} \cdot \left[\mathbf{h}_i^{(l)} \,\|\, \text{AGGREGATE}\!\left(\left\{\mathbf{h}_j^{(l)} : j \in \mathcal{N}(i)\right\}\right)\right]\right),
-\end{equation}
-where $\|$ denotes concatenation and AGGREGATE is a permutation-invariant function (mean, max-pool, or LSTM). GraphSAGE is \textit{inductive}: the parameters are shared across nodes and graphs, enabling the model to generalize to unseen nodes and topologies at inference time without retraining. This is a particularly desirable property for SFC placement, where the substrate topology may evolve over time.
-
-\subsection{GNNs for Network Optimization}
-
-GNNs have been increasingly applied to network optimization problems. Lotfi et al. \cite{lotfi2022} applied GNNs to the VNE problem, learning topology-aware embeddings that capture the structural role of each substrate node. Shi et al. \cite{shi2021} used GNNs for link scheduling in wireless networks, demonstrating superior performance over MLP-based policies due to their ability to model interference patterns. GNNs have also been applied to traffic engineering \cite{rusek2020}, routing \cite{almasan2019}, and resource allocation in 5G networks \cite{guo2021}.
-
-\section{Security Posture-Aware Network Management}
-
-\subsection{Security Posture in NFV}
-
-NFV introduces novel security challenges relative to hardware-based deployments \cite{pattaranantakul2016}. Hypervisor vulnerabilities, side-channel attacks between co-located VMs, and the expanded attack surface of commodity hardware all elevate the risk of security incidents in NFV environments. Furthermore, VNF co-location — multiple tenants sharing the same physical node — increases the exposure of each VNF to incidents originating from co-located functions.
-
-The concept of \textit{security posture} extends beyond a static node security score. It captures the dynamic state of a node's vulnerability and resilience: a node that has recently experienced a security incident has degraded effective security — its posture has weakened — and should be treated with higher risk weight until its posture recovers. Modeling this temporal dimension of security is essential for realistic risk assessment in NFV placement.
-
-\subsection{Security Posture-Aware Placement}
-
-Several works have proposed security- or risk-aware SFC or VNF placement approaches. Pattaranantakul et al. \cite{pattaranantakul2016} proposed a security-aware NFV service function chaining framework that models node security levels and routes SFC traffic through nodes meeting minimum security thresholds. Yu et al. \cite{yu2021} formulated a risk-minimizing VNF placement problem using a threat model based on the Common Vulnerability Scoring System (CVSS). However, these works model security statically and do not account for dynamic incident pressure — the accumulation and decay of security posture degradation due to historical incidents — or stochastic failure events driven by load and security posture.
-
-The framework proposed in this thesis addresses this gap by modeling security posture as a dynamic, time-varying state variable, and incorporating it directly into the DRL reward and constraint mechanisms.
-
-\subsection{Stochastic Failure Models in Networks}
-
-Stochastic models of node and link failure have a long history in network reliability analysis \cite{barlow1975}. Bernoulli failure models, in which each node fails independently with a fixed probability, are widely used for their tractability. More realistic models incorporate load-dependent failure rates (higher utilization increases the failure probability) and correlated failures driven by shared vulnerability \cite{yago2019}. The security posture risk model proposed in this thesis builds on these ideas, incorporating both security posture-dependent incident probability and accumulated incident pressure as a state variable that degrades node availability over time.
-
-\section{Summary and Research Gaps}
-
-The reviewed literature reveals the following gaps that motivate this thesis:
+The phrase \textit{security posture aware} in the thesis title
+deliberately departs from the static security-level framing that
+dominates the reviewed literature. Following NIST, security posture
+is the status of information resources and controls \emph{together
+with} the capability to respond to and recover from threats: it is
+inherently a dynamic, time-varying property, driven by load,
+historical incidents, applied controls, and remediation. Existing
+security-aware SFC placement work falls short of this notion in three
+concrete ways:
 
 \begin{enumerate}
-  \item Most DRL-based SFC placement methods do not guarantee hard constraint satisfaction, relying instead on penalty-based soft constraints.
-  \item GNN-based policies for SFC placement are underexplored, particularly the combination of multi-architecture GNNs with Maskable PPO as the DRL backbone.
-  \item Security posture awareness — including dynamic incident pressure, security score degradation, and stochastic incident events driven by tenancy, load, and historical pressure — is absent from existing DRL-based placement frameworks.
-  \item Evaluation frameworks typically do not align the request stream between DRL and baseline algorithms, making fair comparison difficult.
+  \item \textbf{Static security levels.} Yang~et~al., Sun~et~al.,
+  Dubba and Killi, and both Wang
+  groups~\cite{yang_efficient_2024,sun_security-aware_2023,dubba_security-aware_2024,wang_security-aware_2024,wang_towards_2025}
+  treat each node's security as a fixed scalar (or discrete level)
+  that is checked against a requested threshold. A node that has just
+  suffered an incident and one that has been incident-free for weeks
+  are treated identically, because the security model is not a state
+  variable that evolves with observed events.
+  \item \textbf{Reactive detection rather than proactive placement.}
+  Iffl\"ander~et~al., Jia~et~al., and Song~et~al.
+  \cite{ifflander_attack-aware_2024,jia_efficient_2025,song_end--end_2025}
+  \emph{do} admit dynamic information --- attack traffic, anomaly
+  scores, blockchain-verified device status --- but use it to reorder
+  chains, detect anomalies, or screen devices \emph{after} placement
+  decisions have been made. Posture does not enter the placement
+  decision itself as an optimization signal.
+  \item \textbf{No load-driven incident dynamics.} None of the
+  reviewed works model the empirically established coupling between
+  node \emph{load} and the probability of a security incident: a
+  heavily loaded node, or one hosting many tenants, is more likely
+  to experience timing side-channels, denial-of-service effects, or
+  misconfiguration than an idle one. Ignoring this coupling means
+  that ``safe'' placements chosen in the morning may become
+  high-posture-risk placements by the afternoon, yet the placement
+  policy has no mechanism to anticipate this.
 \end{enumerate}
 
-This thesis addresses all four gaps through the intelligent security posture aware DRL framework described in Chapters 3 and 4.
+The thesis addresses all three of these weaknesses: it maintains
+per-node incident pressure $p_n(t)$, degrades the effective security
+$s_n^{\text{eff}}(t)$ under that pressure, lets the incident
+probability $q_n$ grow with load, and feeds every one of these signals
+into both the feasibility mask and the reward signal of the DRL agent
+(see Chapters~3 and~4). This is precisely the sense in which the
+placement policy is \textit{security posture aware}.
+
+\section{Deep Reinforcement Learning for SFC Placement}
+\label{sec:lr_drl}
+
+The fourth component of the thesis title --- \textit{Deep Reinforcement
+Learning} --- rests on the observation that DRL is now the dominant
+learning-based approach to online SFC placement. The volume, diversity,
+and recency of the works surveyed below (all of them from 2023--2025)
+validate the choice of DRL as the methodological backbone of the
+thesis. Equally important, however, is the observation that \emph{no
+single DRL placement framework in this body of work is simultaneously
+hard-constrained, topology-aware via graph neural networks, and
+driven by a dynamic security-posture reward} --- which is the combination
+that the thesis will introduce in Chapter~4. The reviewed works differ
+in their choice of algorithm, their treatment of the action space, and
+how much additional structure (parallelism, instance sharing,
+attention) they bring to the policy, but they converge on a common set
+of gaps that will be made explicit in
+Section~\ref{sec:lr_synthesis}.
+
+\subsection{Value-Based and Dueling Approaches}
+
+Ran, Wang, and Hu propose MQDR, a dynamic deployment and
+re-adjustment method built on a deep Q-network coupled with an
+M-shortest-path algorithm. Two cooperating agents --- one for
+deployment, one for readjustment --- share the substrate graph and
+use MSPA to prune the action space; the authors report a
+${\approx}25\%$ acceptance-ratio improvement over vanilla DQN and
+a ${\approx}9\%$ improvement over load-balancing shortest-path
+routing~\cite{ran_dynamic_2023}. Zhang~et~al. address a fundamental
+weakness of one-step DQN for SFC placement by introducing DQN-MSRA, a
+\emph{multistep} reinforcement learning variant that aggregates
+rewards over a window, explicitly designed to emphasize long-horizon
+outcomes over immediate-step rewards; a univariate modelling of
+placement and routing further reduces the action space and avoids
+exploration of invalid paths~\cite{zhang_dqn-msra_2025}. Taktak,
+Escheikh, and Barkaoui tailor DQN to user-centric QoE/QoS-driven
+SFC embedding for video-streaming traffic, introducing a QoE
+threshold on the running 100-episode mean as a quality-of-learning
+criterion and reporting placements that approach the optimum found
+by exhaustive search~\cite{taktak_drl_2024}.
+
+These value-based methods are effective but suffer from two common
+limitations: they enforce constraints through penalty terms rather
+than action masking, so infeasible actions remain reachable during
+both training and inference; and they do not model security as an
+explicit state dimension.
+
+\subsection{Policy-Gradient, Actor-Critic, and Hybrid Approaches}
+
+Xu~et~al. apply the asynchronous advantage actor-critic (A3C)
+algorithm to MEC SFC placement with two additional mechanisms:
+reuse of already-initialized VNFs and parallelization of the SFC into
+sub-flows processed by duplicate VNF instances, reporting a
+6--24\% improvement in quality-of-service over state-of-the-art
+clustering methods~\cite{xu_dynamic_2023}. Zahedi, Mollahoseini, and
+Heidary-Sharifabad's DSPVR system targets fog-cloud deployments and
+solves the SFC placement problem through a DRL agent that prioritizes
+the reuse of existing VNF instances, consistently beating DRL-SFCP
+and DDQP on monetary cost~\cite{zahedi_dspvr_2023}. Khemili~et~al.
+propose PBDRL, a \emph{parallel bi-state} DRL model that couples a
+Markov Decision Process module for state-transition dynamics with an
+LSTM that captures the long-term chain history, achieving
+substantially higher cumulative reward than a ``VNF deep'' baseline
+and a first-fit heuristic~\cite{khemili_parallel_2024}.
+
+Policy-gradient methods such as these are better suited to
+high-dimensional discrete action spaces than plain DQN. However, they
+still do not enforce hard constraints by construction, none of them
+model security as a dynamic placement concern, and all require
+careful reward engineering to balance competing objectives. The
+Proximal Policy Optimization (PPO) family that this thesis builds on
+addresses the first of these issues by allowing direct integration of
+action masks into the policy.
+
+\subsection{DRL with Attention Mechanisms and Parallelism}
+
+As SFCs grow more complex, placement policies have increasingly
+adopted attention mechanisms and learned parallelism. He~et~al.
+leverage an \emph{attention mechanism} within a DRL policy to jointly
+solve VNF placement and routing, attending dynamically to the most
+relevant substrate-graph regions at each decision
+step~\cite{he_leveraging_2023}. Wang's fairness-aware throughput
+maximization strategy applies DRL to parallelized VNFs in MEC, with
+the policy trained to both parallelize and place chains under
+fluctuating resource demand, improving average latency by $4.3\%$ and
+deployment rate by $1.98\%$ over the best published
+baseline~\cite{wang_fairness-aware_2025}. Lin~et~al.'s LPPIF
+framework transforms a serial SFC into a parallelized SFC by
+identifying VNF dependencies and then solves placement using DRL,
+with a flexible resource-allocation mechanism and reuse of VNF
+instances that jointly improve service latency and the acceptance
+ratio of incoming SFC requests~\cite{lin_lppif_2025}.
+
+This family of works establishes the value of \emph{topology-aware}
+and \emph{structure-aware} DRL policies for SFC placement, and
+motivates the use of graph neural networks --- the next natural step
+--- as the feature extractor of the DRL policy. The thesis presented
+here adopts exactly this direction while additionally enforcing hard
+constraints through action masking and incorporating a security
+posture reward.
+
+\section{Classical Optimization and Heuristic Approaches}
+\label{sec:lr_classical}
+
+The third component of the thesis title --- \textit{Intelligent} ---
+is intended in a precise sense: it designates a learning-based
+policy that improves with experience and generalizes across request
+distributions, as opposed to the classical algorithmic approaches
+reviewed in this section. The reviewed classical works are both strong
+baselines and, as surveyed below, a source of the formulations on
+which DRL methods rely; however, none of them learn from the request
+stream or adapt their parameters to an evolving substrate state ---
+which is the deficit the word ``intelligent'' in the title is meant to
+fill.
+
+\subsection{ILP and Learning-Augmented Optimization}
+
+Vishesh~et~al. combine an LSTM traffic-pattern predictor with an
+Integer Linear Program for SFC placement on a real KubeEdge cluster,
+using the LSTM's forecasts to feed the ILP with realistic future
+resource demands. The resulting LSTM-ILP scheduler reports a $12.5\%$
+improvement in response time over the default Kubernetes scheduler at
+a workload of 50{,}000 requests~\cite{vishesh_optimized_2025}.
+Lin~et~al. study the \emph{energy-aware} SFC embedding problem under
+hierarchical resource allocation, formulating an ILP and three
+polynomial-time heuristics that exploit device sleep states to reduce
+energy while preserving acceptance
+ratio~\cite{lin_energy-aware_2023}. Saidi~et~al. prove the VNF
+placement-and-chaining problem NP-complete for both fixed-size
+infrastructures and constant-size SFCs, and introduce a
+constrained-shortest-path heuristic (CSPH-PG) over a
+resource-homogenizing multi-partite graph that converges rapidly
+toward the ILP optimum~\cite{saidi_constrained_2024}.
+
+These works illustrate two distinct uses of classical optimization:
+as an \textit{offline oracle} that establishes achievable bounds and
+as an \textit{online heuristic} carefully tuned for a particular
+sub-problem. Their principal limitation for our purposes is the same
+as in the introduction: they do not learn from the request stream and
+they do not treat security as a dynamic state variable.
+
+\subsection{Meta-Heuristics and Auctions}
+
+When exact optimization is intractable and no training data is
+available, meta-heuristics remain a pragmatic choice.
+Tam~et~al. develop a subswarm-guided ant-colony optimization (SgACO)
+for multi-objective VNF placement and routing with an enhanced
+pheromone-update rule and a beam-search refinement, showing that the
+method satisfies many requests simultaneously and outperforms
+competitors on COGENT, CONUS, and NSF
+topologies~\cite{tam_subswarm-guided_2024}. Macedo~et~al. take an
+economic view: they propose a distributed \emph{auction}-based SFC
+placement algorithm for multi-domain 5G networks, allowing domains
+to outsource service provisioning to peer domains and reporting
+${\approx}20\%$ service-provider profit
+gains~\cite{macedo_distributed_2024}.
+
+Meta-heuristics and auctions are highly flexible but sacrifice the
+millisecond-level responsiveness that an online DRL agent enjoys
+once trained.
+
+\subsection{Specialized Objective Heuristics}
+
+A final cluster of works targets narrow but operationally important
+objectives. Han, Meng, and Fan analyze the cloud-edge placement
+setting and show that it is preferable to place an entire SFC
+\textit{either} fully in the cloud or fully at the edge; they then
+introduce a VNF performance-resource (P-R) function to describe
+how computing performance scales with allocated resources, and
+propose the RMET heuristic to maximize edge
+throughput~\cite{han_sfc_2024}. Liang~et~al. examine the often
+overlooked effect of \emph{packet-loss position}: their Palos
+scheduler accounts for the fact that packet drops late in the SFC
+waste all upstream processing, reducing packet-dropping cost by up to
+$42.73\%$ and average latency by
+$33.03\%$~\cite{liang_position-aware_2024}. Mohamad and Hassanein
+target time-critical SFCs at the edge with the PPPS scheme, which
+prioritizes premium services over best-effort ones and, via a
+prediction-based look-ahead window, \emph{preempts} resources held by
+best-effort services when necessary, driving the premium-service
+rejection rate to approximately
+zero~\cite{mohamad_preemptive_2024}.
+
+These specialized heuristics identify dimensions of the placement
+problem --- energy, packet loss, time-critical prioritization --- that
+a learning-based framework should ideally be able to integrate into a
+unified objective. This thesis demonstrates one such integration for
+the security dimension.
+
+\section{Synthesis and Positioning of This Thesis}
+\label{sec:lr_synthesis}
+
+This chapter set out to validate the four claims implicit in the
+thesis title. Table~\ref{tab:lr_comparison} brings these claims
+together by summarizing the reviewed works along the axes most
+relevant to the title: the placement technique (validating that
+\textit{SFC placement} is an active research problem); whether the
+technique is \textit{intelligent} in the learning-based sense used
+here; whether \textit{security} is addressed and whether the security
+state evolves \textit{dynamically} as posture requires; whether
+constraints are enforced as hard guarantees (necessary for a
+DRL-based intelligent policy to be trustworthy); whether the policy
+exploits graph structure (a key enabler of intelligent, topology-aware
+decisions); and whether fair comparison is maintained by aligning
+request streams across algorithms.
+
+\begin{table}[!ht]
+\centering
+\caption{Comparative summary of recent SFC-placement
+literature. ``Dyn.~Sec.'' indicates whether node security state
+evolves with incidents or load; ``Hard Constr.'' indicates guaranteed
+feasibility via mechanisms such as action masking; ``Graph Policy''
+indicates whether the policy explicitly exploits the substrate graph
+structure; ``Fair Eval.'' indicates whether comparison aligns the
+request stream across algorithms. (\checkmark: yes; \textendash: no;
+$\circ$: partial.)}
+\label{tab:lr_comparison}
+\small
+\begin{tabularx}{\textwidth}{l X c c c c c}
+\toprule
+\textbf{Work} & \textbf{Technique} & \textbf{Sec.} & \textbf{Dyn.~Sec.} & \textbf{Hard Constr.} & \textbf{Graph Policy} & \textbf{Fair Eval.} \\
+\midrule
+Yang \textit{et al.}~\cite{yang_efficient_2024}            & Heuristic (ESSFCD-DO)                    & \checkmark   & \textendash & \textendash & \textendash & \textendash \\
+Sun \textit{et al.}~\cite{sun_security-aware_2023}         & Security-time scheduling                 & \checkmark   & \textendash & \textendash & \textendash & \textendash \\
+Dubba \& Killi~\cite{dubba_security-aware_2024}            & PSO / GLPSO                              & \checkmark   & \textendash & \textendash & \textendash & \textendash \\
+Iffl\"ander \textit{et al.}~\cite{ifflander_attack-aware_2024} & Attack-aware reordering                & \checkmark   & $\circ$     & \textendash & \textendash & \textendash \\
+Wang \textit{et al.}~\cite{wang_security-aware_2024}       & APPF-DSI (dedicated protection)          & \checkmark   & \textendash & \textendash & \textendash & \textendash \\
+Jia \textit{et al.}~\cite{jia_efficient_2025}              & FL + CNN-GRU                             & \checkmark   & $\circ$     & \textendash & \textendash & \textendash \\
+Song \textit{et al.}~\cite{song_end--end_2025}             & Blockchain + DRL (LSTM)                  & \checkmark   & $\circ$     & \textendash & $\circ$     & \textendash \\
+Wang \textit{et al.}~\cite{wang_towards_2025}              & SCB-SD (log-approx.)                     & \checkmark   & \textendash & \textendash & \textendash & \textendash \\
+\midrule
+Ran \textit{et al.}~\cite{ran_dynamic_2023}                & DQN + M-shortest path                    & \textendash  & \textendash & \textendash & \textendash & \textendash \\
+He \textit{et al.}~\cite{he_leveraging_2023}               & DRL + attention                          & \textendash  & \textendash & \textendash & $\circ$     & \textendash \\
+Zhang \textit{et al.}~\cite{zhang_dqn-msra_2025}           & DQN + multi-step RL                      & \textendash  & \textendash & \textendash & \textendash & \textendash \\
+Taktak \textit{et al.}~\cite{taktak_drl_2024}              & QoE/QoS DQN                              & \textendash  & \textendash & \textendash & \textendash & \textendash \\
+Xu \textit{et al.}~\cite{xu_dynamic_2023}                  & A3C + VNF reuse + parallelism            & \textendash  & \textendash & \textendash & \textendash & \textendash \\
+Zahedi \textit{et al.}~\cite{zahedi_dspvr_2023}            & DSPVR (DRL + reuse)                      & \textendash  & \textendash & \textendash & \textendash & \textendash \\
+Khemili \textit{et al.}~\cite{khemili_parallel_2024}       & Bi-state (MDP + LSTM)                    & \textendash  & \textendash & \textendash & \textendash & \textendash \\
+Wang~\cite{wang_fairness-aware_2025}                        & DRL + NF parallelism                     & \textendash  & \textendash & \textendash & $\circ$     & \textendash \\
+Lin \textit{et al.}~\cite{lin_lppif_2025}                  & DRL + VNF share + parallelism            & \textendash  & \textendash & \textendash & $\circ$     & \textendash \\
+\midrule
+Vishesh \textit{et al.}~\cite{vishesh_optimized_2025}      & LSTM + ILP                               & \textendash  & \textendash & \checkmark  & \textendash & \textendash \\
+Macedo \textit{et al.}~\cite{macedo_distributed_2024}      & Distributed auction                      & \textendash  & \textendash & \textendash & \textendash & \textendash \\
+Han \textit{et al.}~\cite{han_sfc_2024}                    & VNF P-R function + RMET                  & \textendash  & \textendash & \textendash & \textendash & \textendash \\
+Tam \textit{et al.}~\cite{tam_subswarm-guided_2024}        & Ant-colony (SgACO)                       & \textendash  & \textendash & \textendash & \textendash & \textendash \\
+Saidi \textit{et al.}~\cite{saidi_constrained_2024}        & CSPH-PG (constrained SP)                 & \textendash  & \textendash & \checkmark  & \textendash & \textendash \\
+Lin \textit{et al.}~\cite{lin_energy-aware_2023}           & Energy-aware ILP + heuristics            & \textendash  & \textendash & \checkmark  & \textendash & \textendash \\
+Liang \textit{et al.}~\cite{liang_position-aware_2024}     & Palos (pos.-aware)                       & \textendash  & \textendash & \textendash & \textendash & \textendash \\
+Mohamad \& Hassanein~\cite{mohamad_preemptive_2024}        & PPPS (preemptive pred.)                  & \textendash  & \textendash & \textendash & \textendash & \textendash \\
+\midrule
+\textbf{This thesis} & \textbf{Maskable PPO + GNN + posture risk} & \textbf{\checkmark} & \textbf{\checkmark} & \textbf{\checkmark} & \textbf{\checkmark} & \textbf{\checkmark} \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{Validation of the Thesis Title Against the Literature}
+
+Reading Table~\ref{tab:lr_comparison} column-by-column against the
+thesis title yields the following validation.
+
+\paragraph{Service Function Chain Placement.} Every reviewed work
+studies some variant of this problem, under a wide range of
+objectives, substrates, and constraint regimes. The problem is
+demonstrably open: Saidi~et~al. confirm its NP-completeness even on
+restricted
+instances~\cite{saidi_constrained_2024}, and publications from 2023,
+2024, and 2025 in top-tier venues --- including dedicated placement
+methods~\cite{yang_efficient_2024,wang_towards_2025,vishesh_optimized_2025,mohamad_preemptive_2024,liang_position-aware_2024,han_sfc_2024}
+and full DRL-based
+frameworks~\cite{ran_dynamic_2023,he_leveraging_2023,zhang_dqn-msra_2025,taktak_drl_2024,xu_dynamic_2023,zahedi_dspvr_2023,khemili_parallel_2024,wang_fairness-aware_2025,lin_lppif_2025}
+--- show that it continues to attract active research attention.
+The ``SFC Placement'' component of the title is therefore justified.
+
+\paragraph{Intelligent (learning-based).} The classical works
+surveyed in Section~\ref{sec:lr_classical} --- ILP-based methods such
+as Saidi~et~al. and Lin~et~al., learning-augmented ILP methods such
+as Vishesh~et~al., meta-heuristics such as Tam~et~al. and
+Macedo~et~al., and fixed heuristics such as Han~et~al., Liang~et~al.,
+and Mohamad and
+Hassanein~\cite{saidi_constrained_2024,lin_energy-aware_2023,vishesh_optimized_2025,tam_subswarm-guided_2024,macedo_distributed_2024,han_sfc_2024,liang_position-aware_2024,mohamad_preemptive_2024}
+--- do not learn from the request stream, do not adapt to changing
+substrate conditions, and are unable to exploit distributional
+patterns in the workload. Even the learning-augmented ILP of
+Vishesh~et~al. confines the learning to traffic prediction, while the
+placement decision itself is produced by a non-adaptive
+solver. This gap motivates the use of an \emph{intelligent},
+learning-based policy --- concretely, the Maskable PPO agent with a
+GNN feature extractor described in Chapter~4.
+
+\paragraph{Security Posture Aware.} As argued at length in
+Section~\ref{sec:lr_posture_gap}, the existing security-aware SFC
+literature treats security either as a static per-node
+threshold~\cite{yang_efficient_2024,sun_security-aware_2023,dubba_security-aware_2024,wang_security-aware_2024,wang_towards_2025}
+or as a reactive post-placement
+signal~\cite{ifflander_attack-aware_2024,jia_efficient_2025,song_end--end_2025}.
+None of them model the continuous, load-coupled, incident-driven
+evolution of node security that the term ``posture'' demands. The
+``Dyn.~Sec.'' column of Table~\ref{tab:lr_comparison} carries no
+\checkmark outside of the final row. The ``Security Posture Aware''
+component of the title is therefore justified as addressing a
+genuine, documented gap.
+
+\paragraph{Deep Reinforcement Learning.} The nine DRL works
+reviewed in Section~\ref{sec:lr_drl} confirm that DRL has become the
+methodological centre of gravity for online, learning-based SFC
+placement, but they also reveal three specific sub-gaps that the
+thesis fills together with the posture-awareness gap above:
+
+\begin{itemize}
+  \item \textit{Hard-constraint guarantees.} Reviewed DRL placement
+  agents enforce constraints through penalty rewards, not action
+  masking, so infeasible placements remain
+  reachable~\cite{ran_dynamic_2023,he_leveraging_2023,zhang_dqn-msra_2025,taktak_drl_2024,xu_dynamic_2023,zahedi_dspvr_2023,khemili_parallel_2024,wang_fairness-aware_2025,lin_lppif_2025}.
+  \item \textit{Principled topology awareness.} Only a few DRL works
+  exploit graph structure, and they do so through partial mechanisms
+  --- attention weights~\cite{he_leveraging_2023} or
+  parallelism-aware
+  encoders~\cite{lin_lppif_2025,wang_fairness-aware_2025} --- rather
+  than through full graph neural network message-passing over the
+  substrate.
+  \item \textit{Fair comparative evaluation.} None of the reviewed
+  works align the random-number stream of the DRL agent and its
+  baselines, so reported performance gaps may reflect stream
+  variance rather than algorithmic improvement.
+\end{itemize}
+
+Together, these observations justify the thesis's choice of DRL, its
+use of Maskable PPO (for hard constraints), and its integration of a
+GNN feature extractor (for genuine topology awareness).
+
+\subsection{Consolidated Positioning}
+
+The framework proposed in Chapters~3 and~4 is, to our knowledge, the
+first to simultaneously satisfy every column of
+Table~\ref{tab:lr_comparison} --- i.e., the first to realize each of
+the four commitments implicit in the thesis title:
+
+\begin{itemize}
+  \item It is \textbf{intelligent} in the learning-based sense: a
+  Maskable PPO agent with a GNN feature extractor learns placement
+  decisions from experience, in contrast to the classical ILP,
+  meta-heuristic, and fixed-heuristic methods reviewed in
+  Section~\ref{sec:lr_classical}.
+  \item It is \textbf{security posture aware} as defined in
+  Section~\ref{sec:lr_posture_gap}: effective node security degrades
+  under accumulated incident pressure and recovers geometrically,
+  incident probability grows with load and tenancy, and both a
+  deterministic expected-loss risk integral and an expected lost
+  revenue term enter the reward signal.
+  \item It addresses \textbf{SFC placement} under a complete set of
+  hard constraints --- resource, latency, bandwidth, security
+  posture, and isolation --- all enforced by construction through the
+  action mask, so every accepted placement is feasible.
+  \item It uses \textbf{deep reinforcement learning} in a form
+  adapted to the problem: Maskable PPO for hard-masked action
+  selection, a GCN/GAT/GraphSAGE feature extractor for topology
+  awareness, and a windowed acceptance-ratio reward modifier for
+  training stability.
+\end{itemize}
+
+The remainder of the thesis develops this framework in detail.
+Chapter~3 formalizes the substrate, the SFC request model, the MDP,
+and the security-posture risk model; Chapter~4 describes the Maskable
+PPO agent, the GNN feature extractor, and the reward and masking
+machinery; Chapters~5 and~6 present the experimental evaluation and
+conclusions.

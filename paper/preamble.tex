@@ -1,5 +1,4 @@
 \usepackage[centertags]{amsmath}
-\usepackage{chapterbib}
 \usepackage{amsfonts}
 \usepackage{amssymb}
 \usepackage{amsthm}
@@ -33,6 +32,11 @@
 \usepackage{algpseudocode}
 \usepackage{multirow}
 \usepackage{amsmath,latexsym}
+
+% Bibliography (biblatex with biber backend, IEEE style)
+\usepackage[backend=biber,style=ieee,sorting=none,maxbibnames=99]{biblatex}
+\addbibresource{references/introduction.bib}
+\addbibresource{references/literature_review.bib}
 
 \newgeometry{left=1.5in,right=1.0in,top=1in,bottom=1in}
 

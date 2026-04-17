@@ -4,72 +4,230 @@
 
 \section{Background}
 
-The last decade has witnessed a profound transformation in the architecture of communication networks, driven by two paradigm-shifting technologies: Software-Defined Networking (SDN) and Network Function Virtualization (NFV). Traditional networks relied on dedicated, proprietary hardware appliances to implement network functions such as firewalls, load balancers, intrusion detection systems, and deep packet inspection engines. These ``middleboxes'' were expensive to procure, rigid in their placement, and difficult to manage at scale \cite{mijumbi2016}.
+The past decade has witnessed a fundamental restructuring of
+telecommunications infrastructure driven by the convergence of
+software-defined networking, network virtualization, and cloud-native
+service delivery. Traditional networks were built from vertically
+integrated hardware appliances --- firewalls, deep packet inspection
+engines, load balancers, WAN optimizers --- each procured, provisioned,
+and operated in isolation. This hardware-centric model proved ill-suited
+to the scale, heterogeneity, and economic pressures of modern networks.
+In response, the community progressively articulated a
+\textit{network virtualization} paradigm in which multiple logical
+networks coexist on shared physical substrate, decoupling the service
+from the infrastructure that realizes it~\cite{chowdhury_survey_2010}.
 
-SDN decouples the control plane from the data plane, centralizing network intelligence in a logically centralized controller that programs forwarding rules across the network infrastructure via standardized protocols such as OpenFlow \cite{mckeown2008}. This separation introduces unprecedented programmability and flexibility in network management.
+Network Function Virtualization (NFV) advances this paradigm one step
+further by decoupling the \emph{network functions} themselves from
+dedicated middleboxes and running them as software instances --- Virtual
+Network Functions (VNFs) --- on commodity servers in data centres and at
+the network edge. Yi et al.'s comprehensive survey documents how NFV
+reduces capital and operational expenditure, improves service agility,
+and enables elastic scaling of VNFs in response to traffic
+demand~\cite{yi_comprehensive_2018}. The combination of NFV with
+software-defined control establishes the foundation on which modern
+5G systems are built: the 3GPP 5G system architecture assumes
+virtualized, service-based functions orchestrated across a
+programmable substrate~\cite{noauthor_5g_nodate}, and this assumption is
+deepening as the research agenda moves toward 6G, where global
+coverage, artificial intelligence at the network edge, and
+end-to-end security become first-class design
+goals~\cite{you_towards_2021}.
 
-NFV complements SDN by decoupling network functions from the dedicated hardware on which they were traditionally implemented, running them instead as software instances — Virtual Network Functions (VNFs) — on commodity servers in data centers \cite{etsi2013}. NFV allows network operators to instantiate, scale, migrate, and terminate VNFs dynamically in response to traffic demands, dramatically reducing both capital expenditure (CapEx) and operational expenditure (OpEx).
+\section{Service Function Chaining}
 
-The convergence of SDN and NFV has given rise to the concept of \textit{Service Function Chaining} (SFC), wherein ordered sequences of VNFs are composed to implement end-to-end network services \cite{halpern2015}. For example, a corporate network might route traffic through a firewall, then a WAN optimizer, then a load balancer before it reaches its destination. The ability to specify, instantiate, and route traffic through such chains programmatically is a cornerstone of modern cloud-native and 5G network architectures \cite{nfv5g2017}.
+In this virtualized substrate, a concrete end-to-end service is
+realized by steering traffic through an ordered sequence of VNFs ---
+a \textit{Service Function Chain} (SFC). RFC~7498 formulates the
+problem statement for service function
+chaining~\cite{p_quinn_problem_2015}, and RFC~7665 defines the
+reference architecture, introducing the concepts of service function
+paths, classifiers, and the Network Service Header used to carry
+service metadata along the
+chain~\cite{halpern_service_2015}. RFC~8309 situates this work within
+the broader IETF framework for service models, clarifying how a
+customer-facing service specification is translated into the
+network- and device-level configurations that realize
+it~\cite{wu_service_2018}.
+
+An SFC request is characterised by an ordered list of VNFs with
+per-function resource demands (CPU, memory, storage), together with
+aggregate service-level constraints on end-to-end latency, path
+bandwidth, required security properties, lifetime, and isolation
+requirements. Delivering such a service on the NFV substrate raises
+the \textit{SFC placement and embedding} problem: given an incoming
+stream of requests, decide --- in real time --- on which substrate
+nodes each VNF should be instantiated and along which paths the
+inter-function traffic should be routed. The systematic review by
+Santos~et~al. shows that SFC placement is consistently NP-hard across
+the many scenarios in which it has been studied and that distributed
+deployments add further difficulty through unpredictable delays,
+resource heterogeneity, and multi-administrative
+boundaries~\cite{santos_service_2021}.
 
 \section{The SFC Placement Problem}
 
-Given the flexibility offered by NFV/SDN, a fundamental challenge emerges: \textit{where} should the VNFs that comprise an SFC be deployed on the physical substrate network? This \textbf{SFC Placement Problem} (also called the VNF Embedding Problem or NFV Resource Allocation Problem) requires simultaneously satisfying a complex set of constraints:
+Concretely, an SFC placement policy must simultaneously satisfy a
+multi-dimensional set of constraints:
 
 \begin{itemize}
-  \item \textbf{Resource constraints:} Each substrate node has finite CPU, RAM, and storage capacity; the aggregate demands of all VNFs placed on a node must not exceed its available resources.
-  \item \textbf{Latency constraints:} The accumulated end-to-end latency along the path from the first to the last VNF must not exceed the SFC's maximum latency requirement.
-  \item \textbf{Bandwidth constraints:} Each link along the path between consecutive VNFs must have sufficient residual bandwidth to carry the SFC traffic.
-  \item \textbf{Security constraints:} Each substrate node on which a VNF is placed must meet the minimum security score required by the SFC.
-  \item \textbf{Isolation constraints:} Some SFCs require \textit{hard isolation}, meaning their VNFs must not share substrate nodes with VNFs of other SFCs.
+  \item \textbf{Resource feasibility.} Each substrate node has finite
+  CPU, memory, and storage capacity; the aggregate demand of all VNFs
+  placed on a node must not exceed its residual capacity.
+  \item \textbf{Latency.} The accumulated propagation, transmission,
+  and processing delay along the SFC path must respect the service's
+  end-to-end latency budget.
+  \item \textbf{Bandwidth.} Every substrate link used between
+  consecutive VNFs must have sufficient residual bandwidth for the
+  requested traffic rate.
+  \item \textbf{Security.} Each substrate node selected for the chain
+  must meet (and preferably exceed) the minimum security level
+  required by the service.
+  \item \textbf{Isolation.} Services that impose hard
+  multi-tenancy restrictions must not share substrate nodes with
+  other services.
 \end{itemize}
 
-The SFC placement problem has been shown to be NP-hard in general \cite{dolev2013}, as it encompasses variants of the Virtual Network Embedding (VNE) problem, which subsumes bin-packing and graph isomorphism \cite{yu2008}. Consequently, exact algorithms are intractable for large-scale networks, and practical solutions must rely on approximations, heuristics, or learning-based approaches.
+Because accepted SFCs hold resources for their lifetime, myopic
+decisions quickly fragment the substrate and degrade long-horizon
+acceptance. Worse, virtualized SFC deployments are more susceptible to
+failure than their hardware counterparts: the taxonomy assembled by
+Shahab and Sharma catalogues the many failure modes that now coexist
+--- hypervisor crashes, VNF software faults, link congestion, orchestrator
+mistakes, and targeted attacks --- all of which must inform the design of a
+placement policy that is both efficient and
+dependable~\cite{shahab_fault_2025}.
 
-\section{Limitations of Existing Approaches}
+\section{Security Posture as a First-Class Placement Concern}
 
-Classical approaches to SFC placement fall into three broad categories:
+The very features that make NFV attractive --- shared commodity
+hardware, multi-tenancy, rapid reconfiguration, and dynamic orchestration
+--- also expand the attack surface of every service deployed on it.
+Pattaranantakul, Vorakulpipat, and Takahashi survey the resulting
+threat landscape and conclude that SFC security must be treated as a
+pervasive, cross-layer concern spanning the NFV Infrastructure, the VNFs
+themselves, the SDN control plane, and the orchestration
+layer~\cite{pattaranantakul_service_2023}. The pressure is magnified in
+5G and 6G networks, where critical services and massive
+IoT populations coexist on the same programmable
+substrate~\cite{abdelrazek_measuring_2025, you_towards_2021}.
 
-\textbf{Exact methods}, such as Integer Linear Programming (ILP) \cite{cohen2015}, guarantee optimal solutions but scale exponentially with problem size, making them suitable only for small networks or offline planning scenarios. Dynamic programming approaches (e.g., Viterbi-style trellis methods) offer polynomial-time optimality for restricted objective functions but still do not scale to large substrate networks with hundreds of nodes under continuously arriving requests.
+\textit{Security posture}, in the NIST sense, is the status of a
+system's information resources and controls together with the
+capability to respond to and recover from
+threats~\cite{editor_security_nodate}. Assessing posture requires
+\textit{security metrics}: Pendleton et al. systematize these into
+measures of vulnerability, defense power, threat severity, and
+situational context, and argue that a sound security metric must be
+both composable across the system and responsive to the attack--defense
+interaction~\cite{pendleton_survey_2017}. Abdelrazek et al. specialize
+this perspective to 5G/6G, proposing a life-cycle model of network
+function security state driven by attack-surface exposure, known
+vulnerabilities, and applied controls~\cite{abdelrazek_measuring_2025}.
+A placement policy that is ignorant of posture may satisfy every
+static constraint while still concentrating risk on overloaded,
+recently-compromised, or vulnerability-laden nodes --- with
+consequences ranging from SLA violations to cascading service outages.
 
-\textbf{Heuristic methods}, such as First-Fit and Best-Fit algorithms, make locally greedy decisions and run efficiently in practice but lack any global optimization perspective. They typically optimize a single criterion (e.g., resource waste) while ignoring others (e.g., risk, security diversity, future load), and their performance degrades significantly under high load.
+\section{Limitations of Classical Placement Approaches}
 
-\textbf{Meta-heuristic and evolutionary methods} \cite{rankothge2017}, such as genetic algorithms and simulated annealing, offer better solution quality than greedy heuristics but require careful hyperparameter tuning, suffer from slow convergence, and are difficult to adapt online to real-time request arrivals.
+Classical approaches to the SFC placement problem fall into three broad
+families. \textit{Exact methods}, typically integer linear programs,
+guarantee optimality but scale poorly and are unsuitable for online
+operation on large
+substrates~\cite{santos_service_2021}. \textit{Heuristic methods} such
+as first-fit and best-fit achieve the required throughput but make
+locally greedy choices that ignore both inter-request dependencies and
+long-horizon resource dynamics. \textit{Meta-heuristic methods} ---
+genetic algorithms, particle-swarm optimization, simulated annealing,
+ant-colony search --- improve solution quality at the cost of many
+evaluations per request, which again limits their use in real-time
+orchestration.
 
-A fundamental limitation shared by all of the above is that they \textit{do not learn from experience}. Each incoming SFC request is solved in isolation, without leveraging patterns learned from prior requests. Moreover, virtually no existing practical method incorporates a realistic model of operational risk — the possibility that VNF co-location, node security vulnerabilities, or accumulated load may lead to security incidents, failures, or degraded service quality over time.
+A deeper limitation unites all three: none of them \emph{learn} from
+the request stream. Each incoming SFC is solved in isolation, and the
+operator's hard-won experience of how traffic distributes, where
+incidents recur, or which substrate regions tend to become bottlenecks
+is not exploited. The survey by Husen, Chaudary, and Ahmad on
+requirements of Future Intelligent Networks argues forcefully that
+future operations must be \textit{data-driven and adaptive}: machine
+learning must be embedded across functions, layers, and administrative
+domains if networks are to remain tractable at 5G/6G
+scale~\cite{husen_survey_2022}. Moreover, the taxonomy of fault
+tolerance in SFCs by Shahab and Sharma shows that resilience is best
+achieved by placement strategies that anticipate failure modes ---
+something classical, failure-oblivious algorithms
+cannot do~\cite{shahab_fault_2025}.
 
-\section{Deep Reinforcement Learning for SFC Placement}
+\section{A Deep Reinforcement Learning Approach with Security Posture Awareness}
 
-Deep Reinforcement Learning (DRL) offers a compelling alternative to classical approaches: an agent learns a placement policy through interaction with the environment, receiving reward signals that encode the desired optimization objectives. The agent improves its policy over many episodes, ultimately learning to make \textit{intelligent}, globally informed placement decisions that account for long-term consequences — including evolving security posture — rather than treating each request in isolation \cite{mao2016}.
+Deep Reinforcement Learning (DRL) offers a principled answer. An agent
+learns a placement policy from interaction with a simulated substrate:
+it observes the current network state, chooses a placement action,
+receives a reward signal encoding the operator's objectives, and
+gradually refines its policy over many episodes. Once trained, the
+policy executes in milliseconds and is naturally compatible with the
+multi-objective, long-horizon nature of SFC placement.
 
-Recent work has demonstrated the viability of DRL for network resource management problems, including virtual machine placement \cite{mao2016}, VNE \cite{yan2020}, and SFC embedding \cite{heo2020}. A key advantage of DRL-based approaches is their ability to generalize: once trained, the policy executes in milliseconds, making it highly suitable for online, real-time placement. Furthermore, DRL policies can naturally encode multi-objective trade-offs through the reward function, incorporating resource efficiency, latency minimization, security posture awareness, and operational risk simultaneously.
-
-However, applying standard DRL to combinatorial placement problems with hard constraints presents a major challenge: the agent may waste a significant fraction of training exploring infeasible actions, leading to slow convergence and unstable learning. \textbf{Action masking} \cite{vinyals2019, huang2020} is a well-established technique that addresses this by dynamically pruning the action space to include only feasible choices, drastically improving sample efficiency and guaranteeing constraint satisfaction during both training and inference.
-
-\section{Graph Neural Networks for Topology-Aware Placement}
-
-The substrate network is inherently a graph, and the placement decision for each VNF is fundamentally topology-dependent: the latency and bandwidth between nodes, the load distribution across the graph, and the structural position of candidate nodes all influence the quality of a placement. Standard multi-layer perceptrons (MLPs) treat node features in isolation and are unable to capture these relational, graph-structural dependencies.
-
-Graph Neural Networks (GNNs) \cite{kipf2017, velickovic2018, hamilton2017} learn node representations by aggregating information from neighborhood nodes through iterative message passing, naturally encoding the topological context of each node. Embedding a GNN into the policy network of an RL agent endows it with topology awareness, enabling it to reason about placement decisions in the context of the entire network graph \cite{lotfi2022}.
+This thesis develops an \emph{intelligent, security posture aware} DRL
+framework for SFC placement on NFV substrates. In contrast to prior DRL
+placement work, the framework treats security posture as a dynamic,
+load- and history-dependent state of each substrate node, integrates it
+directly into both the constraint mask and the reward signal, and
+evaluates placement decisions against an expected-loss risk model
+rather than an ad-hoc penalty. The agent is a Maskable Proximal Policy
+Optimization (Maskable PPO) learner whose action mask enforces every
+hard constraint --- resource, latency, bandwidth, security, and
+isolation --- at both training and inference time, so that every chain
+the agent accepts is feasible by construction. A Graph Neural Network
+(GNN) feature extractor endows the policy with topology awareness, so
+that the agent can exploit the structural role of each substrate node
+in its placement decisions --- a structural awareness that a flat
+multi-layer perceptron cannot offer and that prior classical heuristics
+cannot exploit.
 
 \section{Research Motivation and Objectives}
 
-Despite significant progress in applying DRL and GNNs to network resource management, several gaps remain:
+Despite growing interest in DRL for SFC placement, four gaps persist in
+the literature reviewed in Chapter~2:
 
 \begin{enumerate}
-  \item \textbf{Security posture awareness is absent.} Existing DRL-based SFC placement methods optimize for acceptance ratio, latency, and resource utilization, but do not model the evolving security posture of substrate nodes — their vulnerability profile, accumulated incident pressure, and effective security score over time.
-  \item \textbf{Stochastic failure dynamics are not modeled.} Real networks experience security incidents and node failures whose probability depends on load, security posture, and historical incident pressure. Ignoring this leads to placements that are efficient in the short term but operationally fragile.
-  \item \textbf{Hard constraint satisfaction is not guaranteed.} Many DRL agents learn to respect constraints softly through penalty terms in the reward, resulting in occasional constraint violations during inference.
-  \item \textbf{Topology-agnostic policies fail to generalize.} Policies trained on fixed-size networks do not transfer to different topologies without retraining.
+  \item Existing DRL placement agents treat constraints as soft
+  penalties, allowing infeasible actions during training and inference;
+  hard-constraint guarantees are the exception, not the rule.
+  \item Security is typically modelled statically: node scores are
+  checked against thresholds but no dynamic posture, no incident
+  history, and no load-dependent incident probability are maintained
+  --- in direct contrast to the posture-based view advocated by the
+  security-metrics and 5G-security
+  communities~\cite{pendleton_survey_2017, abdelrazek_measuring_2025, editor_security_nodate}.
+  \item Policies are usually topology-blind: they consume flattened
+  feature vectors and fail to exploit the graph structure of the
+  substrate.
+  \item Comparative evaluations rarely equalize the stream of requests
+  seen by different algorithms, so apparent performance gaps may
+  instead reflect stream variance.
 \end{enumerate}
 
-This thesis addresses all four gaps through the following research objectives:
+The objectives of this thesis follow directly from these gaps:
 
 \begin{enumerate}
-  \item Design an intelligent Deep Reinforcement Learning framework for SFC placement — based on Maskable PPO — that \textit{guarantees} feasibility of all placements through hard action masking.
-  \item Develop an expected-loss security posture risk model that quantifies operational risk as a function of per-node incident probability, chain co-location (blast radius), and time-exposure, together with a deterministic expected lost revenue signal for smooth policy optimization, and incorporate both into the DRL reward signal.
-  \item Integrate a GNN-based feature extractor into the DRL policy to capture topology-aware node embeddings that enable globally informed, security posture-conscious placement decisions.
-  \item Evaluate the proposed framework against a risk-minimizing Best-Fit heuristic on comprehensive metrics including acceptance ratio, risk integral, security margin, substrate utilization, tenancy, revenue, expected lost revenue, and realized incident rates.
+  \item Design a DRL framework for SFC placement in which every
+  hard constraint --- including a security-posture constraint ---
+  is enforced by action masking, guaranteeing feasibility of every
+  accepted placement.
+  \item Develop an expected-loss security posture risk model that
+  quantifies operational risk as a function of per-node incident
+  probability (driven by posture, load, and accumulated incident
+  pressure), chain co-location, and time exposure, and use it both
+  as a reward signal and as an evaluation metric.
+  \item Integrate a Graph Neural Network feature extractor into the
+  policy so that placement decisions reflect substrate topology and
+  the structural role of each node.
+  \item Perform a fair comparative evaluation against a
+  risk-minimising best-fit baseline, aligning the random-number
+  stream across algorithms so that both see identical request
+  sequences.
 \end{enumerate}
 
 \section{Thesis Contributions}
@@ -77,14 +235,47 @@ This thesis addresses all four gaps through the following research objectives:
 The principal contributions of this thesis are:
 
 \begin{enumerate}
-  \item \textbf{An intelligent Deep Reinforcement Learning framework for security posture aware SFC placement}, instantiated as Maskable PPO, with hard action masking that enforces all five constraint types (resource, latency, bandwidth, security, isolation) at every step, guaranteeing the feasibility of every accepted placement.
-  \item \textbf{An expected-loss security posture risk model} that computes the risk integral $\rho \in [0,1]$ as the mean per-node product of incident probability (driven by security posture, load, and incident pressure), chain co-location count, and TTL-proportional exposure, paired with a deterministic expected lost revenue penalty that provides low-variance gradient signal for policy optimization.
-  \item \textbf{A topology-aware GNN feature extractor} (supporting GCN, GAT, and GraphSAGE architectures) with attention-weighted graph aggregation and MLP-based global context fusion, embedded within the DRL policy to encode each node's structural role and current security posture.
-  \item \textbf{A windowed acceptance ratio reward modifier} that provides curriculum-style feedback by scaling terminal rewards according to recent placement success rates, improving training stability of the DRL agent.
-  \item \textbf{A fair evaluation framework} that aligns the random number generator state across all algorithms so that the DRL agent and baseline receive identical SFC request streams, enabling unbiased comparison.
-  \item \textbf{Comprehensive experimental analysis} across acceptance ratio, risk integral, security margin, substrate utilization, SFC/VNF tenancy, total revenue, expected lost revenue, and realized incident rates.
+  \item A \textbf{Maskable PPO placement agent with hard-masked
+  security posture constraints}, in which resource, latency,
+  bandwidth, security posture, and isolation requirements are all
+  enforced before any action is sampled --- so every chain the agent
+  accepts is feasible by construction.
+  \item An \textbf{expected-loss security posture risk model}
+  combining load-dependent incident probability, chain co-location
+  (blast radius), and TTL-proportional exposure into a deterministic
+  risk integral $\rho \in [0,1]$, paired with a deterministic expected
+  lost revenue term that provides a low-variance gradient signal for
+  policy optimization.
+  \item A \textbf{topology-aware GNN feature extractor} supporting
+  GCN, GAT, and GraphSAGE variants with attention-weighted aggregation
+  and MLP-based global context fusion, endowing the DRL policy with
+  structural awareness of the substrate graph.
+  \item A \textbf{windowed acceptance-ratio reward modifier} that
+  delivers curriculum-style feedback by scaling terminal rewards
+  according to recent acceptance performance, improving training
+  stability.
+  \item A \textbf{fair comparative evaluation framework} that aligns
+  the random-number generator state of the DRL agent and the
+  risk-minimising best-fit baseline so that both process identical
+  request streams.
+  \item A \textbf{comprehensive experimental analysis} covering
+  acceptance ratio, risk integral, security margin, substrate
+  utilization, per-node SFC/VNF tenancy, total and per-request
+  revenue, expected and realized lost revenue, and realized incident
+  counts.
 \end{enumerate}
 
 \section{Thesis Organization}
 
-The remainder of this thesis is organized as follows. Chapter~2 provides a review of the relevant literature on NFV/SFC, DRL for network resource management, GNNs, action masking, and security posture-aware networking. Chapter~3 formalizes the system model and problem formulation, including the MDP definition and security posture risk model. Chapter~4 presents the proposed methodology in detail, covering the Maskable PPO algorithm as the DRL backbone, the GNN feature extractor, reward design incorporating security posture, and the training procedure. Chapter~5 describes the experimental setup and presents results and analysis. Chapter~6 concludes the thesis and outlines directions for future work.
+The remainder of this thesis is organized as follows.
+Chapter~2 surveys the recent literature on SFC placement, covering
+security-aware placement, DRL-based placement, and classical heuristic
+and optimization-based approaches, and situates the proposed framework
+within this landscape. Chapter~3 formalizes the system model,
+introduces the Markov Decision Process formulation, and defines the
+security posture risk model. Chapter~4 presents the proposed
+methodology in detail, including the Maskable PPO agent, the GNN
+feature extractor, the reward design, the action-masking
+implementation, and the best-fit baseline. Chapter~5 describes the
+experimental setup and presents comparative results, and Chapter~6
+concludes the thesis and outlines directions for future work.

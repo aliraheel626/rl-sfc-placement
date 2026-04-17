@@ -9,7 +9,7 @@
 \usepackage{newlfont}
 \usepackage{tabularx}
 \usepackage{pdflscape}
-\usepackage{hyperref}
+\usepackage{csquotes}
 \usepackage{mathtools}
 \usepackage{sectsty}
 \usepackage{setspace}
@@ -33,10 +33,28 @@
 \usepackage{multirow}
 \usepackage{amsmath,latexsym}
 
-% Bibliography (biblatex with biber backend, IEEE style)
-\usepackage[backend=biber,style=ieee,sorting=none,maxbibnames=99]{biblatex}
+% Bibliography: IEEE numeric style [1], [2], ... (order of first citation)
+% Requires: biber, and the biblatex-ieee bundle (style=ieee).
+\usepackage[
+  backend=biber,
+  style=ieee,
+  sorting=none,
+  maxbibnames=99,
+  doi=true,
+  url=true,
+]{biblatex}
 \addbibresource{references/introduction.bib}
 \addbibresource{references/literature_review.bib}
+
+% Hyperref after biblatex so citation links and back-references resolve correctly
+\usepackage{hyperref}
+\hypersetup{
+  colorlinks=true,
+  linkcolor=black,
+  citecolor=black,
+  urlcolor=blue,
+  bookmarksnumbered=true,
+}
 
 \newgeometry{left=1.5in,right=1.0in,top=1in,bottom=1in}
 

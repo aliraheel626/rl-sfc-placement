@@ -6,24 +6,23 @@
 
 \subsection{Hardware and Software}
 
-Experiments were conducted on a workstation running Windows 10 with Python 3.12. The key software dependencies are listed in Table~\ref{tab:software}.
+Experiments were conducted on a workstation running Windows 10 with Python 3.12. Table~\ref{tab:eval_summary} summarizes mean evaluation outcomes for Maskable PPO and the Best-Fit baseline under the setup described in this section.
 
 \begin{table}[!ht]
 \centering
-\caption{Software Dependencies}
-\label{tab:software}
-\begin{tabularx}{\textwidth}{X X X}
+\caption{Comparative evaluation summary (Best-Fit vs.\ Maskable PPO)}
+\label{tab:eval_summary}
+\begin{tabularx}{\textwidth}{X r r r l}
 \hline
-\textbf{Package} & \textbf{Version} & \textbf{Role} \\ \hline
-Gymnasium & $\geq$0.29.0 & RL environment API \\
-Stable-Baselines3 & $\geq$2.3.0 & RL algorithms (PPO) \\
-sb3-contrib & $\geq$2.3.0 & Maskable PPO \\
-PyTorch & $\geq$2.0.0 & Neural network framework \\
-PyTorch Geometric & $\geq$2.5.0 & GNN layers \\
-NetworkX & $\geq$3.0 & Graph operations \\
-NumPy & latest & Numerical computing \\
-PyYAML & latest & Configuration parsing \\
-Matplotlib & latest & Visualization \\
+\textbf{Metric} & \textbf{Best-Fit mean} & \textbf{PPO mean} & \textbf{$\Delta$\%} & \textbf{Winner} \\ \hline
+Acceptance Ratio & 0.9634 & 0.9550 & $-0.87$\% & Best-Fit \\
+Avg Risk Integral & 0.0014 & 0.0006 & $-59.45$\% & PPO \\
+Avg Security Margin & 0.8525 & 1.7593 & 106.38\% & PPO \\
+Total Realized Incidents & 35.2000 & 8.2000 & $-76.70$\% & PPO \\
+Total Lost Revenue & 68.8000 & 44.8000 & $-34.88$\% & PPO \\
+Total Revenue & 9319.8000 & 9244.0000 & $-0.81$\% & Best-Fit \\
+Avg Revenue / Request & 9.3198 & 9.2440 & $-0.81$\% & Best-Fit \\
+Avg Lost Revenue / Request & 0.0688 & 0.0448 & $-34.88$\% & PPO \\
 \hline
 \end{tabularx}
 \end{table}

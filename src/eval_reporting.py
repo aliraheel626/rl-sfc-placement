@@ -135,8 +135,8 @@ class ComparisonTableRow:
 
 
 # PPO vs BestFit summary table (main() in compare.py).
-# Substrate utilisation and SFC/VNF tenancy per node are still tracked for plots
-# and verbose logs but omitted here to align with the paper results table.
+# Substrate utilisation and per-node SFC/VNF tenancy are omitted here; those series
+# still appear in compare/ plots and in verbose per-episode output.
 COMPARISON_TABLE_ROWS: tuple[ComparisonTableRow, ...] = (
     ComparisonTableRow("acceptance_ratio", "Acceptance Ratio", True),
     ComparisonTableRow("avg_risk_integral", "Avg Risk Integral", False),

@@ -37,17 +37,6 @@ Evaluation uses 1000 SFC requests on the training substrate with a fresh request
 
 \section{Training Dynamics}
 
-\subsection{Reward Evolution}
-
-Figure~\ref{fig:reward} shows the per-episode reward over the course of training. The agent begins with a low acceptance ratio as it explores the placement space, then progressively improves as the policy converges to a strategy that balances acceptance, risk minimization, and latency efficiency.
-
-\begin{figure}[!ht]
-\centering
-\includegraphics[width=0.8\textwidth]{models/reward_per_episode.png}
-\caption{Per-episode cumulative reward during training. The reward increases as the agent learns to accept more SFCs while minimizing risk.}
-\label{fig:reward}
-\end{figure}
-
 \subsection{Acceptance Ratio Progression}
 
 Figure~\ref{fig:ar} illustrates the training acceptance ratio (rolling average over episodes) plotted against the number of training timesteps. An upward trend confirms that the agent is learning an increasingly effective placement policy over the course of training.
@@ -68,17 +57,6 @@ Figure~\ref{fig:risk} shows the evolution of the average risk integral $\rho_r$ 
 \includegraphics[width=0.8\textwidth]{models/sfc_risk_training.png}
 \caption{Average risk integral per accepted SFC during training.}
 \label{fig:risk}
-\end{figure}
-
-\subsection{Substrate Utilization}
-
-Figure~\ref{fig:util} shows the substrate utilization — the fraction of substrate nodes actively hosting at least one VNF — over training. An increase in utilization corresponds to the agent placing more VNFs successfully, while excessive utilization near 100\% would indicate over-packing and potential future rejections due to resource exhaustion.
-
-\begin{figure}[!ht]
-\centering
-\includegraphics[width=0.8\textwidth]{models/substrate_util_training.png}
-\caption{Substrate utilization during training episodes.}
-\label{fig:util}
 \end{figure}
 
 \section{Comparative Evaluation}

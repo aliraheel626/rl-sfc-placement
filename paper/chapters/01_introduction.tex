@@ -188,43 +188,66 @@ cannot exploit.
 
 \section{Research Motivation and Objectives}
 
-Despite growing interest in DRL for SFC placement, four gaps persist in
-the literature reviewed in Chapter~2:
+The literature reviewed in Chapter~2 reveals a two-sided research
+gap. On one side, every existing work that incorporates security into
+SFC placement relies on heuristic, meta-heuristic, or
+optimization-based methods that solve each request in isolation and
+adapt poorly to dynamic traffic patterns and evolving security
+conditions. On the other side, every DRL-based SFC placement agent
+ignores security requirements entirely --- security plays no role in
+the state, reward, or constraint model. The intersection of these two
+research directions is empty: no prior work applies DRL to
+security-posture-aware SFC placement.
+
+Within this primary gap, the literature exhibits further deficiencies:
 
 \begin{enumerate}
-  \item Existing DRL placement agents treat constraints as soft
-  penalties, allowing infeasible actions during training and inference;
-  hard-constraint guarantees are the exception, not the rule.
-  \item Security is typically modelled statically: node scores are
-  checked against thresholds but no dynamic posture, no incident
-  history, and no load-dependent incident probability are maintained
-  --- in direct contrast to the posture-based view advocated by the
-  security-metrics and 5G-security
-  communities~\cite{pendleton_survey_2017, abdelrazek_measuring_2025, editor_security_nodate}.
-  \item Policies are usually topology-blind: they consume flattened
-  feature vectors and fail to exploit the graph structure of the
-  substrate.
-  \item Comparative evaluations rarely equalize the stream of requests
-  seen by different algorithms, so apparent performance gaps may
-  instead reflect stream variance.
+  \item \textbf{Heuristic-only security awareness.} All
+  security-aware SFC placement methods are heuristic or
+  optimization-based; none learns from the request stream and none
+  can adapt placement policy to changing traffic patterns or shifting
+  load distributions.
+  \item \textbf{Security-blind DRL.} All DRL-based SFC placement
+  agents omit security from their state representation, reward
+  signal, and constraint enforcement.
+  \item \textbf{Static security modelling.} Even among security-aware
+  works, node security is treated as a fixed scalar checked against a
+  threshold; no dynamic posture, no incident history, and no
+  load-dependent incident probability are
+  maintained~\cite{pendleton_survey_2017, abdelrazek_measuring_2025, editor_security_nodate}.
+  \item \textbf{Soft-penalty constraints.} Existing DRL agents treat
+  placement constraints as penalty terms rather than hard guarantees;
+  infeasible actions remain reachable during both training and
+  inference.
+  \item \textbf{Topology-blind policies.} DRL policies typically
+  consume flattened feature vectors and fail to exploit the graph
+  structure of the substrate.
+  \item \textbf{Unfair evaluation.} Comparative evaluations rarely
+  equalize the stream of requests seen by different algorithms, so
+  apparent performance differences may reflect stream variance rather
+  than algorithmic merit.
 \end{enumerate}
 
 The objectives of this thesis follow directly from these gaps:
 
 \begin{enumerate}
-  \item Design a DRL framework for SFC placement in which every
-  hard constraint --- including a security-posture constraint ---
-  is enforced by action masking, guaranteeing feasibility of every
-  accepted placement.
-  \item Develop an expected-loss security posture risk model that
-  quantifies operational risk as a function of per-node incident
+  \item Bridge the primary gap by designing a \textbf{DRL framework
+  for security-posture-aware SFC placement} that learns adaptive
+  placement policies from the request stream while treating security
+  requirements as first-class constraints.
+  \item Develop an \textbf{expected-loss security posture risk model}
+  that quantifies operational risk as a function of per-node incident
   probability (driven by posture, load, and accumulated incident
   pressure), chain co-location, and time exposure, and use it both
   as a reward signal and as an evaluation metric.
-  \item Integrate a Graph Neural Network feature extractor into the
-  policy so that placement decisions reflect substrate topology and
-  the structural role of each node.
-  \item Perform a fair comparative evaluation against a
+  \item Guarantee \textbf{hard-constraint feasibility} through action
+  masking, so that every chain the agent accepts satisfies resource,
+  latency, bandwidth, security posture, and isolation requirements by
+  construction.
+  \item Integrate a \textbf{Graph Neural Network feature extractor}
+  into the policy so that placement decisions reflect substrate
+  topology and the structural role of each node.
+  \item Perform a \textbf{fair comparative evaluation} against a
   risk-minimising best-fit baseline, aligning the random-number
   stream across algorithms so that both see identical request
   sequences.

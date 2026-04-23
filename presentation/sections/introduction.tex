@@ -119,22 +119,31 @@
 \begin{frame}{Research Gaps \& Objectives}
   \begin{columns}[T]
     \column{0.48\textwidth}
-      \begin{alertblock}{Four Gaps in the Literature}
+      \begin{alertblock}{Two-Sided Research Gap}
         \footnotesize
         \begin{enumerate}
-          \item Constraints treated as \textbf{soft penalties} --- no hard feasibility guarantee
-          \item Security modelled \textbf{statically} --- no dynamic posture, no incident history
-          \item Policies are \textbf{topology-blind} --- flat feature vectors only
-          \item Evaluations use \textbf{different request streams} --- unfair comparison
+          \item Security-aware works use \textbf{heuristic methods} that adapt poorly to dynamic traffic patterns
+          \item DRL-based works \textbf{ignore security} requirements of SFC requests entirely
+        \end{enumerate}
+        \vspace{2pt}
+        \centering\small $\Rightarrow$ \textbf{No DRL for security-aware SFC placement}
+      \end{alertblock}
+      \vspace{4pt}
+      \begin{alertblock}{Supporting Gaps}
+        \footnotesize
+        \begin{enumerate}\setcounter{enumi}{2}
+          \item Security modelled \textbf{statically} --- no dynamic posture or load coupling
+          \item DRL constraints are \textbf{soft penalties}; policies are \textbf{topology-blind}; evaluations are \textbf{unfair}
         \end{enumerate}
       \end{alertblock}
     \column{0.48\textwidth}
       \begin{block}{This Thesis Addresses Each Gap}
         \footnotesize
         \begin{enumerate}
-          \item \pro{Action masking} $\Rightarrow$ 100\% feasibility guarantee
-          \item \pro{Dynamic security posture risk model} with incident pressure \& load
-          \item \pro{GNN feature extractor} (GCN / GAT / GraphSAGE)
+          \item \pro{DRL for security-posture-aware placement} --- learns adaptive policies from the request stream
+          \item \pro{Dynamic security posture risk model} with incident pressure, load coupling \& expected-loss reward
+          \item \pro{Action masking} $\Rightarrow$ 100\% hard-constraint feasibility
+          \item \pro{GNN feature extractor} (GCN / GAT / GraphSAGE) for topology awareness
           \item \pro{Aligned RNG evaluation} $\Rightarrow$ identical request streams
         \end{enumerate}
       \end{block}

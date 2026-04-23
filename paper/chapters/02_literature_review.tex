@@ -190,13 +190,26 @@ concrete ways:
   policy has no mechanism to anticipate this.
 \end{enumerate}
 
-The thesis addresses all three of these weaknesses: it maintains
-per-node incident pressure $p_n(t)$, degrades the effective security
-$s_n^{\text{eff}}(t)$ under that pressure, lets the incident
-probability $q_n$ grow with load, and feeds every one of these signals
-into both the feasibility mask and the reward signal of the DRL agent
-(see Chapters~3 and~4). This is precisely the sense in which the
-placement policy is \textit{security posture aware}.
+A further limitation cuts across all three weaknesses: every
+security-aware placement method reviewed in this section is
+heuristic, meta-heuristic, or optimization-based. These approaches
+solve each incoming SFC in isolation and cannot learn from the
+arriving request stream, so they adapt poorly to dynamic traffic
+patterns, shifting load distributions, and the evolving security
+conditions that a posture-aware formulation is meant to track. A
+learning-based agent --- specifically a DRL agent that observes the
+full posture state --- is therefore needed not only to close the
+dynamic-posture gap itself, but also to exploit posture information
+\emph{adaptively} over time.
+
+The thesis addresses all three posture weaknesses and the
+adaptivity limitation: it maintains per-node incident pressure
+$p_n(t)$, degrades the effective security $s_n^{\text{eff}}(t)$ under
+that pressure, lets the incident probability $q_n$ grow with load,
+and feeds every one of these signals into both the feasibility mask
+and the reward signal of a DRL agent that learns from the request
+stream (see Chapters~3 and~4). This is precisely the sense in which
+the placement policy is \textit{security posture aware}.
 
 \section{Deep Reinforcement Learning for SFC Placement}
 \label{sec:lr_drl}
@@ -442,29 +455,50 @@ Mohamad \& Hassanein~\cite{mohamad_preemptive_2024}        & PPPS (preemptive pr
 \end{tabularx}
 \end{table}
 
-The pattern that emerges from Table~\ref{tab:lr_comparison} is
-consistent and clear. Security-aware SFC placement has attracted
-sustained research attention, yet no existing work simultaneously
-treats node security as a continuous, load-coupled, incident-driven
-quantity (\emph{Dyn.~Sec.} column), enforces placement constraints as
-hard guarantees rather than soft penalties, exploits the full
-substrate graph structure through a learned policy, and maintains
-fair comparative evaluation. The \emph{Dyn.~Sec.} column in
-particular carries no \checkmark outside the final row: security is
+Two complementary observations emerge from
+Table~\ref{tab:lr_comparison}. \textbf{First}, every work that
+incorporates security into the placement objective --- Yang~et~al.,
+Sun~et~al., Dubba and Killi, both Wang groups, Iffl\"ander~et~al.,
+Jia~et~al., and
+Song~et~al.~\cite{yang_efficient_2024,sun_security-aware_2023,dubba_security-aware_2024,wang_security-aware_2024,wang_towards_2025,ifflander_attack-aware_2024,jia_efficient_2025,song_end--end_2025}
+--- relies on heuristic, meta-heuristic, or optimization-based methods
+(ILP, particle-swarm search, augmenting-path algorithms,
+chain-reordering rules, federated-learning anomaly detectors). None of
+these approaches learns from the arriving request stream; each
+incoming SFC is solved in isolation, so the placement policy cannot
+adapt to changing traffic patterns, shifting load distributions, or
+evolving security conditions. \textbf{Second}, every DRL-based
+placement
+agent~\cite{ran_dynamic_2023,he_leveraging_2023,zhang_dqn-msra_2025,taktak_drl_2024,xu_dynamic_2023,zahedi_dspvr_2023,khemili_parallel_2024,wang_fairness-aware_2025,lin_lppif_2025}
+ignores security requirements entirely: the \emph{Sec.} column
+carries no \checkmark\ for any of these works, and security plays no
+role in their state representation, reward signal, or constraint
+enforcement. The intersection of the two research
+directions --- \emph{security-aware} and \emph{DRL-based} --- is
+therefore empty, leaving a clear gap for Deep Reinforcement Learning
+applied to security-posture-aware SFC placement.
+
+Beyond this primary gap, the table reveals additional deficiencies
+that compound the problem. Among the security-aware works, the
+\emph{Dyn.~Sec.} column carries no full \checkmark: security is
 modelled either as a static per-node
 threshold~\cite{yang_efficient_2024,sun_security-aware_2023,dubba_security-aware_2024,wang_security-aware_2024,wang_towards_2025}
 or as a reactive post-placement
 signal~\cite{ifflander_attack-aware_2024,jia_efficient_2025,song_end--end_2025},
-and the continuous, posture-evolving formulation demanded by dynamic
-network environments remains unaddressed. Among DRL-based approaches,
-constraints are consistently enforced through penalty rewards rather
-than action masking~\cite{ran_dynamic_2023,he_leveraging_2023,zhang_dqn-msra_2025,taktak_drl_2024,xu_dynamic_2023,zahedi_dspvr_2023,khemili_parallel_2024,wang_fairness-aware_2025,lin_lppif_2025},
-graph structure is exploited only through partial mechanisms such as
+and the continuous, load-coupled, incident-driven posture formulation
+demanded by dynamic network environments remains unaddressed. Among
+the DRL-based approaches, constraints are consistently enforced
+through penalty rewards rather than hard action masking, graph
+structure is exploited only through partial mechanisms such as
 attention weights or parallelism-aware encoders, and none of the
 reviewed works align the random-number stream across algorithms to
-isolate algorithmic gain from evaluation variance. The literature
-therefore clearly points to a compound research gap --- security-posture-aware
-SFC placement via a DRL agent that combines action masking for
-hard-constraint guarantees with a GNN feature extractor for principled
-topology awareness --- which the framework developed in the remaining
-chapters addresses.
+isolate algorithmic gain from evaluation variance.
+
+This thesis closes the primary gap by applying DRL to
+security-posture-aware SFC placement, and simultaneously addresses
+the secondary deficiencies: a dynamic security posture risk model
+replaces static thresholds, Maskable PPO with action masking
+guarantees hard-constraint feasibility, a GNN feature extractor
+provides principled topology awareness, and an aligned-RNG evaluation
+protocol ensures fair comparison --- as the final row of
+Table~\ref{tab:lr_comparison} summarises.

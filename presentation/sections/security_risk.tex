@@ -1,0 +1,66 @@
+% ============================================================
+\section{Security Posture Risk Model}
+% ============================================================
+
+\begin{frame}{Dynamic Security Posture}
+  \begin{columns}[T]
+    \column{0.50\textwidth}
+      \begin{block}{Effective Security Score}
+        Incident history reduces a node's security posture:
+        \[s_n^{\text{eff}}(t) = s_n \cdot \bigl(1 - \eta \cdot p_n(t)\bigr)\]
+        Incident pressure \emph{decays geometrically} between events:
+        \[p_n(t+1) = 0.92 \cdot p_n(t)\]
+        Upon incident: $p_n \leftarrow p_n + 0.20$
+      \end{block}
+      \vspace{4pt}
+      \begin{alertblock}{Node Downtime}
+        Realized incidents lock the node for $D_{\text{inc}}=2$ ticks. Resources zeroed; no VNF may be placed.
+      \end{alertblock}
+    \column{0.47\textwidth}
+      \begin{block}{Per-Node Incident Probability}
+        \[q_n = q_0\underbrace{\!\left(1-\tfrac{s_n^{\text{eff}}}{s_{\max}}\right)^{\!1.6}}_{\text{security}}\underbrace{(1+0.7\,\ell_n)}_{\text{load}}\underbrace{(1+p_n)}_{\text{pressure}}\]
+        $q_0=0.025$; $q_n$ clamped to $[0,1]$
+      \end{block}
+      \vspace{4pt}
+      \begin{tcolorbox}[colback=lightgray, colframe=cuired, title=Three Risk Drivers, fonttitle=\small\bfseries]
+        \footnotesize
+        \begin{enumerate}
+          \item \textbf{Security posture} ($s_n^{\text{eff}}$, $p_n$)
+          \item \textbf{Load} ($\ell_n$ = normalized VNF count)
+          \item \textbf{Incident pressure} (historical events)
+        \end{enumerate}
+      \end{tcolorbox}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{Security Posture Risk Integral}
+  \begin{columns}[T]
+    \column{0.50\textwidth}
+      \begin{block}{Risk Integral $\rho_r \in [0,1]$}
+        \[\rho_r = \min\!\left(\frac{1}{|\Pi_r^{\text{dist}}|}\sum_{n\in\Pi_r^{\text{dist}}} q_n \cdot \mathrm{SFC}(n) \cdot \frac{T_s}{\tau_{\max}},\;1\right)\]
+        \footnotesize
+        \begin{itemize}
+          \item $\mathrm{SFC}(n)$ = blast radius (co-located chains)
+          \item $T_s = \min(\tau_r, 12)$ = exposure window
+          \item Deterministic $\Rightarrow$ smooth gradient signal
+        \end{itemize}
+      \end{block}
+      \vspace{4pt}
+      \begin{block}{Expected Lost Revenue $\widehat{C}_r$}
+        \[\widehat{C}_r = \sum_{n} P_n^{\text{hit}} \cdot \mathrm{SFC}(n) \cdot R_{\text{ttl}} \cdot D_{\text{inc}}\]
+        $P_n^{\text{hit}} = 1-(1-q_n)^{T_s}$
+      \end{block}
+    \column{0.47\textwidth}
+      \begin{block}{Stochastic Incident Simulation}
+        \footnotesize
+        Bernoulli trials \emph{drive posture dynamics} (separate from reward):
+        \[I_r = \sum_{n}\sum_{t=1}^{T_s}\mathbf{1}[\text{Bernoulli}(q_n)=1]\]
+        Nodes hit $\Rightarrow$ pressure increment + downtime counter.
+      \end{block}
+      \vspace{4pt}
+      \begin{tcolorbox}[colback=lightgray, colframe=successgreen, title=Design Insight, fonttitle=\small\bfseries]
+        \footnotesize
+        The \textbf{deterministic} $\rho_r$ and $\widehat{C}_r$ are used in the \emph{reward} for low-variance gradients; stochastic simulation is used only for \emph{posture state updates}.
+      \end{tcolorbox}
+  \end{columns}
+\end{frame}

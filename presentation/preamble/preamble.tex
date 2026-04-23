@@ -1,0 +1,51 @@
+% ---------- Theme ------------------------------------------
+\usetheme{Madrid}
+\usecolortheme{beaver}
+\usefonttheme{professionalfonts}
+\setbeamertemplate{navigation symbols}{}
+\setbeamertemplate{caption}[numbered]
+
+% ---------- Packages ---------------------------------------
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{tikz}
+\usetikzlibrary{shapes.geometric, arrows.meta, positioning, fit}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{multirow}
+\usepackage{tcolorbox}
+\tcbuselibrary{skins}
+
+% ---------- Custom colours ---------------------------------
+\definecolor{cuired}{RGB}{162,27,32}
+\definecolor{cuigray}{RGB}{90,90,90}
+\definecolor{lightgray}{RGB}{245,245,245}
+\definecolor{successgreen}{RGB}{0,140,60}
+\definecolor{warningorange}{RGB}{210,90,0}
+
+\setbeamercolor{frametitle}{bg=cuired, fg=white}
+\setbeamercolor{title}{bg=cuired, fg=white}
+\setbeamercolor{block title}{bg=cuired, fg=white}
+\setbeamercolor{block body}{bg=lightgray}
+\setbeamercolor{section in toc}{fg=cuired}
+\setbeamercolor{item}{fg=cuired}
+
+% ---------- Helpers ----------------------------------------
+\newcommand{\pro}[1]{\textcolor{successgreen}{\textbf{#1}}}
+\newcommand{\con}[1]{\textcolor{warningorange}{\textbf{#1}}}
+\newcommand{\kw}[1]{\textcolor{cuired}{\textbf{#1}}}
+
+% ---------- Meta -------------------------------------------
+\title[Security-Aware SFC Placement via DRL]{%
+  Intelligent Security Posture Aware\\
+  Service Function Chain Placement\\
+  Using Deep Reinforcement Learning}
+\author[Ali Raheel]{%
+  \textbf{Ali Raheel}\\[4pt]
+  \small CIIT/SP24-RCS-001/LHR\\[2pt]
+  \small Supervisor: Dr.\ Muhammad Hasanain Chaudary}
+\institute[COMSATS]{%
+  Department of Computer Science\\
+  COMSATS University Islamabad, Pakistan}
+\date{Spring 2026}

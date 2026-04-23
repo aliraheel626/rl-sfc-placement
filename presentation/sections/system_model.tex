@@ -1,0 +1,88 @@
+% ============================================================
+\section{System Model}
+% ============================================================
+
+\begin{frame}{Substrate Network Model}
+  \begin{columns}[T]
+    \column{0.50\textwidth}
+      \begin{block}{Graph Model $G_S = (N, E)$}
+        \footnotesize
+        \begin{itemize}
+          \item \textbf{Node} $n$: resource vector
+            $\mathbf{r}_n = (r_n^{\text{ram}}, r_n^{\text{cpu}}, r_n^{\text{stor}}, s_n)$
+          \item \textbf{Link} $(u,v)$: bandwidth $b_{uv}$, latency $\ell_{uv}$
+          \item Routing: shortest hop-count paths
+        \end{itemize}
+      \end{block}
+      \vspace{4pt}
+      \begin{block}{Experimental Setup}
+        \footnotesize
+        \begin{tabular}{ll}
+          Topology & Erdős-Rényi $G(25, 1.0)$\\
+          Node RAM & $[20, 120]$ GB\\
+          Node CPU & $[10, 60]$ cores\\
+          Storage  & $[250, 1500]$ GB\\
+          Security score $s_n$ & $[1, 5]$\\
+          Link BW  & $[100, 500]$ Mbps\\
+          Link latency & $[5, 60]$ ms\\
+        \end{tabular}
+      \end{block}
+    \column{0.47\textwidth}
+      \centering
+      \begin{tikzpicture}[scale=0.90, every node/.style={font=\scriptsize}]
+        \tikzset{
+          snode/.style={circle, draw, thick, fill=cuired!20, minimum size=0.65cm},
+          slink/.style={thick, cuigray}
+        }
+        \foreach \i/\x/\y in {
+          1/0/2, 2/1.5/2.8, 3/3/2, 4/3/0.5,
+          5/1.5/0, 6/0/0.8, 7/1.5/1.5}{
+          \node[snode] (n\i) at (\x,\y) {$n_{\i}$};
+        }
+        \foreach \a/\b in {1/2,2/3,3/4,4/5,5/6,6/1,2/7,7/5,1/7,3/7,4/7,6/7}{
+          \draw[slink] (n\a) -- (n\b);
+        }
+        \node[snode, fill=successgreen!30] (nA) at (0,2)   {};
+        \node[snode, fill=cuired!30]       (nB) at (1.5,2.8){};
+        \node[snode, fill=successgreen!30] (nC) at (3,2)    {};
+        \node[font=\tiny, cuigray] at (1.5,-0.4) {Substrate (illustrative)};
+        \node[font=\tiny, successgreen] at (-0.6, 2.2) {SFC placed};
+      \end{tikzpicture}
+      \vspace{4pt}
+      \begin{block}{TTL \& Resource Release}
+        \footnotesize
+        Each SFC holds resources for $\tau_r$ steps; released via \texttt{tick()} — models dynamic, fragmenting NFV substrate.
+      \end{block}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{MDP Formulation}
+  \begin{columns}[T]
+    \column{0.50\textwidth}
+      \begin{block}{$\mathcal{M} = \langle \mathcal{S}, \mathcal{A}, \mathcal{P}, \mathcal{R}, \gamma \rangle$}
+        \footnotesize
+        \begin{itemize}
+          \item \textbf{State} $\mathbf{s}_t$: node feature matrix $\mathbf{F}\in\mathbb{R}^{25\times20}$, global context $\mathbf{g}\in\mathbb{R}^{15}$, placement mask, node mask
+          \item \textbf{Action}: select substrate node $n_k$ for VNF $v_k$
+          \item \textbf{Episode}: $T = 300$ SFC requests; $K_r = 3$ VNFs/chain $\Rightarrow$ up to 900 steps
+          \item \textbf{Discount}: $\gamma = 0.99$
+        \end{itemize}
+      \end{block}
+      \vspace{4pt}
+      \begin{block}{Objective}
+        \[J(\pi) = \mathbb{E}_{\pi}\!\left[\sum_{t=0}^{T} \gamma^t r_t\right]\]
+      \end{block}
+    \column{0.47\textwidth}
+      \begin{block}{Reward Structure}
+        \footnotesize
+        \textbf{Intermediate} (per VNF $k < K_r$):
+        \[r_t^{\text{step}} = 0.1 - 0.3\,\frac{L(n_{k-1},n_k)}{\ell_r^{\max}}\]
+        \textbf{Terminal acceptance:}
+        \[r_T^{\text{acc}} = \bigl(1 - \lambda\rho_r - \mu\widehat{C}_r\bigr)\bigl(1+\omega\overline{\text{AR}}_w\bigr)\]
+        \textbf{Terminal rejection:}
+        \[r_T^{\text{rej}} = -1 \cdot \bigl(1+\omega(1-\overline{\text{AR}}_w)\bigr)\]
+        \vspace{2pt}
+        $\lambda=4$, $\mu=0.05$, $\omega=0.5$, $w=10$
+      \end{block}
+  \end{columns}
+\end{frame}

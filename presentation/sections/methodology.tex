@@ -1,0 +1,145 @@
+% ============================================================
+\section{Proposed Methodology}
+% ============================================================
+
+\begin{frame}{System Architecture}
+  \centering
+  \begin{tikzpicture}[
+    box/.style={rectangle, draw, rounded corners, thick, minimum width=2.8cm,
+                minimum height=0.8cm, text centered, font=\small},
+    arrow/.style={->, thick, cuired}
+  ]
+    \node[box, fill=cuired!15]  (sub) at (0,0)    {Substrate Network};
+    \node[box, fill=cuired!10]  (gen) at (6,0)    {Request Generator};
+    \node[box, fill=cuired!20]  (env) at (3,-1.8) {SFC Placement Env};
+    \node[box, fill=cuired!15]  (gnn) at (3,-3.4) {GNN Feature Extractor};
+    \node[box, fill=cuired!25]  (ppo) at (3,-5.0) {Maskable PPO Agent};
+
+    \draw[arrow] (sub) -- (env);
+    \draw[arrow] (gen) -- (env);
+    \draw[arrow] (env) -- node[right, font=\footnotesize]{obs, mask} (gnn);
+    \draw[arrow] (gnn) -- node[right, font=\footnotesize]{embedding} (ppo);
+    \draw[arrow] (ppo.east) to[bend right=45]
+                 node[right, font=\footnotesize]{action $a_t$} (env.east);
+    \draw[arrow] (env.west) to[bend right=35]
+                 node[left,  font=\footnotesize]{reward $r_t$} (ppo.west);
+  \end{tikzpicture}
+\end{frame}
+
+\begin{frame}{Maskable PPO + Action Masking}
+  \begin{columns}[T]
+    \column{0.50\textwidth}
+      \begin{block}{Why Maskable PPO?}
+        \begin{itemize}
+          \item Infeasible actions receive logit $-\infty$ before softmax:
+          \[\pi(a|\mathbf{s}_t) = \text{softmax}(\mathbf{z}_t \odot \mathbf{m}_t^{\text{act}})\]
+          \item \textbf{Zero probability} on constraint-violating nodes
+          \item No need for per-constraint penalty terms
+          \item Better sample efficiency: no wasted gradients
+        \end{itemize}
+      \end{block}
+      \vspace{4pt}
+      \begin{alertblock}{Mask Construction (per step)}
+        \footnotesize
+        1. Resource + security score check\\
+        2. Incident downtime check\\
+        3. Hard isolation check\\
+        4. Bandwidth \& latency budget check\\
+        5. Safety fallback: always enable node 0
+      \end{alertblock}
+    \column{0.47\textwidth}
+      \begin{block}{PPO Training Hyperparameters}
+        \footnotesize
+        \begin{tabular}{ll}
+          \toprule
+          Total timesteps    & 100,000 \\
+          Rollout steps      & 4,096 \\
+          Batch size         & 512 \\
+          Update epochs      & 10 \\
+          Learning rate      & $10^{-4}$ \\
+          Discount $\gamma$  & 0.99 \\
+          GAE $\lambda$      & 0.97 \\
+          Clip range $\epsilon$ & 0.2 \\
+          Entropy coeff.     & 0.01 \\
+          Risk penalty $\lambda$ & 4.0 \\
+          AR window $w$      & 10 \\
+          \bottomrule
+        \end{tabular}
+      \end{block}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{GNN Feature Extractor}
+  \begin{columns}[T]
+    \column{0.50\textwidth}
+      \begin{block}{Node Feature Matrix $\mathbf{F}\in\mathbb{R}^{25\times20}$}
+        \footnotesize
+        \begin{tabular}{cl}
+          \toprule
+          Indices & Group\\
+          \midrule
+          0--3  & Base resources + effective security\\
+          4     & Avg.\ residual neighbor bandwidth\\
+          5     & Distance from previous placement\\
+          6--8  & Global resource shares\\
+          9--10 & VNF density \& SFC tenancy ratio\\
+          11--13& VNF fit ratios (RAM/CPU/storage)\\
+          14--19& Risk signals: $p_n$, $\ell_n$, $q_n$, ELR\\
+          \bottomrule
+        \end{tabular}
+      \end{block}
+      \vspace{4pt}
+      \begin{block}{Global Context $\mathbf{g}\in\mathbb{R}^{15}$}
+        \footnotesize
+        VNF demands, SFC constraints, progress index, isolation flag, latency consumed, TTL, windowed AR
+      \end{block}
+    \column{0.47\textwidth}
+      \begin{block}{Three GNN Variants}
+        \begin{itemize}
+          \item \kw{GCN} --- Graph Convolutional Network
+          \item \kw{GAT} --- Graph Attention Network
+          \item \kw{GraphSAGE} --- Inductive aggregation
+        \end{itemize}
+      \end{block}
+      \vspace{4pt}
+      \begin{tcolorbox}[colback=lightgray, colframe=cuired, title=Architecture, fonttitle=\small\bfseries]
+        \footnotesize
+        $\mathbf{F}$ $\xrightarrow{\text{GNN layers}}$ node embeddings $\xrightarrow{\text{attn-pool}}$ graph embedding $\xrightarrow{\oplus\,\mathbf{g}}$ actor-critic heads
+      \end{tcolorbox}
+      \vspace{4pt}
+      \begin{alertblock}{Advantage over MLP}
+        Captures topology-dependent patterns: node centrality, neighbourhood load, security posture clusters --- invisible to flat feature vectors.
+      \end{alertblock}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{Best-Fit Baseline}
+  \begin{columns}[T]
+    \column{0.52\textwidth}
+      \begin{block}{Best-Fit by Minimum Risk}
+        At each VNF step: apply identical feasibility checks, then select:
+        \[n^* = \underset{n \in \mathcal{V}_t^{\text{valid}}}{\arg\min}\;\left(\rho_n^{\text{node}},\; w_n^{\text{waste}},\; n\right)\]
+        where the per-node risk score is:
+        \[\rho_n^{\text{node}} = \min\!\left(q_n \cdot \mathrm{SFC}(n) \cdot \tfrac{T_s}{\tau_{\max}},\;1\right)\]
+      \end{block}
+      \vspace{4pt}
+      \begin{block}{Why a Strong Baseline?}
+        Directly minimizes the \textbf{same} objective component as the DRL risk penalty. Tests whether long-horizon reasoning adds value.
+      \end{block}
+    \column{0.45\textwidth}
+      \begin{tcolorbox}[colback=lightgray, colframe=warningorange, title=Baseline Limitation, fonttitle=\small\bfseries]
+        \footnotesize
+        \textbf{Myopic}: greedy at each step. Cannot:
+        \begin{itemize}
+          \item Anticipate future demand patterns
+          \item Preserve low-risk nodes for strict requests
+          \item Trade short-term risk for long-term efficiency
+        \end{itemize}
+      \end{tcolorbox}
+      \vspace{4pt}
+      \begin{tcolorbox}[colback=lightgray, colframe=successgreen, title=Fair Evaluation, fonttitle=\small\bfseries]
+        \footnotesize
+        RNG state \textbf{aligned} before each algorithm run $\Rightarrow$ identical request sequences for unbiased comparison.
+      \end{tcolorbox}
+  \end{columns}
+\end{frame}

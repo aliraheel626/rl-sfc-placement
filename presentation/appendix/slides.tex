@@ -1,0 +1,47 @@
+% ============================================================
+%  BACKUP / APPENDIX SLIDES
+% ============================================================
+
+\begin{frame}[noframenumbering]{Appendix: Node Feature Details}
+  \centering\footnotesize
+  \begin{tabular}{clp{6cm}}
+    \toprule
+    \textbf{Index} & \textbf{Group} & \textbf{Description}\\
+    \midrule
+    0--3  & Base resources      & Residual RAM, CPU, Storage (fraction of initial); Effective security $s_n^{\text{eff}}/s_{\max}$\\
+    4     & Connectivity        & Avg.\ residual bandwidth to neighbors / $b_{\max}$\\
+    5     & Distance            & Shortest-path latency from previous placement node / $\ell_{\max}$\\
+    6--8  & Global resource shares & Fraction of all consumed RAM/CPU/Storage on this node\\
+    9     & VNF global share    & Fraction of all VNF instances hosted here\\
+    10    & SFC tenancy ratio   & $\mathrm{SFC}(n)/\max(\mathrm{VNF}(n),1)$: blast-radius proxy\\
+    11--13& VNF fit ratios      & $d_v^r / \tilde{r}_n^r$ for RAM, CPU, Storage\\
+    14    & Incident pressure   & $p_n$\\
+    15    & Load norm           & $\mathrm{VNF}(n)/Q_{75}^{\mathrm{VNF}}$\\
+    16    & Base incident prob. & $q_n$ (Eq.\ in System Model)\\
+    17    & Expected incidents  & $q_n \cdot T_s / T_{\text{cap}}$\\
+    18    & Node risk score     & $= q_n$ (explicit risk slot)\\
+    19    & Expected lost rev.  & $1 - 1/(1 + P_n^{\text{hit}}\cdot\mathrm{SFC}(n)\cdot R_{\text{ttl}}\cdot D_{\text{inc}})$\\
+    \bottomrule
+  \end{tabular}
+\end{frame}
+
+\begin{frame}[noframenumbering]{Appendix: Global Context Vector}
+  \centering\footnotesize
+  \begin{tabular}{cp{9cm}}
+    \toprule
+    \textbf{Index} & \textbf{Description}\\
+    \midrule
+    0--2  & Current VNF demands: RAM/$d_{\max}^{\text{ram}}$, CPU/$d_{\max}^{\text{cpu}}$, Storage/$d_{\max}^{\text{stor}}$\\
+    3     & SFC min.\ security score $s_r^{\min}/s_{\max}$\\
+    4     & SFC max.\ latency $\ell_r^{\max}/\ell_{\max}$\\
+    5     & SFC min.\ bandwidth $b_r^{\min}/b_{\max}$\\
+    6     & VNF progress: current VNF index / $K_{\max}$\\
+    7     & Hard isolation flag (1.0 if $\delta_r=1$)\\
+    8     & Latency progress: accumulated latency / $\ell_r^{\max}$\\
+    9     & Normalized TTL: $(\tau_r-\tau_{\min})/(\tau_{\max}-\tau_{\min})$\\
+    10    & Remaining VNF count / $K_{\max}$\\
+    11--13& Aggregate remaining VNF demands (RAM, CPU, Storage) normalized\\
+    14    & Windowed acceptance ratio $\overline{\mathrm{AR}}_w$\\
+    \bottomrule
+  \end{tabular}
+\end{frame}

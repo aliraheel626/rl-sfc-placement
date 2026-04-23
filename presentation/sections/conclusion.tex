@@ -1,0 +1,66 @@
+% ============================================================
+\section{Conclusions \& Future Work}
+% ============================================================
+
+\begin{frame}{Thesis Contributions}
+  \begin{enumerate}
+    \item \kw{Maskable PPO placement agent} with hard-masked security posture constraints --- guarantees feasibility by construction.
+    \vspace{4pt}
+    \item \kw{Expected-loss security posture risk model} combining incident probability ($q_n$), blast radius ($\mathrm{SFC}(n)$), and TTL-proportional exposure.
+    \vspace{4pt}
+    \item \kw{Topology-aware GNN feature extractor} (GCN / GAT / GraphSAGE) with attention aggregation and MLP global context fusion.
+    \vspace{4pt}
+    \item \kw{Windowed acceptance ratio reward modifier} for curriculum-style, adaptive feedback during training.
+    \vspace{4pt}
+    \item \kw{Fair comparative evaluation framework} with aligned RNG state ensuring identical request streams across algorithms.
+    \vspace{4pt}
+    \item \kw{Comprehensive experimental analysis} across 11 metrics on 1,000 SFC requests.
+  \end{enumerate}
+\end{frame}
+
+\begin{frame}{Limitations \& Future Work}
+  \begin{columns}[T]
+    \column{0.48\textwidth}
+      \begin{alertblock}{Current Limitations}
+        \footnotesize
+        \begin{enumerate}
+          \item Fixed 25-node substrate; transfer to larger topologies not yet validated
+          \item 100K training steps may be insufficient for complex configurations
+          \item Simplified Bernoulli incident model (no temporal correlations or cascading failures)
+          \item Single baseline --- no ILP or First-Fit comparison
+        \end{enumerate}
+      \end{alertblock}
+    \column{0.48\textwidth}
+      \begin{block}{Promising Directions}
+        \footnotesize
+        \begin{itemize}
+          \item \textbf{Larger/dynamic topologies} (100--500 nodes, GraphSAGE transfer)
+          \item \textbf{Multi-agent placement} across administrative domains
+          \item \textbf{Richer posture models} with threat intelligence feeds and cascade effects
+          \item \textbf{Hierarchical DRL} (zone selection + VNF assignment)
+          \item \textbf{Online/continual learning} with live posture telemetry
+          \item \textbf{ETSI MANO integration} for real NFV testbed validation
+          \item \textbf{Explainability} via GNN attention weight analysis
+        \end{itemize}
+      \end{block}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{Conclusion}
+  \begin{tcolorbox}[colback=cuired!8, colframe=cuired, title=Summary, fonttitle=\bfseries]
+    This thesis presents a \textbf{security posture aware Deep Reinforcement Learning framework} for SFC placement that:
+    \begin{itemize}
+      \item Guarantees \textbf{100\% feasibility} of accepted placements via hard action masking
+      \item Reduces \textbf{realized security incidents by 76.7\%} and \textbf{risk integral by 59.5\%} vs.\ Best-Fit
+      \item Achieves \textbf{competitive acceptance ratio} ($<1\%$ difference) with a much stronger security posture
+      \item Introduces a \textbf{principled, deterministic risk model} linking node posture, load, and blast radius to reward
+      \item Leverages \textbf{graph-structured topology awareness} through GNN message passing
+    \end{itemize}
+  \end{tcolorbox}
+  \vspace{10pt}
+  \centering
+  \large\textbf{Thank you!}\\[6pt]
+  \normalsize Questions?\\[4pt]
+  \small\texttt{CIIT/SP24-RCS-001/LHR} $\cdot$ Supervisor: Dr.\ Muhammad Hasanain Chaudary\\
+  \small COMSATS University Islamabad $\cdot$ Spring 2026
+\end{frame}

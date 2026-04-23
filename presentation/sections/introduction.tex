@@ -1,0 +1,142 @@
+% ============================================================
+\section{Introduction \& Motivation}
+% ============================================================
+
+\begin{frame}{Background: Network Virtualization \& NFV}
+  \begin{columns}[T]
+    \column{0.55\textwidth}
+      \begin{block}{Key Technologies}
+        \begin{itemize}
+          \item \kw{Software-Defined Networking (SDN)} decouples control from data plane
+          \item \kw{Network Function Virtualization (NFV)} replaces dedicated hardware with \emph{Virtual Network Functions (VNFs)} on commodity servers
+          \item Foundation of \kw{5G/6G} network architectures (3GPP)
+          \item Reduces CAPEX/OPEX; enables elastic scaling
+        \end{itemize}
+      \end{block}
+      \vspace{6pt}
+      \begin{alertblock}{The Challenge}
+        Running VNFs on shared commodity hardware \textbf{expands the attack surface} and requires efficient, \textbf{security-aware resource orchestration}.
+      \end{alertblock}
+    \column{0.42\textwidth}
+      \centering
+      \begin{tikzpicture}[scale=0.78, every node/.style={font=\small}]
+        \node[draw, rounded corners, fill=cuired!15, minimum width=3.2cm, minimum height=0.7cm] (vnf) at (0,3.5) {VNF Instances};
+        \node[draw, rounded corners, fill=cuired!10, minimum width=3.2cm, minimum height=0.7cm] (os)  at (0,2.5) {OS / Hypervisor};
+        \node[draw, rounded corners, fill=cuired!5,  minimum width=3.2cm, minimum height=0.7cm] (hw)  at (0,1.5) {Commodity Server};
+        \node[draw, rounded corners, fill=cuigray!20,minimum width=3.2cm, minimum height=0.7cm] (sdn) at (0,0.5) {SDN Control Plane};
+        \foreach \from/\to in {vnf/os, os/hw, hw/sdn}
+          \draw[->, thick, cuired] (\from) -- (\to);
+        \node[font=\footnotesize, cuigray] at (0,0) {NFV Stack};
+      \end{tikzpicture}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{Service Function Chaining (SFC)}
+  \begin{columns}[T]
+    \column{0.52\textwidth}
+      \begin{block}{What is an SFC?}
+        An \kw{ordered sequence of VNFs} that network traffic must traverse to deliver an end-to-end service (e.g.\ Firewall $\to$ IDS $\to$ Load Balancer).
+      \end{block}
+      \vspace{4pt}
+      \begin{block}{SFC Request Tuple}
+        \[r = \langle \mathcal{V}_r,\; s_r^{\min},\; \ell_r^{\max},\; b_r^{\min},\; \tau_r,\; \delta_r \rangle\]
+        \footnotesize
+        \begin{tabular}{ll}
+          $\mathcal{V}_r$ & ordered VNF sequence\\
+          $s_r^{\min}$   & min.\ security score\\
+          $\ell_r^{\max}$& max.\ end-to-end latency\\
+          $b_r^{\min}$   & min.\ bandwidth per hop\\
+          $\tau_r$       & time-to-live (TTL)\\
+          $\delta_r$     & hard isolation flag\\
+        \end{tabular}
+      \end{block}
+    \column{0.45\textwidth}
+      \centering
+      \begin{tikzpicture}[scale=0.82, every node/.style={font=\scriptsize}]
+        \tikzset{
+          vnf/.style={circle, draw, fill=cuired!20, minimum size=0.8cm, thick},
+          link/.style={->, thick, cuired}
+        }
+        \node[vnf] (v1) at (0,0) {FW};
+        \node[vnf] (v2) at (1.8,0) {IDS};
+        \node[vnf] (v3) at (3.6,0) {LB};
+        \draw[link] (-1,0) -- (v1) node[midway, above] {traffic};
+        \draw[link] (v1) -- (v2);
+        \draw[link] (v2) -- (v3);
+        \draw[link] (v3) -- (4.7,0);
+
+        \node[draw, dashed, rounded corners, cuigray,
+              fit=(v1)(v2)(v3), inner sep=6pt,
+              label=above:{\textit{Service Function Chain}}] {};
+
+        \node[draw, fill=cuired!5, rounded corners, minimum width=1.0cm, minimum height=0.5cm]
+          (n1) at (0,-1.8)  {$n_1$};
+        \node[draw, fill=cuired!5, rounded corners, minimum width=1.0cm, minimum height=0.5cm]
+          (n2) at (1.8,-1.8) {$n_2$};
+        \node[draw, fill=cuired!5, rounded corners, minimum width=1.0cm, minimum height=0.5cm]
+          (n3) at (3.6,-1.8) {$n_3$};
+        \draw[->, dashed, cuigray] (v1)--(n1) node[midway, right] {\tiny placed};
+        \draw[->, dashed, cuigray] (v2)--(n2);
+        \draw[->, dashed, cuigray] (v3)--(n3);
+        \node[font=\tiny, cuigray] at (1.8,-2.5) {Substrate Network};
+      \end{tikzpicture}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{The SFC Placement Problem}
+  \begin{columns}[T]
+    \column{0.50\textwidth}
+      \textbf{Multi-constraint Placement:} assign each VNF $v_k$ to substrate node $n_k$
+      \vspace{4pt}
+      \begin{tcolorbox}[colback=lightgray, colframe=cuired, title=Hard Constraints, fonttitle=\small\bfseries]
+        \footnotesize
+        \begin{itemize}
+          \item \textbf{Resource:} RAM, CPU, storage $\geq$ VNF demand
+          \item \textbf{Latency:} $\sum L(n_k, n_{k+1}) \leq \ell_r^{\max}$
+          \item \textbf{Bandwidth:} $B(n_k,n_{k+1}) \geq b_r^{\min}$
+          \item \textbf{Security:} $s_{n_k}^{\text{eff}} \geq s_r^{\min}$
+          \item \textbf{Isolation:} no node sharing if $\delta_r=1$
+        \end{itemize}
+      \end{tcolorbox}
+    \column{0.47\textwidth}
+      \begin{alertblock}{Why Is It Hard?}
+        \begin{itemize}
+          \item \textbf{NP-hard} in general (Santos et al.\ 2021)
+          \item Dynamic, online arrival of requests
+          \item Myopic decisions fragment the substrate
+          \item Security posture changes over time
+          \item Shared nodes create \emph{blast-radius} risk
+        \end{itemize}
+      \end{alertblock}
+      \vspace{4pt}
+      \begin{block}{Existing Approaches}
+        \footnotesize
+        ILP (optimal but slow) $\cdot$ heuristics (fast but greedy) $\cdot$ meta-heuristics (expensive) --- \textbf{none learn from the request stream}
+      \end{block}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{Research Gaps \& Objectives}
+  \begin{columns}[T]
+    \column{0.48\textwidth}
+      \begin{alertblock}{Four Gaps in the Literature}
+        \footnotesize
+        \begin{enumerate}
+          \item Constraints treated as \textbf{soft penalties} --- no hard feasibility guarantee
+          \item Security modelled \textbf{statically} --- no dynamic posture, no incident history
+          \item Policies are \textbf{topology-blind} --- flat feature vectors only
+          \item Evaluations use \textbf{different request streams} --- unfair comparison
+        \end{enumerate}
+      \end{alertblock}
+    \column{0.48\textwidth}
+      \begin{block}{This Thesis Addresses Each Gap}
+        \footnotesize
+        \begin{enumerate}
+          \item \pro{Action masking} $\Rightarrow$ 100\% feasibility guarantee
+          \item \pro{Dynamic security posture risk model} with incident pressure \& load
+          \item \pro{GNN feature extractor} (GCN / GAT / GraphSAGE)
+          \item \pro{Aligned RNG evaluation} $\Rightarrow$ identical request streams
+        \end{enumerate}
+      \end{block}
+  \end{columns}
+\end{frame}

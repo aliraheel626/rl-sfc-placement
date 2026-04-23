@@ -1,0 +1,118 @@
+% ============================================================
+\section{Experimental Results}
+% ============================================================
+
+\begin{frame}{Experimental Setup}
+  \begin{columns}[T]
+    \column{0.48\textwidth}
+      \begin{block}{Configuration}
+        \footnotesize
+        \begin{tabular}{ll}
+          \toprule
+          Substrate       & 25-node complete graph\\
+          SFC requests    & 1,000 per evaluation\\
+          VNFs per chain  & 3 (fixed)\\
+          TTL             & Truncated Exp.$[1,25]$\\
+          Isolation prob. & 10\%\\
+          Min. security   & $[1,5]$ uniform\\
+          \midrule
+          Hardware        & Windows 10, Python 3.12\\
+          \bottomrule
+        \end{tabular}
+      \end{block}
+      \vspace{4pt}
+      \begin{block}{Evaluation Protocol}
+        \footnotesize
+        \begin{itemize}
+          \item Single long episode: 1,000 requests, no resets
+          \item RNG state snapshotted \& reset identically for both algorithms
+          \item Best model checkpoint (by acceptance ratio) saved during training
+        \end{itemize}
+      \end{block}
+    \column{0.48\textwidth}
+      \begin{block}{Metrics Tracked}
+        \footnotesize
+        \begin{itemize}
+          \item Acceptance ratio
+          \item Average risk integral $\rho_r$
+          \item Substrate utilization
+          \item Avg.\ SFCs / VNFs per node
+          \item Average security margin
+          \item Total \& per-request revenue
+          \item Total \& per-request lost revenue
+          \item Total realized incidents
+          \item Average decision time (ms)
+        \end{itemize}
+      \end{block}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{Comparative Results: Summary Table}
+  \centering
+  \footnotesize
+  \begin{tabular}{lrrrl}
+    \toprule
+    \textbf{Metric} & \textbf{Best-Fit} & \textbf{PPO} & \textbf{$\Delta$\%} & \textbf{Winner}\\
+    \midrule
+    Acceptance Ratio            & 0.9634  & 0.9550  & $-0.87$   & Best-Fit\\
+    Avg.\ Risk Integral $\rho$  & 0.0014  & 0.0006  & $-59.45$  & \pro{PPO}\\
+    Avg.\ Security Margin       & 0.8525  & 1.7593  & $+106.38$ & \pro{PPO}\\
+    Total Realized Incidents    & 35.20   & 8.20    & $-76.70$  & \pro{PPO}\\
+    Total Lost Revenue          & 68.80   & 44.80   & $-34.88$  & \pro{PPO}\\
+    Total Revenue               & 9319.80 & 9244.00 & $-0.81$   & Best-Fit\\
+    Avg.\ Revenue / Request     & 9.3198  & 9.2440  & $-0.81$   & Best-Fit\\
+    Avg.\ Lost Rev.\ / Request  & 0.0688  & 0.0448  & $-34.88$  & \pro{PPO}\\
+    \bottomrule
+  \end{tabular}
+  \vspace{8pt}
+
+  \begin{columns}[T]
+    \column{0.48\textwidth}
+      \begin{tcolorbox}[colback=successgreen!10, colframe=successgreen, title=PPO Wins (Security), fonttitle=\small\bfseries]
+        \footnotesize
+        \textbf{76.7\% fewer incidents} $\cdot$ \textbf{59.5\% lower risk} $\cdot$ \textbf{2$\times$ security margin} $\cdot$ \textbf{35\% less lost revenue}
+      \end{tcolorbox}
+    \column{0.48\textwidth}
+      \begin{tcolorbox}[colback=warningorange!10, colframe=warningorange, title=Trade-off (Acceptance), fonttitle=\small\bfseries]
+        \footnotesize
+        Best-Fit edges acceptance ratio by \textbf{0.87\%} and total revenue by \textbf{0.81\%} --- a small price for large security gains.
+      \end{tcolorbox}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{Key Findings \& Analysis}
+  \begin{columns}[T]
+    \column{0.50\textwidth}
+      \begin{block}{Action Masking Benefits}
+        \begin{itemize}
+          \item \pro{100\% feasibility} of every accepted placement
+          \item Improved sample efficiency --- no wasted gradients on infeasible actions
+          \item Simplified reward design: no per-constraint penalty terms needed
+        \end{itemize}
+      \end{block}
+      \vspace{4pt}
+      \begin{block}{GNN vs.\ MLP Policies}
+        \begin{itemize}
+          \item GNN captures \textbf{centrality, neighborhood load}, and \textbf{security posture clusters}
+          \item Attention weights reveal which nodes the policy considers most important
+          \item Structural awareness unavailable to flat feature vectors
+        \end{itemize}
+      \end{block}
+    \column{0.47\textwidth}
+      \begin{block}{PPO's Long-Horizon Advantage}
+        \begin{itemize}
+          \item May accept \emph{slightly riskier} early placements to \textbf{preserve low-risk nodes} for future strict requests
+          \item Greedy Best-Fit cannot exhibit this strategy
+        \end{itemize}
+      \end{block}
+      \vspace{4pt}
+      \begin{block}{Windowed AR Modifier}
+        \begin{itemize}
+          \item Amplifies acceptance reward after high-AR phases
+          \item Amplifies rejection penalty after low-AR phases
+          \item Provides \kw{curriculum-style} training signal
+          \item Stabilizes training convergence
+        \end{itemize}
+      \end{block}
+  \end{columns}
+\end{frame}

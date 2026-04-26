@@ -4,7 +4,7 @@
 
 \section{Summary}
 
-This thesis has presented an intelligent security posture aware Deep Reinforcement Learning framework for Service Function Chain placement in Network Function Virtualization environments. The framework addresses four key limitations of existing approaches: lack of hard constraint satisfaction, absence of security posture modeling, topology-blind policies, and unfair evaluation protocols.
+This thesis has presented an intelligent security posture aware Deep Reinforcement Learning framework for Service Function Chain placement in Network Function Virtualization environments. The framework addresses three key limitations of existing approaches: lack of hard constraint satisfaction in DRL-based placement, topology-blind policies, and unfair evaluation protocols --- while being the first DRL-based SFC placement framework to incorporate security as an explicit placement objective.
 
 The proposed framework makes the following contributions:
 
@@ -26,7 +26,7 @@ The Best-Fit by Minimum Risk baseline serves as a strong greedy comparator. The 
 
 \subsection{Comparative summary (aligned evaluation)}
 
-Table~\ref{tab:conclusion_compare} summarizes the mean metrics across evaluation episodes for Best-Fit versus Maskable PPO on the same aligned request stream (RNG state matched between algorithms). Acceptance ratio and total revenue differ by less than one percent in favour of Best-Fit, but PPO substantially improves security-oriented outcomes: lower average risk integral, higher average security margin, fewer realized incidents, and lower total and per-request lost revenue. Substrate utilisation and chain-per-node concentration favour Best-Fit in this run, reflecting a trade-off between greedy acceptance-focused packing and the risk-aware placement pattern learned by the agent.
+Table~\ref{tab:conclusion_compare} summarizes the mean metrics across evaluation episodes for Best-Fit versus Maskable PPO on the same aligned request stream (RNG state matched between algorithms). Acceptance ratio and total revenue differ by less than one percent in favour of Best-Fit, but PPO substantially improves security-oriented outcomes: lower average risk integral, higher average security margin, fewer realized incidents, and lower total and per-request lost revenue.
 
 \begin{table}[!ht]
 \centering
@@ -38,9 +38,6 @@ Table~\ref{tab:conclusion_compare} summarizes the mean metrics across evaluation
 \midrule
 Acceptance ratio                    & 0.9634 & 0.9550 & $-0.87$  & Best-Fit \\
 Avg.\ risk integral                 & 0.0014 & 0.0006 & $-59.45$ & PPO \\
-Substrate utilisation               & 0.3679 & 0.1847 & $-49.79$ & Best-Fit \\
-Avg.\ SFCs / node                   & 1.0123 & 2.6281 & $+159.63$ & Best-Fit \\
-Avg.\ VNFs / node                   & 3.0209 & 5.6935 & $+88.47$ & Best-Fit \\
 Avg.\ security margin               & 0.8525 & 1.7593 & $+106.38$ & PPO \\
 Total realized incidents            & 35.20  & 8.20   & $-76.70$ & PPO \\
 Total lost revenue                  & 68.80  & 44.80  & $-34.88$ & PPO \\

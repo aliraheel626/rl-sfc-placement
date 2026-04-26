@@ -69,27 +69,20 @@ Table~\ref{tab:results} presents the comparative evaluation of the Maskable PPO 
 \centering
 \caption{Comparative Evaluation Results (1000 SFC Requests)}
 \label{tab:results}
-\begin{tabularx}{\textwidth}{X X X}
+\begin{tabularx}{\textwidth}{X r r r l}
 \hline
-\textbf{Metric} & \textbf{Maskable PPO} & \textbf{Best-Fit} \\ \hline
-Acceptance Ratio & -- & -- \\
-Avg. Risk Integral $\rho$ & -- & -- \\
-Substrate Utilization & -- & -- \\
-Avg. SFCs/Node & -- & -- \\
-Avg. VNFs/Node & -- & -- \\
-Avg. Security Margin & -- & -- \\
-Total Realized Incidents & -- & -- \\
-Total Lost Revenue & -- & -- \\
-Total Revenue & -- & -- \\
-Avg. Revenue / Request & -- & -- \\
-Avg. Lost Revenue / Request & -- & -- \\
-Avg. Decision Time (ms) & -- & -- \\
+\textbf{Metric} & \textbf{Best-Fit mean} & \textbf{PPO mean} & \textbf{$\Delta$\%} & \textbf{Winner} \\ \hline
+Acceptance Ratio & 0.9634 & 0.9550 & $-0.87$\% & Best-Fit \\
+Avg Risk Integral & 0.0014 & 0.0006 & $-59.45$\% & PPO \\
+Avg Security Margin & 0.8525 & 1.7593 & 106.38\% & PPO \\
+Total Realized Incidents & 35.2000 & 8.2000 & $-76.70$\% & PPO \\
+Total Lost Revenue & 68.8000 & 44.8000 & $-34.88$\% & PPO \\
+Total Revenue & 9319.8000 & 9244.0000 & $-0.81$\% & Best-Fit \\
+Avg Revenue / Request & 9.3198 & 9.2440 & $-0.81$\% & Best-Fit \\
+Avg Lost Revenue / Request & 0.0688 & 0.0448 & $-34.88$\% & PPO \\
 \hline
-\multicolumn{3}{l}{\footnotesize Note: Values to be populated from experimental runs via \texttt{python -m src.compare}.}\\
 \end{tabularx}
 \end{table}
-
-\noindent\textbf{Note:} The ``--'' values in Table~\ref{tab:results} are to be populated by running the evaluation script: \texttt{uv run python -m src.compare --model-path models/sfc\_ppo\_best.zip --num-requests 1000}. The framework tracks all metrics automatically and produces a printed comparison table as well as the rolling average plots shown in Figure~\ref{fig:rolling}.
 
 \subsection{Rolling Average Metrics}
 

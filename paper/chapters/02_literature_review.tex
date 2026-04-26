@@ -8,8 +8,7 @@ Learning} --- commits to four coupled claims: (i) that \textbf{SFC
 placement} is a technically meaningful research problem; (ii) that an
 \textbf{intelligent, learning-based} placement policy offers
 advantages over classical heuristic and optimization approaches; (iii)
-that \textbf{security posture} --- the dynamic, load- and
-incident-dependent security state of each substrate node --- is a
+that \textbf{security posture} is a
 first-class placement concern that must be modelled explicitly; and
 (iv) that \textbf{deep reinforcement learning (DRL)}, appropriately
 extended with hard-constraint masking and topology-aware policy
@@ -21,11 +20,9 @@ literature. Section~\ref{sec:lr_sfc_placement_problem} establishes
 that SFC placement is an active, unresolved research problem whose
 multi-dimensional constraints justify sustained study.
 Section~\ref{sec:lr_security_aware} surveys security-aware placement
-work, and Section~\ref{sec:lr_posture_gap} extracts from it the
-specific \emph{dynamic security posture} gap that the thesis title
-addresses. Section~\ref{sec:lr_drl} reviews DRL-based placement and
+work. Section~\ref{sec:lr_drl} reviews DRL-based placement and
 shows both that DRL is the emerging technique of choice and that no
-prior DRL work is simultaneously posture-aware, hard-constrained, and
+prior DRL work is simultaneously security-aware, hard-constrained, and
 topology-aware. Section~\ref{sec:lr_classical} surveys classical
 optimization and heuristic approaches to motivate the
 \textit{intelligent, learning-based} stance taken by the thesis.
@@ -64,13 +61,9 @@ sub-problems that continue to generate new formulations.
 The second title claim --- that placement must be \textit{security
 posture aware} --- begins with the observation that security is now a
 first-class placement objective in virtualized networks. The surveyed
-works in this area differ along three axes: (i) how the security
-requirement is modelled, (ii) what is optimized (cost, delay, revenue,
-protection), and (iii) how much of the \emph{dynamic} security state
-is taken into account during placement. Crucially, as will be shown in
-Section~\ref{sec:lr_posture_gap}, the third axis is where the existing
-literature is weakest and where the posture-aware framing of this
-thesis finds its justification.
+works in this area differ along two primary axes: (i) how the security
+requirement is modelled, and (ii) what is optimized (cost, delay, revenue,
+protection).
 
 \subsection{Static-Level Security and Delay Optimization}
 
@@ -89,10 +82,9 @@ construction and security-aware task ranking, and demonstrating gains
 over several delay- or security-only
 baselines~\cite{sun_security-aware_2023}.
 
-While effective, both approaches model security as a per-node scalar
-checked at placement time. They do not track incident history, do not
-let node security degrade under load, and cannot preempt placements
-that would concentrate risk on already-stressed nodes.
+While effective, both approaches rely on heuristic methods that solve
+each request in isolation and cannot adapt to evolving traffic or
+substrate conditions.
 
 \subsection{Security-Aware Scheduling and Cost Optimization}
 
@@ -118,8 +110,8 @@ security-cost-balance SCB-SD heuristic, which is shown to be a
 logarithmic-approximation of the
 optimum~\cite{wang_towards_2025}. Both Wang contributions integrate
 security into the \emph{composition} of the chain itself, not just the
-\emph{embedding}; however, the threat model remains static and
-agnostic of load.
+\emph{embedding}; however, the methods remain heuristic and solve each
+request in isolation.
 
 \subsection{Attack-Aware and Dynamically Defensive Placement}
 
@@ -145,71 +137,17 @@ scenario~\cite{song_end--end_2025}.
 
 These papers are the closest in spirit to the present thesis: they
 acknowledge that placement must react to the security state of the
-infrastructure. However, as argued next, none of them implement the
-continuous, dynamic security posture concept that the thesis title
-explicitly invokes.
+infrastructure.
 
-\subsection{Validating the ``Security Posture Aware'' Claim: The Dynamic-Posture Gap}
-\label{sec:lr_posture_gap}
-
-The phrase \textit{security posture aware} in the thesis title
-deliberately departs from the static security-level framing that
-dominates the reviewed literature. Following NIST, security posture
-is the status of information resources and controls \emph{together
-with} the capability to respond to and recover from threats: it is
-inherently a dynamic, time-varying property, driven by load,
-historical incidents, applied controls, and remediation. Existing
-security-aware SFC placement work falls short of this notion in three
-concrete ways:
-
-\begin{enumerate}
-  \item \textbf{Static security levels.} Yang~et~al., Sun~et~al.,
-  Dubba and Killi, and both Wang
-  groups~\cite{yang_efficient_2024,sun_security-aware_2023,dubba_security-aware_2024,wang_security-aware_2024,wang_towards_2025}
-  treat each node's security as a fixed scalar (or discrete level)
-  that is checked against a requested threshold. A node that has just
-  suffered an incident and one that has been incident-free for weeks
-  are treated identically, because the security model is not a state
-  variable that evolves with observed events.
-  \item \textbf{Reactive detection rather than proactive placement.}
-  Iffl\"ander~et~al., Jia~et~al., and Song~et~al.
-  \cite{ifflander_attack-aware_2024,jia_efficient_2025,song_end--end_2025}
-  \emph{do} admit dynamic information --- attack traffic, anomaly
-  scores, blockchain-verified device status --- but use it to reorder
-  chains, detect anomalies, or screen devices \emph{after} placement
-  decisions have been made. Posture does not enter the placement
-  decision itself as an optimization signal.
-  \item \textbf{No load-driven incident dynamics.} None of the
-  reviewed works model the empirically established coupling between
-  node \emph{load} and the probability of a security incident: a
-  heavily loaded node, or one hosting many tenants, is more likely
-  to experience timing side-channels, denial-of-service effects, or
-  misconfiguration than an idle one. Ignoring this coupling means
-  that ``safe'' placements chosen in the morning may become
-  high-posture-risk placements by the afternoon, yet the placement
-  policy has no mechanism to anticipate this.
-\end{enumerate}
-
-A further limitation cuts across all three weaknesses: every
-security-aware placement method reviewed in this section is
-heuristic, meta-heuristic, or optimization-based. These approaches
-solve each incoming SFC in isolation and cannot learn from the
-arriving request stream, so they adapt poorly to dynamic traffic
-patterns, shifting load distributions, and the evolving security
-conditions that a posture-aware formulation is meant to track. A
-learning-based agent --- specifically a DRL agent that observes the
-full posture state --- is therefore needed not only to close the
-dynamic-posture gap itself, but also to exploit posture information
+A key limitation, however, cuts across the security-aware works reviewed
+in this section: every method is heuristic, meta-heuristic, or
+optimization-based. These approaches solve each incoming SFC in
+isolation and cannot learn from the arriving request stream, so they
+adapt poorly to dynamic traffic patterns and shifting load
+distributions. A learning-based agent --- specifically a DRL agent
+that observes security information as part of its state --- is
+therefore needed to exploit security awareness
 \emph{adaptively} over time.
-
-The thesis addresses all three posture weaknesses and the
-adaptivity limitation: it maintains per-node incident pressure
-$p_n(t)$, degrades the effective security $s_n^{\text{eff}}(t)$ under
-that pressure, lets the incident probability $q_n$ grow with load,
-and feeds every one of these signals into both the feasibility mask
-and the reward signal of a DRL agent that learns from the request
-stream (see Chapters~3 and~4). This is precisely the sense in which
-the placement policy is \textit{security posture aware}.
 
 \section{Deep Reinforcement Learning for SFC Placement}
 \label{sec:lr_drl}
@@ -406,8 +344,7 @@ the security dimension.
 \begin{table}[!ht]
 \centering
 \caption{Comparative summary of recent SFC-placement
-literature. ``Dyn.~Sec.'' indicates whether node security state
-evolves with incidents or load; ``Hard Constr.'' indicates guaranteed
+literature. ``Hard Constr.'' indicates guaranteed
 feasibility via mechanisms such as action masking; ``Graph Policy''
 indicates whether the policy explicitly exploits the substrate graph
 structure; ``Fair Eval.'' indicates whether comparison aligns the
@@ -418,39 +355,39 @@ $\circ$: partial.)}
 \setlength{\tabcolsep}{4pt}
 \renewcommand{\arraystretch}{1.15}
 \newcommand{\rothead}[1]{\rotatebox[origin=c]{60}{\textbf{#1}}}
-\begin{tabularx}{\textwidth}{@{}p{3.1cm} X *{5}{c}@{}}
+\begin{tabularx}{\textwidth}{@{}p{3.1cm} X *{4}{c}@{}}
 \toprule
-\textbf{Work} & \textbf{Technique} & \rothead{Sec.} & \rothead{Dyn.~Sec.} & \rothead{Hard Constr.} & \rothead{Graph Policy} & \rothead{Fair Eval.} \\
+\textbf{Work} & \textbf{Technique} & \rothead{Sec.} & \rothead{Hard Constr.} & \rothead{Graph Policy} & \rothead{Fair Eval.} \\
 \midrule
-Yang \textit{et al.}~\cite{yang_efficient_2024}            & Heuristic (ESSFCD-DO)                    & \checkmark   & \textendash & \textendash & \textendash & \textendash \\
-Sun \textit{et al.}~\cite{sun_security-aware_2023}         & Security-time scheduling                 & \checkmark   & \textendash & \textendash & \textendash & \textendash \\
-Dubba \& Killi~\cite{dubba_security-aware_2024}            & PSO / GLPSO                              & \checkmark   & \textendash & \textendash & \textendash & \textendash \\
-Iffl\"ander \textit{et al.}~\cite{ifflander_attack-aware_2024} & Attack-aware reordering                & \checkmark   & $\circ$     & \textendash & \textendash & \textendash \\
-Wang \textit{et al.}~\cite{wang_security-aware_2024}       & APPF-DSI (dedicated protection)          & \checkmark   & \textendash & \textendash & \textendash & \textendash \\
-Jia \textit{et al.}~\cite{jia_efficient_2025}              & FL + CNN-GRU                             & \checkmark   & $\circ$     & \textendash & \textendash & \textendash \\
-Song \textit{et al.}~\cite{song_end--end_2025}             & Blockchain + DRL (LSTM)                  & \checkmark   & $\circ$     & \textendash & $\circ$     & \textendash \\
-Wang \textit{et al.}~\cite{wang_towards_2025}              & SCB-SD (log-approx.)                     & \checkmark   & \textendash & \textendash & \textendash & \textendash \\
+Yang \textit{et al.}~\cite{yang_efficient_2024}            & Heuristic (ESSFCD-DO)                    & \checkmark   & \textendash & \textendash & \textendash \\
+Sun \textit{et al.}~\cite{sun_security-aware_2023}         & Security-time scheduling                 & \checkmark   & \textendash & \textendash & \textendash \\
+Dubba \& Killi~\cite{dubba_security-aware_2024}            & PSO / GLPSO                              & \checkmark   & \textendash & \textendash & \textendash \\
+Iffl\"ander \textit{et al.}~\cite{ifflander_attack-aware_2024} & Attack-aware reordering                & \checkmark   & \textendash & \textendash & \textendash \\
+Wang \textit{et al.}~\cite{wang_security-aware_2024}       & APPF-DSI (dedicated protection)          & \checkmark   & \textendash & \textendash & \textendash \\
+Jia \textit{et al.}~\cite{jia_efficient_2025}              & FL + CNN-GRU                             & \checkmark   & \textendash & \textendash & \textendash \\
+Song \textit{et al.}~\cite{song_end--end_2025}             & Blockchain + DRL (LSTM)                  & \checkmark   & \textendash & $\circ$     & \textendash \\
+Wang \textit{et al.}~\cite{wang_towards_2025}              & SCB-SD (log-approx.)                     & \checkmark   & \textendash & \textendash & \textendash \\
 \midrule
-Ran \textit{et al.}~\cite{ran_dynamic_2023}                & DQN + M-shortest path                    & \textendash  & \textendash & \textendash & \textendash & \textendash \\
-He \textit{et al.}~\cite{he_leveraging_2023}               & DRL + attention                          & \textendash  & \textendash & \textendash & $\circ$     & \textendash \\
-Zhang \textit{et al.}~\cite{zhang_dqn-msra_2025}           & DQN + multi-step RL                      & \textendash  & \textendash & \textendash & \textendash & \textendash \\
-Taktak \textit{et al.}~\cite{taktak_drl_2024}              & QoE/QoS DQN                              & \textendash  & \textendash & \textendash & \textendash & \textendash \\
-Xu \textit{et al.}~\cite{xu_dynamic_2023}                  & A3C + VNF reuse + parallelism            & \textendash  & \textendash & \textendash & \textendash & \textendash \\
-Zahedi \textit{et al.}~\cite{zahedi_dspvr_2023}            & DSPVR (DRL + reuse)                      & \textendash  & \textendash & \textendash & \textendash & \textendash \\
-Khemili \textit{et al.}~\cite{khemili_parallel_2024}       & Bi-state (MDP + LSTM)                    & \textendash  & \textendash & \textendash & \textendash & \textendash \\
-Wang~\cite{wang_fairness-aware_2025}                        & DRL + NF parallelism                     & \textendash  & \textendash & \textendash & $\circ$     & \textendash \\
-Lin \textit{et al.}~\cite{lin_lppif_2025}                  & DRL + VNF share + parallelism            & \textendash  & \textendash & \textendash & $\circ$     & \textendash \\
+Ran \textit{et al.}~\cite{ran_dynamic_2023}                & DQN + M-shortest path                    & \textendash  & \textendash & \textendash & \textendash \\
+He \textit{et al.}~\cite{he_leveraging_2023}               & DRL + attention                          & \textendash  & \textendash & $\circ$     & \textendash \\
+Zhang \textit{et al.}~\cite{zhang_dqn-msra_2025}           & DQN + multi-step RL                      & \textendash  & \textendash & \textendash & \textendash \\
+Taktak \textit{et al.}~\cite{taktak_drl_2024}              & QoE/QoS DQN                              & \textendash  & \textendash & \textendash & \textendash \\
+Xu \textit{et al.}~\cite{xu_dynamic_2023}                  & A3C + VNF reuse + parallelism            & \textendash  & \textendash & \textendash & \textendash \\
+Zahedi \textit{et al.}~\cite{zahedi_dspvr_2023}            & DSPVR (DRL + reuse)                      & \textendash  & \textendash & \textendash & \textendash \\
+Khemili \textit{et al.}~\cite{khemili_parallel_2024}       & Bi-state (MDP + LSTM)                    & \textendash  & \textendash & \textendash & \textendash \\
+Wang~\cite{wang_fairness-aware_2025}                        & DRL + NF parallelism                     & \textendash  & \textendash & $\circ$     & \textendash \\
+Lin \textit{et al.}~\cite{lin_lppif_2025}                  & DRL + VNF share + parallelism            & \textendash  & \textendash & $\circ$     & \textendash \\
 \midrule
-Vishesh \textit{et al.}~\cite{vishesh_optimized_2025}      & LSTM + ILP                               & \textendash  & \textendash & \checkmark  & \textendash & \textendash \\
-Macedo \textit{et al.}~\cite{macedo_distributed_2024}      & Distributed auction                      & \textendash  & \textendash & \textendash & \textendash & \textendash \\
-Han \textit{et al.}~\cite{han_sfc_2024}                    & VNF P-R function + RMET                  & \textendash  & \textendash & \textendash & \textendash & \textendash \\
-Tam \textit{et al.}~\cite{tam_subswarm-guided_2024}        & Ant-colony (SgACO)                       & \textendash  & \textendash & \textendash & \textendash & \textendash \\
-Saidi \textit{et al.}~\cite{saidi_constrained_2024}        & CSPH-PG (constrained SP)                 & \textendash  & \textendash & \checkmark  & \textendash & \textendash \\
-Lin \textit{et al.}~\cite{lin_energy-aware_2023}           & Energy-aware ILP + heuristics            & \textendash  & \textendash & \checkmark  & \textendash & \textendash \\
-Liang \textit{et al.}~\cite{liang_position-aware_2024}     & Palos (pos.-aware)                       & \textendash  & \textendash & \textendash & \textendash & \textendash \\
-Mohamad \& Hassanein~\cite{mohamad_preemptive_2024}        & PPPS (preemptive pred.)                  & \textendash  & \textendash & \textendash & \textendash & \textendash \\
+Vishesh \textit{et al.}~\cite{vishesh_optimized_2025}      & LSTM + ILP                               & \textendash  & \checkmark  & \textendash & \textendash \\
+Macedo \textit{et al.}~\cite{macedo_distributed_2024}      & Distributed auction                      & \textendash  & \textendash & \textendash & \textendash \\
+Han \textit{et al.}~\cite{han_sfc_2024}                    & VNF P-R function + RMET                  & \textendash  & \textendash & \textendash & \textendash \\
+Tam \textit{et al.}~\cite{tam_subswarm-guided_2024}        & Ant-colony (SgACO)                       & \textendash  & \textendash & \textendash & \textendash \\
+Saidi \textit{et al.}~\cite{saidi_constrained_2024}        & CSPH-PG (constrained SP)                 & \textendash  & \checkmark  & \textendash & \textendash \\
+Lin \textit{et al.}~\cite{lin_energy-aware_2023}           & Energy-aware ILP + heuristics            & \textendash  & \checkmark  & \textendash & \textendash \\
+Liang \textit{et al.}~\cite{liang_position-aware_2024}     & Palos (pos.-aware)                       & \textendash  & \textendash & \textendash & \textendash \\
+Mohamad \& Hassanein~\cite{mohamad_preemptive_2024}        & PPPS (preemptive pred.)                  & \textendash  & \textendash & \textendash & \textendash \\
 \midrule
-\textbf{This thesis} & \textbf{Maskable PPO + GNN + posture risk} & \textbf{\checkmark} & \textbf{\checkmark} & \textbf{\checkmark} & \textbf{\checkmark} & \textbf{\checkmark} \\
+\textbf{This thesis} & \textbf{Maskable PPO + GNN + posture risk} & \textbf{\checkmark} & \textbf{\checkmark} & \textbf{\checkmark} & \textbf{\checkmark} \\
 \bottomrule
 \end{tabularx}
 \end{table}
@@ -466,8 +403,8 @@ Song~et~al.~\cite{yang_efficient_2024,sun_security-aware_2023,dubba_security-awa
 chain-reordering rules, federated-learning anomaly detectors). None of
 these approaches learns from the arriving request stream; each
 incoming SFC is solved in isolation, so the placement policy cannot
-adapt to changing traffic patterns, shifting load distributions, or
-evolving security conditions. \textbf{Second}, every DRL-based
+adapt to changing traffic patterns or shifting load distributions.
+\textbf{Second}, every DRL-based
 placement
 agent~\cite{ran_dynamic_2023,he_leveraging_2023,zhang_dqn-msra_2025,taktak_drl_2024,xu_dynamic_2023,zahedi_dspvr_2023,khemili_parallel_2024,wang_fairness-aware_2025,lin_lppif_2025}
 ignores security requirements entirely: the \emph{Sec.} column
@@ -479,14 +416,7 @@ therefore empty, leaving a clear gap for Deep Reinforcement Learning
 applied to security-posture-aware SFC placement.
 
 Beyond this primary gap, the table reveals additional deficiencies
-that compound the problem. Among the security-aware works, the
-\emph{Dyn.~Sec.} column carries no full \checkmark: security is
-modelled either as a static per-node
-threshold~\cite{yang_efficient_2024,sun_security-aware_2023,dubba_security-aware_2024,wang_security-aware_2024,wang_towards_2025}
-or as a reactive post-placement
-signal~\cite{ifflander_attack-aware_2024,jia_efficient_2025,song_end--end_2025},
-and the continuous, load-coupled, incident-driven posture formulation
-demanded by dynamic network environments remains unaddressed. Among
+that compound the problem. Among
 the DRL-based approaches, constraints are consistently enforced
 through penalty rewards rather than hard action masking, graph
 structure is exploited only through partial mechanisms such as
@@ -496,8 +426,7 @@ isolate algorithmic gain from evaluation variance.
 
 This thesis closes the primary gap by applying DRL to
 security-posture-aware SFC placement, and simultaneously addresses
-the secondary deficiencies: a dynamic security posture risk model
-replaces static thresholds, Maskable PPO with action masking
+the secondary deficiencies: Maskable PPO with action masking
 guarantees hard-constraint feasibility, a GNN feature extractor
 provides principled topology awareness, and an aligned-RNG evaluation
 protocol ensures fair comparison --- as the final row of

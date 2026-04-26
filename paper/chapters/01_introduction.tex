@@ -171,10 +171,8 @@ multi-objective, long-horizon nature of SFC placement.
 
 This thesis develops an \emph{intelligent, security posture aware} DRL
 framework for SFC placement on NFV substrates. In contrast to prior DRL
-placement work, the framework treats security posture as a dynamic,
-load- and history-dependent state of each substrate node, integrates it
-directly into both the constraint mask and the reward signal, and
-evaluates placement decisions against an expected-loss risk model
+placement work, the framework incorporates security posture into both the constraint mask and the reward signal,
+and evaluates placement decisions against an expected-loss risk model
 rather than an ad-hoc penalty. The agent is a Maskable Proximal Policy
 Optimization (Maskable PPO) learner whose action mask enforces every
 hard constraint --- resource, latency, bandwidth, security, and
@@ -210,11 +208,6 @@ Within this primary gap, the literature exhibits further deficiencies:
   \item \textbf{Security-blind DRL.} All DRL-based SFC placement
   agents omit security from their state representation, reward
   signal, and constraint enforcement.
-  \item \textbf{Static security modelling.} Even among security-aware
-  works, node security is treated as a fixed scalar checked against a
-  threshold; no dynamic posture, no incident history, and no
-  load-dependent incident probability are
-  maintained~\cite{pendleton_survey_2017, abdelrazek_measuring_2025, editor_security_nodate}.
   \item \textbf{Soft-penalty constraints.} Existing DRL agents treat
   placement constraints as penalty terms rather than hard guarantees;
   infeasible actions remain reachable during both training and

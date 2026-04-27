@@ -88,6 +88,8 @@ def evaluate_baseline(
     rejected = 0
     total_latency = 0.0
     latencies = []
+    acceptance_samples = []  # 1 if accepted, 0 if rejected (per request)
+    revenue_samples = []  # Per-request revenue (0 if rejected)
     security_margins = []  # Track security margins for each accepted request
     sfc_tenancy_samples = []  # Track SFC tenancy per occupied node over time
     vnf_tenancy_samples = []  # Track VNF tenancy per occupied node over time
@@ -155,6 +157,7 @@ def evaluate_baseline(
         if placement is not None:
             # Successful placement
             accepted += 1
+            acceptance_samples.append(1)
 
             # Calculate and record latency
             latency = substrate_copy.get_total_latency(placement)
@@ -210,7 +213,9 @@ def evaluate_baseline(
             total_realized_incidents += realized_incidents
             total_incident_cost += incident_cost
             total_risk_integral += risk_integral
-            total_revenue += risk_cfg.get("revenue_per_ttl_step", 1.0) * request.ttl
+            req_revenue = risk_cfg.get("revenue_per_ttl_step", 1.0) * request.ttl
+            total_revenue += req_revenue
+            revenue_samples.append(req_revenue)
 
         # Sample tenancy metrics after each request (regardless of accept/reject)
         sfcs_per_node = substrate_copy.get_sfcs_per_node()
@@ -237,6 +242,8 @@ def evaluate_baseline(
 
         if placement is None:
             rejected += 1
+            acceptance_samples.append(0)
+            revenue_samples.append(0.0)
             # Rejected: no placement; risk 0 (consistent with env and RL eval)
             risk_score_samples.append(0.0)
             realized_incident_samples.append(0.0)
@@ -302,6 +309,8 @@ def evaluate_baseline(
         "total_revenue": total_revenue,
         "latencies": latencies,
         # Per-request samples for rolling average plots
+        "acceptance_samples": acceptance_samples,
+        "revenue_samples": revenue_samples,
         "sfc_tenancy_samples": sfc_tenancy_samples,
         "vnf_tenancy_samples": vnf_tenancy_samples,
         "substrate_utilization_samples": substrate_utilization_samples,
@@ -365,6 +374,8 @@ def evaluate_rl_agent(
     latency_violations = 0  # Rejections due to latency constraint
     total_latency = 0.0
     latencies = []
+    acceptance_samples = []  # 1 if accepted, 0 if rejected (per request)
+    revenue_samples = []  # Per-request revenue (0 if rejected)
     security_margins = []  # Track security margins for each accepted request
     sfc_tenancy_samples = []  # Track SFC tenancy per occupied node over time
     vnf_tenancy_samples = []  # Track VNF tenancy per occupied node over time
@@ -408,6 +419,7 @@ def evaluate_rl_agent(
 
             if info.get("success", False):
                 accepted += 1
+                acceptance_samples.append(1)
                 # Get latency from placement
                 placement = info.get("placement", [])
                 if placement:
@@ -446,9 +458,13 @@ def evaluate_rl_agent(
                 total_realized_incidents += realized_incidents
                 total_incident_cost += incident_cost
                 total_risk_integral += risk_score
-                total_revenue += info.get("request_revenue", 0.0)
+                req_revenue = info.get("request_revenue", 0.0)
+                total_revenue += req_revenue
+                revenue_samples.append(req_revenue)
             else:
                 rejected += 1
+                acceptance_samples.append(0)
+                revenue_samples.append(0.0)
                 if info.get("rejection_reason") == "latency_violation":
                     latency_violations += 1
                 # Rejected: use env's risk from info (0) for consistency with training.
@@ -547,6 +563,8 @@ def evaluate_rl_agent(
         "total_revenue": total_revenue,
         "latencies": latencies,
         # Per-request samples for rolling average plots
+        "acceptance_samples": acceptance_samples,
+        "revenue_samples": revenue_samples,
         "sfc_tenancy_samples": sfc_tenancy_samples,
         "vnf_tenancy_samples": vnf_tenancy_samples,
         "substrate_utilization_samples": substrate_utilization_samples,
@@ -764,22 +782,22 @@ def plot_comparison(results: dict, save_path: str):
     plt.close()
 
 
-def plot_comparison_models(
+def plot_rolling_comparison(
     results: dict,
     output_dir: str = "compare/",
     window_size: int = 50,
 ) -> None:
     """
-    Generate comparison plots saved to *output_dir* using the same filenames as the
-    training callback so they can be viewed alongside (or replace) training plots.
+    Generate rolling-average line charts from per-request samples for a single
+    evaluation episode.  Only the 8 canonical comparison metrics are plotted.
 
-    Produces:
-        sfc_ppo_acceptance_ratio.png  – acceptance ratio bar chart
-        sfc_ppo_rejection_ratio.png   – latency violation ratio bar chart
-        sfc_risk_training.png         – rolling-avg risk integral over requests
-        substrate_util_training.png   – rolling-avg substrate utilisation
-        sfc_per_node_training.png     – rolling-avg SFCs per occupied node
-        vnf_per_node_training.png     – rolling-avg VNFs per occupied node
+    Produces (all rolling-average line charts):
+        sfc_ppo_acceptance_ratio.png  – rolling acceptance ratio
+        sfc_risk_training.png         – rolling risk integral
+        security_score_training.png   – rolling security margin
+        realized_incidents_training.png – rolling realized incidents
+        incident_cost_training.png    – rolling lost revenue per request
+        revenue_training.png          – rolling revenue per request
 
     Args:
         results:     dict mapping algorithm name -> result dict (from run_eval)
@@ -790,8 +808,8 @@ def plot_comparison_models(
     out.mkdir(parents=True, exist_ok=True)
 
     algorithms = list(results.keys())
-    colors_bar = plt.cm.tab10(np.linspace(0, 1, max(len(algorithms), 10)))[: len(algorithms)]
-    color_map = dict(zip(algorithms, colors_bar))
+    colors_line = plt.cm.tab10(np.linspace(0, 1, max(len(algorithms), 10)))[: len(algorithms)]
+    color_map = dict(zip(algorithms, colors_line))
 
     # ── helper: rolling average ────────────────────────────────────────────────
     def _rolling(samples: np.ndarray):
@@ -803,32 +821,6 @@ def plot_comparison_models(
             y = samples
             x = np.arange(len(samples))
         return x, y
-
-    # ── helper: bar chart ──────────────────────────────────────────────────────
-    def _bar_chart(metric_key: str, ylabel: str, title: str, filename: str, ylim=(0, 1.05)):
-        fig, ax = plt.subplots(figsize=(10, 6))
-        vals = [results[a].get(metric_key, 0.0) for a in algorithms]
-        bars = ax.bar(algorithms, vals, color=colors_bar)
-        for bar, v in zip(bars, vals):
-            ax.text(
-                bar.get_x() + bar.get_width() / 2,
-                bar.get_height() + 0.01,
-                f"{v:.3f}",
-                ha="center",
-                va="bottom",
-                fontsize=10,
-            )
-        ax.set_ylabel(ylabel, fontsize=12)
-        ax.set_title(title, fontsize=13)
-        if ylim:
-            ax.set_ylim(*ylim)
-        ax.tick_params(axis="x", rotation=30)
-        ax.grid(True, axis="y", linestyle="--", alpha=0.7)
-        plt.tight_layout()
-        save_path = out / filename
-        plt.savefig(save_path, dpi=150, bbox_inches="tight")
-        print(f"Plot saved to: {save_path}")
-        plt.close()
 
     # ── helper: rolling time-series chart ─────────────────────────────────────
     def _rolling_chart(
@@ -858,11 +850,11 @@ def plot_comparison_models(
         print(f"Plot saved to: {save_path}")
         plt.close()
 
-    # 1) Acceptance ratio
-    _bar_chart(
-        "acceptance_ratio",
+    # 1) Acceptance ratio (rolling)
+    _rolling_chart(
+        "acceptance_samples",
         "Acceptance Ratio",
-        "SFC Acceptance Ratio by Algorithm (comparison)",
+        f"Rolling Acceptance Ratio (window={window_size})",
         "sfc_ppo_acceptance_ratio.png",
     )
 
@@ -870,58 +862,129 @@ def plot_comparison_models(
     _rolling_chart(
         "risk_score_samples",
         "Risk Integral (lower is better)",
-        f"Avg Risk Integral over Requests (window={window_size})",
+        f"Rolling Avg Risk Integral (window={window_size})",
         "sfc_risk_training.png",
     )
 
-    # 3) Substrate utilisation (rolling)
-    _rolling_chart(
-        "substrate_utilization_samples",
-        "Substrate Utilisation",
-        f"Substrate Utilisation over Requests (window={window_size})",
-        "substrate_util_training.png",
-        as_percent=True,
-    )
-
-    # 4) SFCs per occupied node (rolling)
-    _rolling_chart(
-        "sfc_tenancy_samples",
-        "Avg SFCs per Occupied Node",
-        f"Avg SFCs per Occupied Node over Requests (window={window_size})",
-        "sfc_per_node_training.png",
-    )
-
-    # 5) VNFs per occupied node (rolling)
-    _rolling_chart(
-        "vnf_tenancy_samples",
-        "Avg VNFs per Occupied Node",
-        f"Avg VNFs per Occupied Node over Requests (window={window_size})",
-        "vnf_per_node_training.png",
-    )
-
-    # 6) Avg security margin (rolling)
+    # 3) Avg security margin (rolling)
     _rolling_chart(
         "security_margin_samples",
-        "Avg Security Margin (node score − req min)",
-        f"Avg Security Margin over Requests (window={window_size})",
+        "Avg Security Margin (node score - req min)",
+        f"Rolling Avg Security Margin (window={window_size})",
         "security_score_training.png",
     )
 
-    # 7) Avg realized incidents per request (rolling)
+    # 4) Realized incidents per request (rolling)
     _rolling_chart(
         "realized_incident_samples",
-        "Avg Realized Incidents per Request",
-        f"Avg Realized Incidents over Requests (window={window_size})",
+        "Realized Incidents per Request",
+        f"Rolling Avg Realized Incidents (window={window_size})",
         "realized_incidents_training.png",
     )
 
-    # 8) Avg incident cost per request (rolling)
+    # 5) Lost revenue / incident cost per request (rolling)
     _rolling_chart(
         "incident_cost_samples",
-        "Avg Incident Cost per Request",
-        f"Avg Incident Cost over Requests (window={window_size})",
+        "Lost Revenue per Request (lower is better)",
+        f"Rolling Avg Lost Revenue per Request (window={window_size})",
         "incident_cost_training.png",
     )
+
+    # 6) Revenue per request (rolling)
+    _rolling_chart(
+        "revenue_samples",
+        "Revenue per Request",
+        f"Rolling Avg Revenue per Request (window={window_size})",
+        "revenue_training.png",
+    )
+
+
+def plot_summary_bar_chart(
+    multi_ep_data: dict,
+    output_dir: str = "compare/",
+) -> None:
+    """
+    Generate a grouped bar chart with error bars (mean ± std across episodes)
+    for the 8 canonical comparison metrics.
+
+    Args:
+        multi_ep_data: Output from run_multi_episode_eval()
+        output_dir:    Directory to write the chart into
+    """
+    from src.eval_reporting import COMPARISON_TABLE_ROWS
+
+    out = Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+
+    by_algo = multi_ep_data["by_algo"]
+    algos = list(by_algo.keys())
+
+    if len(algos) < 2:
+        print("Warning: Need at least 2 algorithms for summary bar chart")
+        return
+
+    # Friendly display names
+    display_names = []
+    for a in algos:
+        name = a.replace("Placement", "").replace("Maskable", "")
+        display_names.append(name.strip())
+
+    metrics = list(COMPARISON_TABLE_ROWS)
+    n_metrics = len(metrics)
+    n_cols = 4
+    n_rows = (n_metrics + n_cols - 1) // n_cols
+
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 4.5 * n_rows))
+    axes = axes.flatten()
+
+    bar_colors = plt.cm.tab10(np.linspace(0, 0.3, len(algos)))
+    bar_width = 0.35
+
+    for i, row in enumerate(metrics):
+        ax = axes[i]
+        x = np.arange(len(algos))
+
+        means = []
+        stds = []
+        for algo in algos:
+            vals = by_algo[algo].get(row.key, [])
+            means.append(np.mean(vals) if vals else 0.0)
+            stds.append(np.std(vals) if vals else 0.0)
+
+        bars = ax.bar(
+            x, means, bar_width,
+            yerr=stds, capsize=5,
+            color=bar_colors, edgecolor="black", linewidth=0.5,
+        )
+
+        ax.set_title(row.label, fontsize=10, fontweight="bold")
+        ax.set_xticks(x)
+        ax.set_xticklabels(display_names, fontsize=9)
+        ax.grid(True, axis="y", linestyle="--", alpha=0.3)
+
+        # Add value labels on bars
+        for bar, mean_val in zip(bars, means):
+            fmt = f"{mean_val:.4f}" if abs(mean_val) < 10 else f"{mean_val:.1f}"
+            ax.text(
+                bar.get_x() + bar.get_width() / 2,
+                bar.get_height(),
+                fmt,
+                ha="center", va="bottom", fontsize=7,
+            )
+
+    # Hide unused subplots
+    for j in range(n_metrics, len(axes)):
+        axes[j].set_visible(False)
+
+    fig.suptitle(
+        "PPO vs Best-Fit: Mean ± Std Across Evaluation Episodes",
+        fontsize=14, fontweight="bold", y=1.01,
+    )
+    plt.tight_layout()
+    save_path = out / "summary_comparison.png"
+    plt.savefig(save_path, dpi=150, bbox_inches="tight")
+    print(f"Summary bar chart saved to: {save_path}")
+    plt.close()
 
 
 def plot_rolling_averages(results: dict, output_dir: str, window_size: int = 50):
@@ -1070,7 +1133,7 @@ def run_multi_episode_eval(
 
     for ep in episodes:
         if verbose:
-            print(f"\n── Episode {ep}/{num_episodes} ──────────────────────────")
+            print(f"\n-- Episode {ep}/{num_episodes} --------------------------")
 
         # Seed per-episode so every episode uses an equally "mixed" RNG state and
         # episode 1 is not special (avoids the fresh-startup-seed anomaly).
@@ -1183,7 +1246,7 @@ def main():
                 substrate = pickle.load(f)
             print(f"Loaded training substrate from: {pkl}")
         else:
-            print(f"Warning: use_training_substrate=true but {pkl} not found – using fresh substrate")
+            print(f"Warning: use_training_substrate=true but {pkl} not found - using fresh substrate")
 
     if eval_cfg.get("use_training_request_generator", False):
         pkl = models_dir / "request_generator.pkl"
@@ -1192,7 +1255,7 @@ def main():
                 request_generator = pickle.load(f)
             print(f"Loaded training request generator from: {pkl}")
         else:
-            print(f"Warning: use_training_request_generator=true but {pkl} not found – using fresh generator")
+            print(f"Warning: use_training_request_generator=true but {pkl} not found - using fresh generator")
 
     out_dir = "compare/"
 
@@ -1206,7 +1269,27 @@ def main():
         request_generator=request_generator,
         verbose=verbose,
     )
-    plot_comparison_episodes(multi_ep, output_dir=out_dir, num_requests=num_requests)
+
+    # 1) Summary bar chart (mean ± std across episodes)
+    plot_summary_bar_chart(multi_ep, output_dir=out_dir)
+
+    # 2) Rolling-average line charts from a single representative episode.
+    #    Re-use the first episode's RNG seed for reproducibility.
+    print("\nGenerating rolling-average plots from a single evaluation run...")
+    random.seed(1 * 7919)
+    np.random.seed(1 * 7919)
+    ep_substrate = copy.deepcopy(substrate) if substrate is not None else None
+    ep_rg = copy.deepcopy(request_generator) if request_generator is not None else None
+    rolling_results = run_eval(
+        config_path=args.config,
+        model=None,
+        num_requests=num_requests,
+        verbose=verbose,
+        substrate=ep_substrate,
+        request_generator=ep_rg,
+        model_path=model_path,
+    )
+    plot_rolling_comparison(rolling_results, output_dir=out_dir, window_size=50)
 
     if verbose:
         print("\nPer-episode raw values (to verify episode-to-episode variation):")
@@ -1231,10 +1314,10 @@ def main():
             f"{'Metric':<{col_w[0]}}"
             f"{'BestFit mean':>{col_w[1]}}"
             f"{'PPO mean':>{col_w[2]}}"
-            f"{'Δ%':>{col_w[3]}}"
+            f"{'D%':>{col_w[3]}}"
             f"{'Winner':>{col_w[4]}}"
         )
-        print(f"\n{'PPO vs BestFit – average across episodes':^{sum(col_w)}}")
+        print(f"\n{'PPO vs BestFit - average across episodes':^{sum(col_w)}}")
         print(sep)
         print(header)
         print(sep)
@@ -1244,7 +1327,7 @@ def main():
         if bf_ep_count != ppo_ep_count:
             print(
                 f"  Warning: BestFit ran {bf_ep_count} episode(s) but PPO ran "
-                f"{ppo_ep_count} – comparison uses the first {n_paired} episode(s) only."
+                f"{ppo_ep_count} - comparison uses the first {n_paired} episode(s) only."
             )
 
         for row in COMPARISON_TABLE_ROWS:
@@ -1259,7 +1342,7 @@ def main():
             else:
                 pct = float("nan")
             if np.isnan(pct):
-                winner = "–"
+                winner = "-"
             elif row.higher_is_better:
                 winner = "PPO" if pct > 0 else ("BestFit" if pct < 0 else "tie")
             else:
@@ -1273,7 +1356,7 @@ def main():
             )
         print(sep)
     elif not ppo_key:
-        print("\n(No PPO results – skipping comparison table; run without --no-model)")
+        print("\n(No PPO results - skipping comparison table; run without --no-model)")
 
 
 if __name__ == "__main__":

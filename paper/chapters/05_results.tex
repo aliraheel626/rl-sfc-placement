@@ -84,6 +84,17 @@ Avg Lost Revenue / Request & 0.0688 & 0.0448 & $-34.88$\% & PPO \\
 \end{tabularx}
 \end{table}
 
+\subsection{Summary Bar Chart}
+
+Figure~\ref{fig:summary_bar} provides a visual overview of the mean $\pm$ standard deviation for all eight comparative metrics across evaluation episodes. The error bars indicate episode-to-episode variance, confirming the stability of both algorithms' performance.
+
+\begin{figure}[!ht]
+\centering
+\includegraphics[width=\textwidth]{compare/summary_comparison.png}
+\caption{Grouped bar chart comparing PPO and Best-Fit across all evaluation metrics (mean $\pm$ std over evaluation episodes).}
+\label{fig:summary_bar}
+\end{figure}
+
 \subsection{Rolling Average Metrics}
 
 Figure~\ref{fig:rolling} presents the rolling average (window 50) of the acceptance ratio for both algorithms over the 1000-request evaluation. The rolling averages reveal the stability of each algorithm's performance over the course of the evaluation and highlight any temporal patterns such as performance degradation under high load.
@@ -102,7 +113,7 @@ Figure~\ref{fig:risk_compare} shows the rolling average risk integral for both a
 \begin{figure}[!ht]
 \centering
 \includegraphics[width=0.8\textwidth]{compare/sfc_risk_training.png}
-\caption{Rolling average risk integral for Maskable PPO and Best-Fit over the evaluation horizon.}
+\caption{Rolling average risk integral (window = 50) for Maskable PPO and Best-Fit over 1000 requests.}
 \label{fig:risk_compare}
 \end{figure}
 
@@ -113,36 +124,36 @@ Figure~\ref{fig:sec_margin} shows the rolling average security margin — the su
 \begin{figure}[!ht]
 \centering
 \includegraphics[width=0.8\textwidth]{compare/security_score_training.png}
-\caption{Rolling average security margin for Maskable PPO and Best-Fit over the evaluation horizon.}
+\caption{Rolling average security margin (window = 50) for Maskable PPO and Best-Fit over 1000 requests.}
 \label{fig:sec_margin}
 \end{figure}
 
 \subsection{Revenue and Incident Cost}
 
-Figure~\ref{fig:revenue} presents the total revenue earned per evaluation episode and Figure~\ref{fig:lost_revenue} presents the total expected lost revenue due to incidents. Together these metrics capture the economic impact of placement quality: a higher revenue indicates more SFCs accepted for longer durations, while a lower lost revenue indicates fewer incident-induced service disruptions.
+Figure~\ref{fig:revenue} presents the rolling average revenue earned per request and Figure~\ref{fig:lost_revenue} presents the rolling average lost revenue per request due to incidents. Together these metrics capture the economic impact of placement quality: a higher per-request revenue indicates more SFCs accepted for longer durations, while a lower per-request lost revenue indicates fewer incident-induced service disruptions.
 
 \begin{figure}[!ht]
 \centering
 \includegraphics[width=0.8\textwidth]{compare/revenue_training.png}
-\caption{Total revenue per episode for Maskable PPO and Best-Fit.}
+\caption{Rolling average revenue per request (window = 50) for Maskable PPO and Best-Fit over 1000 requests.}
 \label{fig:revenue}
 \end{figure}
 
 \begin{figure}[!ht]
 \centering
 \includegraphics[width=0.8\textwidth]{compare/incident_cost_training.png}
-\caption{Total lost revenue (incident cost) per episode for Maskable PPO and Best-Fit.}
+\caption{Rolling average lost revenue per request (window = 50) for Maskable PPO and Best-Fit over 1000 requests.}
 \label{fig:lost_revenue}
 \end{figure}
 
 \subsection{Realized Incidents}
 
-Figure~\ref{fig:incidents_compare} shows the total realized incidents per evaluation episode. This metric captures the Monte Carlo outcome of the stochastic incident process and validates that the deterministic risk integral $\rho_r$ correlates with actual incident occurrences.
+Figure~\ref{fig:incidents_compare} shows the rolling average realized incidents per request. This metric captures the Monte Carlo outcome of the stochastic incident process and validates that the deterministic risk integral $\rho_r$ correlates with actual incident occurrences.
 
 \begin{figure}[!ht]
 \centering
 \includegraphics[width=0.8\textwidth]{compare/realized_incidents_training.png}
-\caption{Total realized incidents per episode for Maskable PPO and Best-Fit.}
+\caption{Rolling average realized incidents per request (window = 50) for Maskable PPO and Best-Fit over 1000 requests.}
 \label{fig:incidents_compare}
 \end{figure}
 

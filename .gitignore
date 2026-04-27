@@ -128,7 +128,6 @@ celerybeat.pid
 *.sage.py
 
 # Environments
-.env
 .venv
 env/
 venv/
@@ -188,4 +187,8 @@ sfc_ppo_acceptance_ratio.png
 
 models/
 eval/
-.vscode/
+branch_structure.json
+temp_auto_push.bat
+temp_interactive_push.bat
+config.bat
+node_modules

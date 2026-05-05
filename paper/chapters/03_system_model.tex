@@ -4,7 +4,9 @@
 
 \section{Substrate Network Model}
 
-The physical infrastructure is modeled as an undirected weighted graph $G_S = (N, E)$, where $N$ is the set of substrate nodes and $E$ is the set of physical links.
+The physical infrastructure is modeled as an undirected weighted graph $G_S =
+(N, E)$, where $N$ is the set of substrate nodes and $E$ is the set of physical
+links.
 
 \subsection{Node Model}
 
@@ -12,17 +14,24 @@ Each substrate node $n \in N$ is characterized by a resource vector:
 \begin{equation}
 \mathbf{r}_n = \left(r_n^{\text{ram}},\; r_n^{\text{cpu}},\; r_n^{\text{stor}},\; s_n\right),
 \end{equation}
-where $r_n^{\text{ram}}$, $r_n^{\text{cpu}}$, $r_n^{\text{stor}}$ denote available RAM (GB), CPU (cores), and storage (GB) respectively, and $s_n \in [s_{\min}, s_{\max}]$ is the node's security score on a discrete scale.
+where $r_n^{\text{ram}}$, $r_n^{\text{cpu}}$, $r_n^{\text{stor}}$ denote
+available RAM (GB), CPU (cores), and storage (GB) respectively, and $s_n \in
+[s_{\min}, s_{\max}]$ is the node's security score on a discrete scale.
 
-The \textit{residual} resource vector $\tilde{\mathbf{r}}_n(t)$ at time $t$ reflects capacity remaining after currently active VNF allocations.
+The \textit{residual} resource vector $\tilde{\mathbf{r}}_n(t)$ at time $t$
+reflects capacity remaining after currently active VNF allocations.
 
 \subsection{Link Model}
 
-Each link $(u,v) \in E$ is characterized by bandwidth $b_{uv}$ (Mbps) and propagation latency $\ell_{uv}$ (ms). Routing follows shortest hop-count paths; the \textit{effective latency} between nodes $u$ and $v$ is the sum of link latencies along the shortest path $P(u,v)$:
+Each link $(u,v) \in E$ is characterized by bandwidth $b_{uv}$ (Mbps) and
+propagation latency $\ell_{uv}$ (ms). Routing follows shortest hop-count paths;
+the \textit{effective latency} between nodes $u$ and $v$ is the sum of link
+latencies along the shortest path $P(u,v)$:
 \begin{equation}
 L(u,v) = \sum_{(i,j) \in P(u,v)} \ell_{ij}.
 \end{equation}
-The \textit{effective bandwidth} between $u$ and $v$ is the bottleneck bandwidth along $P(u,v)$:
+The \textit{effective bandwidth} between $u$ and $v$ is the bottleneck bandwidth
+along $P(u,v)$:
 \begin{equation}
 B(u,v) = \min_{(i,j) \in P(u,v)} \tilde{b}_{ij}(t),
 \end{equation}
@@ -30,11 +39,22 @@ where $\tilde{b}_{ij}(t)$ is the residual bandwidth on link $(i,j)$ at time $t$.
 
 \subsection{Topology Generation}
 
-In the experimental configuration, the substrate network is generated as an Erd\H{o}s-R\'enyi random graph $G(N, p)$ with $|N| = 25$ nodes and edge probability $p = 1.0$ (complete graph). Disconnected components are prevented by adding bridging edges between components when $p < 1$. Node resources are sampled uniformly: RAM $\in [20, 120]$ GB, CPU $\in [10, 60]$ cores, storage $\in [250, 1500]$ GB, security score $\in [1, 5]$. Link bandwidths are sampled uniformly in $[100, 500]$ Mbps with latencies in $[5, 60]$ ms.
+In the experimental configuration, the substrate network is generated as an
+Erd\H{o}s-R\'enyi random graph $G(N, p)$ with $|N| = 25$ nodes and edge
+probability $p = 1.0$ (complete graph). Disconnected components are prevented by
+adding bridging edges between components when $p < 1$. Node resources are
+sampled uniformly: RAM $\in [20, 120]$ GB, CPU $\in [10, 60]$ cores, storage
+$\in [250, 1500]$ GB, security score $\in [1, 5]$. Link bandwidths are sampled
+uniformly in $[100, 500]$ Mbps with latencies in $[5, 60]$ ms.
 
 \subsection{Time-to-Live and Resource Release}
 
-Each accepted SFC placement holds resources for $\tau_r$ time steps (the SFC's TTL). Resources are released at the end of each time step via a \texttt{tick()} operation that decrements remaining TTLs and deallocates resources from expired placements. This models the dynamic, time-varying nature of real NFV deployments, where the substrate becomes gradually fragmented as active SFCs consume resources and eventually expire.
+Each accepted SFC placement holds resources for $\tau_r$ time steps (the SFC's
+TTL). Resources are released at the end of each time step via a \texttt{tick()}
+operation that decrements remaining TTLs and deallocates resources from expired
+placements. This models the dynamic, time-varying nature of real NFV
+deployments, where the substrate becomes gradually fragmented as active SFCs
+consume resources and eventually expire.
 
 \section{SFC and VNF Request Model}
 
@@ -44,7 +64,8 @@ A Virtual Network Function $v$ is characterized by its resource demands:
 \begin{equation}
 \mathbf{d}_v = \left(d_v^{\text{ram}},\; d_v^{\text{cpu}},\; d_v^{\text{stor}}\right).
 \end{equation}
-VNF demands are sampled uniformly: RAM $\in [2, 12]$ GB, CPU $\in [1, 6]$ cores, storage $\in [20, 120]$ GB.
+VNF demands are sampled uniformly: RAM $\in [2, 12]$ GB, CPU $\in [1, 6]$ cores,
+storage $\in [20, 120]$ GB.
 
 \subsection{SFC Request Model}
 
@@ -54,19 +75,28 @@ r = \left\langle \mathcal{V}_r,\; s_r^{\min},\; \ell_r^{\max},\; b_r^{\min},\; \
 \end{equation}
 where:
 \begin{itemize}
-  \item $\mathcal{V}_r = (v_1, v_2, \ldots, v_{K_r})$ is the ordered sequence of $K_r$ VNFs;
-  \item $s_r^{\min} \in [1, 5]$ is the minimum security score required at each placement node;
-  \item $\ell_r^{\max} \in [35, 120]$ ms is the maximum allowed end-to-end latency;
-  \item $b_r^{\min} \in [50, 250]$ Mbps is the minimum required bandwidth on each hop;
-  \item $\tau_r$ is the TTL drawn from a truncated exponential distribution on $[1, 25]$;
-  \item $\delta_r \in \{0,1\}$ indicates whether hard isolation is required (probability 0.1).
+  \item $\mathcal{V}_r = (v_1, v_2, \ldots, v_{K_r})$ is the ordered sequence of
+        $K_r$ VNFs;
+  \item $s_r^{\min} \in [1, 5]$ is the minimum security score required at each
+        placement node;
+  \item $\ell_r^{\max} \in [35, 120]$ ms is the maximum allowed end-to-end
+        latency;
+  \item $b_r^{\min} \in [50, 250]$ Mbps is the minimum required bandwidth on
+        each hop;
+  \item $\tau_r$ is the TTL drawn from a truncated exponential distribution on
+        $[1, 25]$;
+  \item $\delta_r \in \{0,1\}$ indicates whether hard isolation is required
+        (probability 0.1).
 \end{itemize}
 
-In our experiments, $K_r = 3$ VNFs per chain (fixed), providing a well-defined three-step decision process per SFC.
+In our experiments, $K_r = 3$ VNFs per chain (fixed), providing a well-defined
+three-step decision process per SFC.
 
 \section{Placement Constraints}
 
-A placement $\pi_r = (n_1, n_2, \ldots, n_{K_r})$ assigns VNF $v_k$ to substrate node $n_k \in N$. A placement is \textit{feasible} if and only if all of the following constraints are satisfied:
+A placement $\pi_r = (n_1, n_2, \ldots, n_{K_r})$ assigns VNF $v_k$ to substrate
+node $n_k \in N$. A placement is \textit{feasible} if and only if all of the
+following constraints are satisfied:
 
 \textbf{Resource constraints:} For each VNF $v_k$ placed on node $n_k$:
 \begin{equation}
@@ -79,7 +109,8 @@ A placement $\pi_r = (n_1, n_2, \ldots, n_{K_r})$ assigns VNF $v_k$ to substrate
 \begin{equation}
 s_{n_k}^{\text{eff}}(t) \geq s_r^{\min},
 \end{equation}
-where $s_{n_k}^{\text{eff}}(t)$ is the \textit{effective security} of node $n_k$ at time $t$ (which may be reduced by incident pressure; see Section~3.5).
+where $s_{n_k}^{\text{eff}}(t)$ is the \textit{effective security} of node $n_k$
+at time $t$ (which may be reduced by incident pressure; see Section~3.5).
 
 \textbf{Bandwidth constraints:} For each consecutive pair $(n_k, n_{k+1})$:
 \begin{equation}
@@ -91,133 +122,224 @@ B(n_k, n_{k+1}) \geq b_r^{\min}.
 \sum_{k=1}^{K_r - 1} L(n_k, n_{k+1}) \leq \ell_r^{\max}.
 \end{equation}
 
-\textbf{Hard isolation constraints:} If $\delta_r = 1$, no node in $\pi_r$ may be shared with any active SFC from a different request:
+\textbf{Hard isolation constraints:} If $\delta_r = 1$, no node in $\pi_r$ may
+be shared with any active SFC from a different request:
 \begin{equation}
 \forall k:\; n_k \notin \bigcup_{r' \neq r, r' \text{ active}} \{n_{k'}^{r'}\}.
 \end{equation}
-Symmetrically, nodes reserved by hard-isolated SFCs cannot be used by any other SFC.
+Symmetrically, nodes reserved by hard-isolated SFCs cannot be used by any other
+SFC.
 
-\textbf{Incident downtime constraint:} If node $n_k$ is currently in a downtime period following a realized security incident (i.e.\ its remaining downtime counter $\Delta_{n_k}^{\text{down}}(t) > 0$), it is temporarily unavailable regardless of resources. Downtime counters decrement by one on each request tick and are set to $D_{\text{inc}} = 2$ steps upon an incident.
+\textbf{Incident downtime constraint:} If node $n_k$ is currently in a downtime
+period following a realized security incident (i.e.\ its remaining downtime
+counter $\Delta_{n_k}^{\text{down}}(t) > 0$), it is temporarily unavailable
+regardless of resources. Downtime counters decrement by one on each request tick
+and are set to $D_{\text{inc}} = 2$ steps upon an incident.
 
 \section{MDP Formulation}
 
-The SFC placement problem under online request arrivals is formalized as a finite-horizon Markov Decision Process (MDP) $\mathcal{M} = \langle \mathcal{S}, \mathcal{A}, \mathcal{P}, \mathcal{R}, \gamma \rangle$.
+The SFC placement problem under online request arrivals is formalized as a
+finite-horizon Markov Decision Process (MDP) $\mathcal{M} = \langle \mathcal{S},
+\mathcal{A}, \mathcal{P}, \mathcal{R}, \gamma \rangle$.
 
 \subsection{State Space}
 
-The state $\mathbf{s}_t \in \mathcal{S}$ at time step $t$ encodes all information relevant to the current placement decision. It comprises:
+The state $\mathbf{s}_t \in \mathcal{S}$ at time step $t$ encodes all
+information relevant to the current placement decision. It comprises:
 
 \begin{enumerate}
-  \item \textbf{Node feature matrix} $\mathbf{F} \in \mathbb{R}^{N \times 20}$: for each substrate node, a normalized vector comprising: (i)~base resources [RAM, CPU, storage, effective security score, average neighbor bandwidth, distance to previous placement node]; (ii)~global resource shares [RAM global share, CPU global share, storage global share] indicating each node's fraction of total consumed resources; (iii)~tenancy features [VNF global share, SFC tenancy ratio]; (iv)~VNF fit ratios [fit RAM, fit CPU, fit storage] measuring how much of each node's remaining capacity the current VNF would consume; (v)~incident features [incident pressure, load norm, base incident probability $p_{\text{base}}$, expected incidents]; (vi)~risk signals [node risk score ($= p_{\text{base}}$), expected lost revenue].
-  \item \textbf{Global context vector} $\mathbf{g} \in \mathbb{R}^{15}$: encoding current VNF demands (3), SFC constraints (3), VNF progress index (1), hard isolation flag (1), latency budget consumed (1), TTL (1), remaining VNF count and aggregate demands (4), and windowed acceptance ratio (1).
-  \item \textbf{Placement mask} $\mathbf{m}^{P} \in \{0,1\}^{N}$: indicating which nodes are already used in the current partial placement.
-  \item \textbf{Node mask} $\mathbf{m}^{N} \in \{0,1\}^{N}$: indicating real (non-padded) nodes.
+  \item \textbf{Node feature matrix} $\mathbf{F} \in \mathbb{R}^{N \times 20}$:
+        for each substrate node, a normalized vector comprising: (i)~base
+        resources [RAM, CPU, storage, effective security score, average neighbor
+        bandwidth, distance to previous placement node]; (ii)~global resource
+        shares [RAM global share, CPU global share, storage global share]
+        indicating each node's fraction of total consumed resources;
+        (iii)~tenancy features [VNF global share, SFC tenancy ratio]; (iv)~VNF
+        fit ratios [fit RAM, fit CPU, fit storage] measuring how much of each
+        node's remaining capacity the current VNF would consume; (v)~incident
+        features [incident pressure, load norm, base incident probability
+        $p_{\text{base}}$, expected incidents]; (vi)~risk signals [node risk
+        score ($= p_{\text{base}}$), expected lost revenue].
+  \item \textbf{Global context vector} $\mathbf{g} \in \mathbb{R}^{15}$:
+        encoding current VNF demands (3), SFC constraints (3), VNF progress
+        index (1), hard isolation flag (1), latency budget consumed (1), TTL
+        (1), remaining VNF count and aggregate demands (4), and windowed
+        acceptance ratio (1).
+  \item \textbf{Placement mask} $\mathbf{m}^{P} \in \{0,1\}^{N}$: indicating
+        which nodes are already used in the current partial placement.
+  \item \textbf{Node mask} $\mathbf{m}^{N} \in \{0,1\}^{N}$: indicating real
+        (non-padded) nodes.
 \end{enumerate}
 
 All features are normalized to $[0, 1]$.
 
 \subsection{Action Space}
 
-The action space is $\mathcal{A} = \{0, 1, \ldots, N_{\max}-1\}$, where $N_{\max}$ is the maximum number of nodes (fixed at 25). At each step, only a subset $\mathcal{A}_t^{\text{valid}} \subseteq \mathcal{A}$ of feasible nodes is available, determined by the action mask $\mathbf{m}_t^{\text{act}} \in \{0,1\}^{N_{\max}}$. The agent samples from the masked softmax distribution:
+The action space is $\mathcal{A} = \{0, 1, \ldots, N_{\max}-1\}$, where
+$N_{\max}$ is the maximum number of nodes (fixed at 25). At each step, only a
+subset $\mathcal{A}_t^{\text{valid}} \subseteq \mathcal{A}$ of feasible nodes is
+available, determined by the action mask $\mathbf{m}_t^{\text{act}} \in
+\{0,1\}^{N_{\max}}$. The agent samples from the masked softmax distribution:
 \begin{equation}
 \pi(\mathbf{a} \mid \mathbf{s}_t) = \text{softmax}\!\left(\mathbf{z}_t \odot \mathbf{m}_t^{\text{act}} + (1-\mathbf{m}_t^{\text{act}}) \cdot (-\infty)\right),
 \end{equation}
-where $\mathbf{z}_t$ is the policy network's logit vector and $\odot$ denotes element-wise multiplication.
+where $\mathbf{z}_t$ is the policy network's logit vector and $\odot$ denotes
+element-wise multiplication.
 
 \subsection{Transition Dynamics}
 
 Upon action $a_t = n_k$ (placing VNF $v_k$ on node $n_k$):
 \begin{enumerate}
-  \item Resources $\mathbf{d}_{v_k}$ are allocated on node $n_k$: $\tilde{\mathbf{r}}_{n_k} \leftarrow \tilde{\mathbf{r}}_{n_k} - \mathbf{d}_{v_k}$.
-  \item Bandwidth $b_r^{\min}$ is reserved on the path $P(n_{k-1}, n_k)$ (if $k > 1$).
-  \item Latency $L(n_{k-1}, n_k)$ is added to the accumulated latency $\hat{\ell}$.
+  \item Resources $\mathbf{d}_{v_k}$ are allocated on node $n_k$:
+        $\tilde{\mathbf{r}}_{n_k} \leftarrow \tilde{\mathbf{r}}_{n_k} -
+        \mathbf{d}_{v_k}$.
+  \item Bandwidth $b_r^{\min}$ is reserved on the path $P(n_{k-1}, n_k)$ (if $k
+        > 1$).
+  \item Latency $L(n_{k-1}, n_k)$ is added to the accumulated latency
+        $\hat{\ell}$.
   \item The VNF index advances: $k \leftarrow k+1$.
-  \item If $k = K_r$: if $\hat{\ell} \leq \ell_r^{\max}$, acceptance is triggered; otherwise, all partial resources are released and rejection is triggered.
-  \item Upon SFC completion (accepted or rejected): substrate TTL is advanced via \texttt{tick()}, incident pressure decays, and the next SFC request is generated.
+  \item If $k = K_r$: if $\hat{\ell} \leq \ell_r^{\max}$, acceptance is
+        triggered; otherwise, all partial resources are released and rejection
+        is triggered.
+  \item Upon SFC completion (accepted or rejected): substrate TTL is advanced
+        via \texttt{tick()}, incident pressure decays, and the next SFC request
+        is generated.
 \end{enumerate}
 
 \subsection{Reward Function}
 
-The reward signal is designed to encourage high acceptance ratios while penalizing operational risk:
+The reward signal is designed to encourage high acceptance ratios while
+penalizing operational risk:
 
 \textbf{Intermediate step reward} (after placing VNF $v_k$, $k < K_r$):
 \begin{equation}
 r_t^{\text{step}} = 0.1 - 0.3 \cdot \min\!\left(\frac{L(n_{k-1}, n_k)}{\ell_r^{\max}}, 1\right).
 \end{equation}
-The 0.1 progress bonus rewards feasible VNF placements; the latency penalty encourages co-location of VNFs to reduce hop latency.
+The 0.1 progress bonus rewards feasible VNF placements; the latency penalty
+encourages co-location of VNFs to reduce hop latency.
 
 \textbf{Terminal acceptance reward:}
 \begin{equation}
 r_T^{\text{acc}} = \left( R_{\text{acc}} - \lambda \cdot \rho_r - \mu \cdot \widehat{C}_r \right) \cdot \left(1 + \omega \cdot \overline{\text{AR}}_w\right),
 \end{equation}
-where $R_{\text{acc}} = 1$ is the base acceptance reward, $\lambda = 4$ is the risk penalty coefficient, $\rho_r \in [0,1]$ is the risk integral for request $r$, $\mu = 0.05$ is the expected-loss reward scale, $\widehat{C}_r$ is the deterministic expected lost revenue (see Section~3.5.2), $\omega = 0.5$ is the windowed AR weight, and $\overline{\text{AR}}_w$ is the acceptance ratio over the last $w = 10$ requests. The use of expected lost revenue $\widehat{C}_r$ instead of stochastic realized cost reduces gradient variance, giving the policy a smoother learning signal.
+where $R_{\text{acc}} = 1$ is the base acceptance reward, $\lambda = 4$ is the
+risk penalty coefficient, $\rho_r \in [0,1]$ is the risk integral for request
+$r$, $\mu = 0.05$ is the expected-loss reward scale, $\widehat{C}_r$ is the
+deterministic expected lost revenue (see Section~3.5.2), $\omega = 0.5$ is the
+windowed AR weight, and $\overline{\text{AR}}_w$ is the acceptance ratio over
+the last $w = 10$ requests. The use of expected lost revenue $\widehat{C}_r$
+instead of stochastic realized cost reduces gradient variance, giving the policy
+a smoother learning signal.
 
 \textbf{Terminal rejection reward:}
 \begin{equation}
 r_T^{\text{rej}} = R_{\text{rej}} \cdot \left(1 + \omega \cdot (1 - \overline{\text{AR}}_w)\right),
 \end{equation}
-where $R_{\text{rej}} = -1$ is the base rejection penalty. The flipped AR modifier increases the penalty magnitude when the agent has been frequently rejecting (low AR), providing stronger training signal to correct poor behavior.
+where $R_{\text{rej}} = -1$ is the base rejection penalty. The flipped AR
+modifier increases the penalty magnitude when the agent has been frequently
+rejecting (low AR), providing stronger training signal to correct poor behavior.
 
 \section{Security Posture and Risk Model}
 
 \subsection{Security Posture Model}
 
-The \textit{security posture} of a substrate node captures its current vulnerability and resilience state, combining its static security score with the accumulated effect of past security incidents. Formally, the \textit{effective security} of node $n$ at time $t$ is reduced by accumulated incident pressure $p_n(t)$:
+The \textit{security posture} of a substrate node captures its current
+vulnerability and resilience state, combining its static security score with the
+accumulated effect of past security incidents. Formally, the \textit{effective
+security} of node $n$ at time $t$ is reduced by accumulated incident pressure
+$p_n(t)$:
 \begin{equation}
 s_n^{\text{eff}}(t) = s_n \cdot \left(1 - \eta \cdot p_n(t)\right),
 \end{equation}
 where $\eta \in [0,1]$ is the security penalty coefficient.
 
-Incident pressure models the temporal degradation of a node's security posture following a security event, and recovers geometrically as the node is remediated:
+Incident pressure models the temporal degradation of a node's security posture
+following a security event, and recovers geometrically as the node is
+remediated:
 \begin{equation}
 p_n(t+1) = \gamma_p \cdot p_n(t),
 \end{equation}
-where $\gamma_p = 0.92$ is the decay factor. Upon a security incident on node $n$, pressure increases: $p_n \leftarrow p_n + \Delta_p$ with $\Delta_p = 0.20$.
+where $\gamma_p = 0.92$ is the decay factor. Upon a security incident on node
+$n$, pressure increases: $p_n \leftarrow p_n + \Delta_p$ with $\Delta_p = 0.20$.
 
-\textbf{Node downtime.} When a node experiences a realized incident, it enters a downtime period of $D_{\text{inc}} = 2$ request ticks, during which its resources are zeroed and no VNF may be placed on it. The remaining downtime counter $\Delta_n^{\text{down}}(t)$ decrements by one each tick. This models real-world remediation: an incident renders the node temporarily unavailable until service is restored.
+\textbf{Node downtime.} When a node experiences a realized incident, it enters a
+downtime period of $D_{\text{inc}} = 2$ request ticks, during which its
+resources are zeroed and no VNF may be placed on it. The remaining downtime
+counter $\Delta_n^{\text{down}}(t)$ decrements by one each tick. This models
+real-world remediation: an incident renders the node temporarily unavailable
+until service is restored.
 
-This dynamic security posture model ensures that the DRL agent's placement decisions reflect the real-time security state of the substrate, not merely its static configuration.
+This dynamic security posture model ensures that the DRL agent's placement
+decisions reflect the real-time security state of the substrate, not merely its
+static configuration.
 
 \subsection{Security Posture Risk Integral}
 
-For an accepted placement $\pi_r$ with TTL $\tau_r$, the security posture risk integral $\rho_r \in [0,1]$ quantifies the expected loss due to incident exposure across all placement nodes. Let $\Pi_r^{\text{dist}}$ denote the set of distinct nodes in $\pi_r$. The per-node base incident probability is:
+For an accepted placement $\pi_r$ with TTL $\tau_r$, the security posture risk
+integral $\rho_r \in [0,1]$ quantifies the expected loss due to incident
+exposure across all placement nodes. Let $\Pi_r^{\text{dist}}$ denote the set of
+distinct nodes in $\pi_r$. The per-node base incident probability is:
 
 \begin{equation}
 q_n = q_0 \cdot \left(1 - \frac{s_n^{\text{eff}}}{s_{\max}}\right)^{\alpha} \cdot \left(1 + \beta \cdot \ell_n\right) \cdot \left(1 + p_n\right),
 \label{eq:qn}
 \end{equation}
-where $q_0 = 0.025$ is the base rate, $\alpha = 1.6$ is the security sensitivity exponent, $\beta = 0.7$ is the load amplification factor, $\ell_n$ is the normalized node load (VNF count relative to the 75th-percentile reference), and $p_n$ is the accumulated incident pressure. $q_n$ is clamped to $[0, 1]$.
+where $q_0 = 0.025$ is the base rate, $\alpha = 1.6$ is the security sensitivity
+exponent, $\beta = 0.7$ is the load amplification factor, $\ell_n$ is the
+normalized node load (VNF count relative to the 75th-percentile reference), and
+$p_n$ is the accumulated incident pressure. $q_n$ is clamped to $[0, 1]$.
 
-The exposure window is $T_s = \min(\tau_r, T_{\text{cap}})$ with $T_{\text{cap}} = 12$. The risk integral is a deterministic expected-loss score:
+The exposure window is $T_s = \min(\tau_r, T_{\text{cap}})$ with $T_{\text{cap}}
+= 12$. The risk integral is a deterministic expected-loss score:
 
 \begin{equation}
 \rho_r = \min\!\left(\frac{1}{|\Pi_r^{\text{dist}}|} \sum_{n \in \Pi_r^{\text{dist}}} q_n \cdot \text{SFC}(n) \cdot \frac{T_s}{\tau_{\max}},\; 1\right),
 \label{eq:risk}
 \end{equation}
-where $\text{SFC}(n)$ is the number of active SFC chains sharing node $n$. This formulation captures three key risk drivers: the probability of an incident ($q_n$), the blast radius (number of co-located chains), and the temporal exposure ($T_s / \tau_{\max}$). The per-node risk score used by the Best-Fit baseline (Section~4.5) is the individual-node analog of this mean.
+where $\text{SFC}(n)$ is the number of active SFC chains sharing node $n$. This
+formulation captures three key risk drivers: the probability of an incident
+($q_n$), the blast radius (number of co-located chains), and the temporal
+exposure ($T_s / \tau_{\max}$). The per-node risk score used by the Best-Fit
+baseline (Section~4.5) is the individual-node analog of this mean.
 
-\textbf{Stochastic incident simulation.} Although $\rho_r$ is deterministic, realized incidents are still simulated to drive the security posture dynamics. For each node $n \in \Pi_r^{\text{dist}}$, $T_s$ independent Bernoulli trials with success probability $q_n$ are drawn:
+\textbf{Stochastic incident simulation.} Although $\rho_r$ is deterministic,
+realized incidents are still simulated to drive the security posture dynamics.
+For each node $n \in \Pi_r^{\text{dist}}$, $T_s$ independent Bernoulli trials
+with success probability $q_n$ are drawn:
 \begin{equation}
 I_r = \sum_{n \in \Pi_r^{\text{dist}}} \sum_{t=1}^{T_s} \mathbf{1}\!\left[\text{Bernoulli}(q_n) = 1\right].
 \end{equation}
-Nodes that suffer at least one hit receive a pressure increment $\Delta_p$ and enter a downtime period of $D_{\text{inc}}$ request ticks.
+Nodes that suffer at least one hit receive a pressure increment $\Delta_p$ and
+enter a downtime period of $D_{\text{inc}}$ request ticks.
 
-\textbf{Incident cost (stochastic).} The realized incident cost is the revenue lost due to downtime across all affected nodes:
+\textbf{Incident cost (stochastic).} The realized incident cost is the revenue
+lost due to downtime across all affected nodes:
 \begin{equation}
 C_r = \sum_{n:\, \text{hit}} \text{SFC}(n) \cdot R_{\text{ttl}} \cdot D_{\text{inc}},
 \end{equation}
-where $R_{\text{ttl}}$ is the revenue per TTL step (default 1.0) and $D_{\text{inc}} = 2$ is the incident downtime in request ticks.
+where $R_{\text{ttl}}$ is the revenue per TTL step (default 1.0) and
+$D_{\text{inc}} = 2$ is the incident downtime in request ticks.
 
-\textbf{Expected lost revenue (deterministic).} The noise-free counterpart used in the reward signal is:
+\textbf{Expected lost revenue (deterministic).} The noise-free counterpart used
+in the reward signal is:
 \begin{equation}
 \widehat{C}_r = \sum_{n \in \Pi_r^{\text{dist}}} P_n^{\text{hit}} \cdot \text{SFC}(n) \cdot R_{\text{ttl}} \cdot D_{\text{inc}},
 \end{equation}
-where $P_n^{\text{hit}} = 1 - (1 - q_n)^{T_s}$ is the probability that node $n$ suffers at least one incident during the exposure window. This provides a smooth gradient signal to the policy while remaining semantically aligned with the stochastic cost.
+where $P_n^{\text{hit}} = 1 - (1 - q_n)^{T_s}$ is the probability that node $n$
+suffers at least one incident during the exposure window. This provides a smooth
+gradient signal to the policy while remaining semantically aligned with the
+stochastic cost.
 
 \section{Optimization Objective}
 
-The DRL agent seeks to maximize the expected cumulative discounted reward over an episode of $T = 300$ requests:
+The DRL agent seeks to maximize the expected cumulative discounted reward over
+an episode of $T = 300$ requests:
 \begin{equation}
 J(\pi) = \mathbb{E}_{\pi}\!\left[\sum_{t=0}^{T} \gamma^t r_t\right],
 \end{equation}
-with discount factor $\gamma = 0.99$. This objective simultaneously captures acceptance ratio (via the $R_{\text{acc}} / R_{\text{rej}}$ terms), latency efficiency (via intermediate latency penalties), security posture risk (via the $\lambda \rho_r$ penalty), and revenue protection (via the $\mu \widehat{C}_r$ expected-loss penalty), providing a holistic measure of intelligent, security-posture-aware placement quality.
+with discount factor $\gamma = 0.99$. This objective simultaneously captures
+acceptance ratio (via the $R_{\text{acc}} / R_{\text{rej}}$ terms), latency
+efficiency (via intermediate latency penalties), security posture risk (via the
+$\lambda \rho_r$ penalty), and revenue protection (via the $\mu \widehat{C}_r$
+expected-loss penalty), providing a holistic measure of intelligent,
+security-posture-aware placement quality.

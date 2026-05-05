@@ -4,14 +4,25 @@
 
 \section{System Architecture}
 
-The proposed framework is an intelligent Deep Reinforcement Learning system for security posture aware SFC placement. It consists of five principal components, as illustrated in Figure~\ref{fig:architecture}:
+The proposed framework is an intelligent Deep Reinforcement Learning system for
+security posture aware SFC placement. It consists of five principal components,
+as illustrated in Figure~\ref{fig:architecture}:
 
 \begin{enumerate}
-  \item \textbf{Substrate Network}: a dynamic graph whose node resources, link bandwidths, and security posture states evolve as VNFs are allocated, expire, and security incidents occur.
-  \item \textbf{SFC Request Generator}: produces incoming SFC requests with random VNF demands and constraints.
-  \item \textbf{SFC Placement Environment}: a Gymnasium-compatible MDP environment implementing the state, action, security posture-aware reward, and constraint logic.
-  \item \textbf{Maskable PPO Agent}: the DRL backbone that trains on rollouts collected from the environment, updating its policy and value networks using the PPO objective.
-  \item \textbf{GNN Feature Extractor}: encodes the substrate topology and node states — including current security posture — into rich embeddings for the DRL policy network.
+  \item \textbf{Substrate Network}: a dynamic graph whose node resources, link
+        bandwidths, and security posture states evolve as VNFs are allocated,
+        expire, and security incidents occur.
+  \item \textbf{SFC Request Generator}: produces incoming SFC requests with
+        random VNF demands and constraints.
+  \item \textbf{SFC Placement Environment}: a Gymnasium-compatible MDP
+        environment implementing the state, action, security posture-aware
+        reward, and constraint logic.
+  \item \textbf{Maskable PPO Agent}: the DRL backbone that trains on rollouts
+        collected from the environment, updating its policy and value networks
+        using the PPO objective.
+  \item \textbf{GNN Feature Extractor}: encodes the substrate topology and node
+        states — including current security posture — into rich embeddings for
+        the DRL policy network.
 \end{enumerate}
 
 \begin{figure}[!ht]
@@ -39,9 +50,32 @@ The proposed framework is an intelligent Deep Reinforcement Learning system for 
 
 \section{DRL Backbone: Maskable PPO with GNN}
 
-The learning algorithm is Maskable Proximal Policy Optimization (Maskable PPO), an action-masked extension of the PPO family of on-policy actor-critic methods. At each step the environment provides a binary mask over actions; the policy's logits are set to $-\infty$ for masked (infeasible) actions before the softmax, so the sampling distribution has zero support on infeasible placements and the value and policy gradients are computed only over feasible actions. This guarantees that the agent never selects a constraint-violating node during training or inference --- a stronger guarantee than the soft-penalty formulations used by prior DRL-based SFC placement methods, which only discourage violations through negative rewards~\cite{ran_dynamic_2023, zhang_dqn-msra_2025, taktak_drl_2024, xu_dynamic_2023, khemili_parallel_2024}.
+The learning algorithm is Maskable Proximal Policy Optimization (Maskable PPO),
+an action-masked extension of the PPO family of on-policy actor-critic methods.
+At each step the environment provides a binary mask over actions; the policy's
+logits are set to $-\infty$ for masked (infeasible) actions before the softmax,
+so the sampling distribution has zero support on infeasible placements and the
+value and policy gradients are computed only over feasible actions. This
+guarantees that the agent never selects a constraint-violating node during
+training or inference --- a stronger guarantee than the soft-penalty
+formulations used by prior DRL-based SFC placement methods, which only
+discourage violations through negative rewards~\cite{ran_dynamic_2023,
+zhang_dqn-msra_2025, taktak_drl_2024, xu_dynamic_2023, khemili_parallel_2024}.
 
-The policy network uses a Graph Neural Network (GNN) as its feature extractor. The GNN reads the substrate graph topology and per-node features, propagates information between neighboring nodes through message passing, and produces a compact representation of the entire network state. Three GNN variants are supported --- GCN, GAT, and GraphSAGE --- allowing the policy to capture topology-dependent patterns (e.g., node centrality, neighborhood load, security posture clusters) that a flat MLP cannot represent. Previous DRL-based placement work has incorporated limited structural awareness through attention mechanisms~\cite{he_leveraging_2023} or parallelism-aware encoders~\cite{lin_lppif_2025, wang_fairness-aware_2025}, but the principled graph-message-passing approach adopted here yields embeddings that directly reflect the substrate graph. This graph-level representation is combined with the global context vector (Section~4.3.2) and fed into the actor-critic heads that output the placement decision and value estimate.
+The policy network uses a Graph Neural Network (GNN) as its feature extractor.
+The GNN reads the substrate graph topology and per-node features, propagates
+information between neighboring nodes through message passing, and produces a
+compact representation of the entire network state. Three GNN variants are
+supported --- GCN, GAT, and GraphSAGE --- allowing the policy to capture
+topology-dependent patterns (e.g., node centrality, neighborhood load, security
+posture clusters) that a flat MLP cannot represent. Previous DRL-based placement
+work has incorporated limited structural awareness through attention
+mechanisms~\cite{he_leveraging_2023} or parallelism-aware
+encoders~\cite{lin_lppif_2025, wang_fairness-aware_2025}, but the principled
+graph-message-passing approach adopted here yields embeddings that directly
+reflect the substrate graph. This graph-level representation is combined with
+the global context vector (Section~4.3.2) and fed into the actor-critic heads
+that output the placement decision and value estimate.
 
 Table~\ref{tab:training} summarizes the training hyperparameters.
 
@@ -71,11 +105,15 @@ AR weight $\omega$ & 0.5 & AR modifier weight \\
 
 \section{Observation Space}
 
-The environment exposes a \texttt{Dict} observation with four components. All values are normalized to $[0, 1]$ and padded to $N_{\max} = 25$.
+The environment exposes a \texttt{Dict} observation with four components. All
+values are normalized to $[0, 1]$ and padded to $N_{\max} = 25$.
 
 \subsection{Node Feature Matrix}
 
-The node feature matrix $\mathbf{F} \in \mathbb{R}^{N_{\max} \times 20}$ provides a rich per-node characterization of the substrate. For each real node $n \in \{0, \ldots, N-1\}$ the 20 features are organized into six groups, summarized in Table~\ref{tab:node_features}.
+The node feature matrix $\mathbf{F} \in \mathbb{R}^{N_{\max} \times 20}$
+provides a rich per-node characterization of the substrate. For each real node
+$n \in \{0, \ldots, N-1\}$ the 20 features are organized into six groups,
+summarized in Table~\ref{tab:node_features}.
 
 \begin{table}[!ht]
 \centering
@@ -101,13 +139,25 @@ The node feature matrix $\mathbf{F} \in \mathbb{R}^{N_{\max} \times 20}$ provide
 \end{tabularx}
 \end{table}
 
-\textbf{Design rationale.} Features 0--5 capture the \emph{local} resource and topology state visible to a myopic heuristic. Features 6--10 add \emph{global} context: resource concentration, instance density, and blast-radius signals that help the agent detect ``hot-spot'' nodes — nodes that are operationally important because they host a disproportionate share of the workload. Features 11--13 bridge the current VNF demand to each candidate node, directly informing how tight a fit each placement would be. Features 14--19 expose the \emph{risk-driving} quantities — incident pressure, load, $q_n$, expected incidents, and expected lost revenue — that the risk model and baselines use internally, closing the observational asymmetry between the RL agent and the reward/risk formulas.
+\textbf{Design rationale.} Features 0--5 capture the \emph{local} resource and
+topology state visible to a myopic heuristic. Features 6--10 add \emph{global}
+context: resource concentration, instance density, and blast-radius signals that
+help the agent detect ``hot-spot'' nodes — nodes that are operationally
+important because they host a disproportionate share of the workload. Features
+11--13 bridge the current VNF demand to each candidate node, directly informing
+how tight a fit each placement would be. Features 14--19 expose the
+\emph{risk-driving} quantities — incident pressure, load, $q_n$, expected
+incidents, and expected lost revenue — that the risk model and baselines use
+internally, closing the observational asymmetry between the RL agent and the
+reward/risk formulas.
 
-Padded nodes (indices $N$ through $N_{\max}-1$) are zeroed and excluded from GNN message passing via the node mask.
+Padded nodes (indices $N$ through $N_{\max}-1$) are zeroed and excluded from GNN
+message passing via the node mask.
 
 \subsection{Global Context Vector}
 
-The global context vector $\mathbf{g} \in \mathbb{R}^{15}$ encodes the current SFC request and placement progress:
+The global context vector $\mathbf{g} \in \mathbb{R}^{15}$ encodes the current
+SFC request and placement progress:
 
 \begin{table}[!ht]
 \centering
@@ -131,39 +181,67 @@ The global context vector $\mathbf{g} \in \mathbb{R}^{15}$ encodes the current S
 \end{tabularx}
 \end{table}
 
-The global context is processed by a two-layer MLP within the GNN feature extractor and fused with the graph-level substrate embedding before being passed to the actor-critic heads.
+The global context is processed by a two-layer MLP within the GNN feature
+extractor and fused with the graph-level substrate embedding before being passed
+to the actor-critic heads.
 
 \subsection{Placement Mask and Node Mask}
 
 \begin{itemize}
-  \item \textbf{Placement mask} $\mathbf{m}^P \in \{0,1\}^{N_{\max}}$: 1 for nodes already used in the current partial placement, 0 otherwise. This is concatenated with $\mathbf{F}$ as the 21st input channel to the GNN, enabling the network to distinguish placed from unplaced nodes.
-  \item \textbf{Node mask} $\mathbf{m}^N \in \{0,1\}^{N_{\max}}$: 1 for real substrate nodes, 0 for padding. The GNN processes only the real-node subset, avoiding meaningless computation on pad tokens.
+  \item \textbf{Placement mask} $\mathbf{m}^P \in \{0,1\}^{N_{\max}}$: 1 for
+        nodes already used in the current partial placement, 0 otherwise. This
+        is concatenated with $\mathbf{F}$ as the 21st input channel to the GNN,
+        enabling the network to distinguish placed from unplaced nodes.
+  \item \textbf{Node mask} $\mathbf{m}^N \in \{0,1\}^{N_{\max}}$: 1 for real
+        substrate nodes, 0 for padding. The GNN processes only the real-node
+        subset, avoiding meaningless computation on pad tokens.
 \end{itemize}
 
 \section{Action Space}
 
-The action space is $\mathcal{A} = \{0, 1, \ldots, N_{\max} - 1\}$. At each step the agent selects a single substrate node index to host the current VNF. An action mask $\mathbf{m}_t^{\text{act}} \in \{0,1\}^{N_{\max}}$ restricts the agent to feasible nodes only; infeasible actions receive logits of $-10^8$ before the softmax, guaranteeing zero selection probability.
+The action space is $\mathcal{A} = \{0, 1, \ldots, N_{\max} - 1\}$. At each step
+the agent selects a single substrate node index to host the current VNF. An
+action mask $\mathbf{m}_t^{\text{act}} \in \{0,1\}^{N_{\max}}$ restricts the
+agent to feasible nodes only; infeasible actions receive logits of $-10^8$
+before the softmax, guaranteeing zero selection probability.
 
-Each SFC request requires $K_r$ consecutive actions (one per VNF). Upon completion of the $K_r$-th action, the environment evaluates the full placement: if the end-to-end latency constraint holds, the SFC is accepted; otherwise, all allocated resources are released and the SFC is rejected.
+Each SFC request requires $K_r$ consecutive actions (one per VNF). Upon
+completion of the $K_r$-th action, the environment evaluates the full placement:
+if the end-to-end latency constraint holds, the SFC is accepted; otherwise, all
+allocated resources are released and the SFC is rejected.
 
 \section{Action Masking Implementation}
 
-The \texttt{action\_masks()} method of \texttt{SFCPlacementEnv} computes the binary feasibility mask at each step by:
+The \texttt{action\_masks()} method of \texttt{SFCPlacementEnv} computes the
+binary feasibility mask at each step by:
 \begin{enumerate}
-  \item \textbf{Resource feasibility check:} A vectorized scan over all node resource matrices identifies nodes with $\tilde{\mathbf{r}}_n \geq \mathbf{d}_{v_k}$ and $s_n^{\text{eff}} \geq s_r^{\min}$.
-  \item \textbf{Incident downtime check:} Nodes with active downtime ($\Delta_n^{\text{down}} > 0$) are excluded.
-  \item \textbf{Hard isolation check:} Hard-isolated nodes and (if $\delta_r = 1$) occupied nodes are excluded.
-  \item \textbf{Bandwidth and latency budget check:} For each resource-feasible node, bandwidth $B(n_{k-1}, n) \geq b_r^{\min}$ and hop latency $L(n_{k-1}, n) \leq \ell_{\text{budget}}$ must hold, where the latency budget is:
+  \item \textbf{Resource feasibility check:} A vectorized scan over all node
+        resource matrices identifies nodes with $\tilde{\mathbf{r}}_n \geq
+        \mathbf{d}_{v_k}$ and $s_n^{\text{eff}} \geq s_r^{\min}$.
+  \item \textbf{Incident downtime check:} Nodes with active downtime
+        ($\Delta_n^{\text{down}} > 0$) are excluded.
+  \item \textbf{Hard isolation check:} Hard-isolated nodes and (if $\delta_r =
+        1$) occupied nodes are excluded.
+  \item \textbf{Bandwidth and latency budget check:} For each resource-feasible
+        node, bandwidth $B(n_{k-1}, n) \geq b_r^{\min}$ and hop latency
+        $L(n_{k-1}, n) \leq \ell_{\text{budget}}$ must hold, where the latency
+        budget is:
   \begin{equation}
   \ell_{\text{budget}} = \max\!\left(0,\; \ell_r^{\max} - \hat{\ell} - (K_r - k - 1) \cdot \ell_{\min}\right),
   \end{equation}
-  with $\ell_{\min} = 5$ ms (minimum link latency from config) and $\hat{\ell}$ the accumulated latency.
-  \item \textbf{Safety fallback:} If no node is valid, action 0 is enabled so MaskablePPO can always sample; the environment then handles the forced rejection via \texttt{\_is\_valid\_action}.
+  with $\ell_{\min} = 5$ ms (minimum link latency from config) and $\hat{\ell}$
+  the accumulated latency.
+  \item \textbf{Safety fallback:} If no node is valid, action 0 is enabled so
+        MaskablePPO can always sample; the environment then handles the forced
+        rejection via \texttt{\_is\_valid\_action}.
 \end{enumerate}
 
 \section{Reward Design}
 
-The reward function is structured to balance three objectives: maximizing SFC acceptance, minimizing security posture risk, and reducing the expected revenue impact of incidents. It operates at two time scales: intermediate per-VNF step rewards and terminal per-SFC rewards.
+The reward function is structured to balance three objectives: maximizing SFC
+acceptance, minimizing security posture risk, and reducing the expected revenue
+impact of incidents. It operates at two time scales: intermediate per-VNF step
+rewards and terminal per-SFC rewards.
 
 \subsection{Intermediate Step Reward}
 
@@ -171,41 +249,65 @@ After placing VNF $v_k$ ($k < K_r$), the agent receives:
 \begin{equation}
 r_t^{\text{step}} = 0.1 - 0.3 \cdot \min\!\left(\frac{L(n_{k-1}, n_k)}{\ell_r^{\max}},\; 1\right).
 \end{equation}
-The constant $+0.1$ provides a progress bonus for each feasible VNF placement. The latency term penalizes distant placements, encouraging the agent to co-locate consecutive VNFs on nearby nodes to preserve latency budget for later hops.
+The constant $+0.1$ provides a progress bonus for each feasible VNF placement.
+The latency term penalizes distant placements, encouraging the agent to
+co-locate consecutive VNFs on nearby nodes to preserve latency budget for later
+hops.
 
 \subsection{Terminal Acceptance Reward}
 
-When all $K_r$ VNFs have been placed and the end-to-end latency constraint is satisfied, the environment computes the risk integral $\rho_r$ and expected lost revenue $\widehat{C}_r$ (both defined in Section~3.5.2), then returns:
+When all $K_r$ VNFs have been placed and the end-to-end latency constraint is
+satisfied, the environment computes the risk integral $\rho_r$ and expected lost
+revenue $\widehat{C}_r$ (both defined in Section~3.5.2), then returns:
 \begin{equation}
 r_T^{\text{acc}} = \left(R_{\text{acc}} - \lambda \cdot \rho_r - \mu \cdot \widehat{C}_r\right) \cdot \left(1 + \omega \cdot \overline{\text{AR}}_w\right),
 \end{equation}
 where:
 \begin{itemize}
   \item $R_{\text{acc}} = 1$ is the base acceptance reward;
-  \item $\lambda = 4$ is the risk penalty coefficient, controlling the trade-off between acceptance and operational risk;
-  \item $\rho_r \in [0,1]$ is the deterministic expected-loss risk integral for the placement;
+  \item $\lambda = 4$ is the risk penalty coefficient, controlling the trade-off
+        between acceptance and operational risk;
+  \item $\rho_r \in [0,1]$ is the deterministic expected-loss risk integral for
+        the placement;
   \item $\mu = 0.05$ is the expected-loss reward scale;
-  \item $\widehat{C}_r$ is the deterministic expected lost revenue (see Section~3.5.2), used instead of stochastic realized cost to reduce gradient variance;
+  \item $\widehat{C}_r$ is the deterministic expected lost revenue (see
+        Section~3.5.2), used instead of stochastic realized cost to reduce
+        gradient variance;
   \item $\omega = 0.5$ is the windowed acceptance ratio (AR) modifier weight;
-  \item $\overline{\text{AR}}_w$ is the acceptance ratio over the last $w = 10$ requests.
+  \item $\overline{\text{AR}}_w$ is the acceptance ratio over the last $w = 10$
+        requests.
 \end{itemize}
-The AR modifier amplifies the reward when the agent has been accepting frequently, providing curriculum-style positive reinforcement.
+The AR modifier amplifies the reward when the agent has been accepting
+frequently, providing curriculum-style positive reinforcement.
 
 \subsection{Terminal Rejection Reward}
 
-When a placement fails (either by latency violation or forced rejection due to no feasible nodes), the agent receives:
+When a placement fails (either by latency violation or forced rejection due to
+no feasible nodes), the agent receives:
 \begin{equation}
 r_T^{\text{rej}} = R_{\text{rej}} \cdot \left(1 + \omega \cdot (1 - \overline{\text{AR}}_w)\right),
 \end{equation}
-where $R_{\text{rej}} = -1$. The flipped AR modifier $(1 - \overline{\text{AR}}_w)$ amplifies the penalty when the agent has been rejecting frequently, providing stronger corrective signal during poor-performance phases.
+where $R_{\text{rej}} = -1$. The flipped AR modifier $(1 -
+\overline{\text{AR}}_w)$ amplifies the penalty when the agent has been rejecting
+frequently, providing stronger corrective signal during poor-performance phases.
 
 \subsection{Revenue Tracking}
 
-Upon acceptance, the environment records the request revenue $R_{\text{ttl}} \cdot \tau_r$ (where $R_{\text{ttl}} = 1.0$ is the revenue per TTL step). Rejected requests contribute zero revenue. This metric is not part of the reward itself but is tracked for evaluation alongside the expected lost revenue from incident downtimes.
+Upon acceptance, the environment records the request revenue $R_{\text{ttl}}
+\cdot \tau_r$ (where $R_{\text{ttl}} = 1.0$ is the revenue per TTL step).
+Rejected requests contribute zero revenue. This metric is not part of the reward
+itself but is tracked for evaluation alongside the expected lost revenue from
+incident downtimes.
 
 \section{Best-Fit Baseline}
 
-To assess the value of intelligent DRL-based security posture awareness over a greedy approach, a \textbf{Best-Fit by Minimum Risk} (\texttt{BestFitPlacement}) heuristic is implemented. For each VNF in the chain, it applies the same feasibility checks as the environment (including \texttt{apply\_incident\_view} for consistent constraint semantics, with downtime-blocked nodes having their resources zeroed), then selects the valid node with minimum per-node risk score, tie-breaking by resource waste (then node index):
+To assess the value of intelligent DRL-based security posture awareness over a
+greedy approach, a \textbf{Best-Fit by Minimum Risk} (\texttt{BestFitPlacement})
+heuristic is implemented. For each VNF in the chain, it applies the same
+feasibility checks as the environment (including \texttt{apply\_incident\_view}
+for consistent constraint semantics, with downtime-blocked nodes having their
+resources zeroed), then selects the valid node with minimum per-node risk score,
+tie-breaking by resource waste (then node index):
 \begin{equation}
 n^* = \argmin_{n \in \mathcal{V}_t^{\text{valid}}} \left(\rho_n^{\text{node}},\; w_n^{\text{waste}},\; n\right),
 \end{equation}
@@ -213,9 +315,19 @@ where the per-node expected-loss risk score is:
 \begin{equation}
 \rho_n^{\text{node}} = \min\!\left(q_n \cdot \text{SFC}(n) \cdot \frac{T_s}{\tau_{\max}},\; 1\right),
 \end{equation}
-with $q_n$ defined as in Eq.~(\ref{eq:qn}), $\text{SFC}(n)$ the number of active chains on node $n$, $T_s = \min(\tau_r, T_{\text{cap}})$, and $\tau_{\max}$ the maximum TTL. This is the per-node analog of the placement risk integral (Eq.~\ref{eq:risk}). The waste tie-breaker is $w_n^{\text{waste}} = (r_n^{\text{ram}} - d_v^{\text{ram}}) + (r_n^{\text{cpu}} - d_v^{\text{cpu}}) + (r_n^{\text{stor}} - d_v^{\text{stor}})$.
+with $q_n$ defined as in Eq.~(\ref{eq:qn}), $\text{SFC}(n)$ the number of active
+chains on node $n$, $T_s = \min(\tau_r, T_{\text{cap}})$, and $\tau_{\max}$ the
+maximum TTL. This is the per-node analog of the placement risk integral
+(Eq.~\ref{eq:risk}). The waste tie-breaker is $w_n^{\text{waste}} =
+(r_n^{\text{ram}} - d_v^{\text{ram}}) + (r_n^{\text{cpu}} - d_v^{\text{cpu}}) +
+(r_n^{\text{stor}} - d_v^{\text{stor}})$.
 
-This baseline is a strong comparator: it explicitly minimizes expected loss at each step, matching the primary objective of the DRL agent's security posture-aware risk penalty. It is used to assess whether the DRL agent's learned, intelligent policy provides any advantage over greedy risk minimization — in particular, whether the DRL agent exploits long-horizon reasoning about security posture dynamics that a myopic greedy strategy cannot.
+This baseline is a strong comparator: it explicitly minimizes expected loss at
+each step, matching the primary objective of the DRL agent's security
+posture-aware risk penalty. It is used to assess whether the DRL agent's
+learned, intelligent policy provides any advantage over greedy risk minimization
+— in particular, whether the DRL agent exploits long-horizon reasoning about
+security posture dynamics that a myopic greedy strategy cannot.
 
 \section{Training Procedure}
 
@@ -251,4 +363,8 @@ This baseline is a strong comparator: it explicitly minimizes expected loss at e
 \end{algorithmic}
 \end{algorithm}
 
-During training, a \texttt{TrainingEvalCallback} periodically (every $f_{\text{eval}} = 20{,}000$ steps) calls the full evaluation pipeline on the training substrate to measure the agent's current acceptance ratio, risk metrics, and substrate utilization. The best model checkpoint (by acceptance ratio) is saved as \texttt{sfc\_ppo\_best.zip}.
+During training, a \texttt{TrainingEvalCallback} periodically (every
+$f_{\text{eval}} = 20{,}000$ steps) calls the full evaluation pipeline on the
+training substrate to measure the agent's current acceptance ratio, risk
+metrics, and substrate utilization. The best model checkpoint (by acceptance
+ratio) is saved as \texttt{sfc\_ppo\_best.zip}.

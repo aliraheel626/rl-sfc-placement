@@ -6,7 +6,9 @@
 
 \subsection{Hardware and Software}
 
-Experiments were conducted on a workstation running Windows 10 with Python 3.12. Table~\ref{tab:eval_summary} summarizes mean evaluation outcomes for Maskable PPO and the Best-Fit baseline under the setup described in this section.
+Experiments were conducted on a workstation running Windows 10 with Python 3.12.
+Table~\ref{tab:eval_summary} summarizes mean evaluation outcomes for Maskable
+PPO and the Best-Fit baseline under the setup described in this section.
 
 \begin{table}[!ht]
 \centering
@@ -29,17 +31,30 @@ Avg Lost Revenue / Request & 0.0688 & 0.0448 & $-34.88$\% & PPO \\
 
 \subsection{Network Configuration}
 
-The substrate network consists of 25 nodes connected as a complete graph ($p = 1.0$) with resources sampled uniformly as described in Section~3.1.3. SFC requests consist of chains of 3 VNFs with demands and constraints sampled as described in Section~3.2. The TTL follows a truncated exponential distribution on $[1, 25]$ with decay mean at the midpoint.
+The substrate network consists of 25 nodes connected as a complete graph ($p =
+1.0$) with resources sampled uniformly as described in Section~3.1.3. SFC
+requests consist of chains of 3 VNFs with demands and constraints sampled as
+described in Section~3.2. The TTL follows a truncated exponential distribution
+on $[1, 25]$ with decay mean at the midpoint.
 
 \subsection{Evaluation Protocol}
 
-Evaluation uses 1000 SFC requests on the training substrate with a fresh request generator. To ensure fair comparison between the RL agent and the Best-Fit baseline, the Python and NumPy random number generator states are snapshotted before each algorithm's evaluation and reset to the same initial state, ensuring both algorithms process identical request sequences. The RL agent is evaluated in a single long episode (1000 requests, no resets), while the baseline uses a sustained-load simulation with the same substrate.
+Evaluation uses 1000 SFC requests on the training substrate with a fresh request
+generator. To ensure fair comparison between the RL agent and the Best-Fit
+baseline, the Python and NumPy random number generator states are snapshotted
+before each algorithm's evaluation and reset to the same initial state, ensuring
+both algorithms process identical request sequences. The RL agent is evaluated
+in a single long episode (1000 requests, no resets), while the baseline uses a
+sustained-load simulation with the same substrate.
 
 \section{Training Dynamics}
 
 \subsection{Acceptance Ratio Progression}
 
-Figure~\ref{fig:ar} illustrates the training acceptance ratio (rolling average over episodes) plotted against the number of training timesteps. An upward trend confirms that the agent is learning an increasingly effective placement policy over the course of training.
+Figure~\ref{fig:ar} illustrates the training acceptance ratio (rolling average
+over episodes) plotted against the number of training timesteps. An upward trend
+confirms that the agent is learning an increasingly effective placement policy
+over the course of training.
 
 \begin{figure}[!ht]
 \centering
@@ -50,7 +65,9 @@ Figure~\ref{fig:ar} illustrates the training acceptance ratio (rolling average o
 
 \subsection{Risk and Incident Metrics During Training}
 
-Figure~\ref{fig:risk} shows the evolution of the average risk integral $\rho_r$ over training episodes. As the agent becomes more adept at minimizing risk-aware placement, the average risk per accepted SFC decreases.
+Figure~\ref{fig:risk} shows the evolution of the average risk integral $\rho_r$
+over training episodes. As the agent becomes more adept at minimizing risk-aware
+placement, the average risk per accepted SFC decreases.
 
 \begin{figure}[!ht]
 \centering
@@ -63,7 +80,12 @@ Figure~\ref{fig:risk} shows the evolution of the average risk integral $\rho_r$ 
 
 \subsection{Acceptance Ratio}
 
-Table~\ref{tab:results} presents the comparative evaluation of the Maskable PPO agent against the Best-Fit baseline over 1000 SFC requests. The PPO agent achieves a competitive acceptance ratio, demonstrating that the learned policy is capable of efficiently allocating resources across the substrate network. The Best-Fit baseline, which greedily minimizes node-level risk at each step, provides a strong comparison point.
+Table~\ref{tab:results} presents the comparative evaluation of the Maskable PPO
+agent against the Best-Fit baseline over 1000 SFC requests. The PPO agent
+achieves a competitive acceptance ratio, demonstrating that the learned policy
+is capable of efficiently allocating resources across the substrate network. The
+Best-Fit baseline, which greedily minimizes node-level risk at each step,
+provides a strong comparison point.
 
 \begin{table}[!ht]
 \centering
@@ -86,7 +108,10 @@ Avg Lost Revenue / Request & 0.0688 & 0.0448 & $-34.88$\% & PPO \\
 
 \subsection{Summary Bar Chart}
 
-Figure~\ref{fig:summary_bar} provides a visual overview of the mean $\pm$ standard deviation for all eight comparative metrics across evaluation episodes. The error bars indicate episode-to-episode variance, confirming the stability of both algorithms' performance.
+Figure~\ref{fig:summary_bar} provides a visual overview of the mean $\pm$
+standard deviation for all eight comparative metrics across evaluation episodes.
+The error bars indicate episode-to-episode variance, confirming the stability of
+both algorithms' performance.
 
 \begin{figure}[!ht]
 \centering
@@ -97,7 +122,11 @@ Figure~\ref{fig:summary_bar} provides a visual overview of the mean $\pm$ standa
 
 \subsection{Rolling Average Metrics}
 
-Figure~\ref{fig:rolling} presents the rolling average (window 50) of the acceptance ratio for both algorithms over the 1000-request evaluation. The rolling averages reveal the stability of each algorithm's performance over the course of the evaluation and highlight any temporal patterns such as performance degradation under high load.
+Figure~\ref{fig:rolling} presents the rolling average (window 50) of the
+acceptance ratio for both algorithms over the 1000-request evaluation. The
+rolling averages reveal the stability of each algorithm's performance over the
+course of the evaluation and highlight any temporal patterns such as performance
+degradation under high load.
 
 \begin{figure}[!ht]
 \centering
@@ -108,7 +137,10 @@ Figure~\ref{fig:rolling} presents the rolling average (window 50) of the accepta
 
 \subsection{Risk Performance}
 
-Figure~\ref{fig:risk_compare} shows the rolling average risk integral for both algorithms. The risk penalty in the RL reward function incentivizes the agent to prefer low-risk placements, which may trade some acceptance ratio for reduced operational risk relative to a greedy risk-only baseline.
+Figure~\ref{fig:risk_compare} shows the rolling average risk integral for both
+algorithms. The risk penalty in the RL reward function incentivizes the agent to
+prefer low-risk placements, which may trade some acceptance ratio for reduced
+operational risk relative to a greedy risk-only baseline.
 
 \begin{figure}[!ht]
 \centering
@@ -119,7 +151,11 @@ Figure~\ref{fig:risk_compare} shows the rolling average risk integral for both a
 
 \subsection{Security Margin}
 
-Figure~\ref{fig:sec_margin} shows the rolling average security margin — the surplus of the placement node's effective security score over the SFC's minimum requirement — across the evaluation. A higher margin indicates that the algorithm consistently selects nodes with stronger security posture than strictly necessary.
+Figure~\ref{fig:sec_margin} shows the rolling average security margin — the
+surplus of the placement node's effective security score over the SFC's minimum
+requirement — across the evaluation. A higher margin indicates that the
+algorithm consistently selects nodes with stronger security posture than
+strictly necessary.
 
 \begin{figure}[!ht]
 \centering
@@ -130,7 +166,12 @@ Figure~\ref{fig:sec_margin} shows the rolling average security margin — the su
 
 \subsection{Revenue and Incident Cost}
 
-Figure~\ref{fig:revenue} presents the rolling average revenue earned per request and Figure~\ref{fig:lost_revenue} presents the rolling average lost revenue per request due to incidents. Together these metrics capture the economic impact of placement quality: a higher per-request revenue indicates more SFCs accepted for longer durations, while a lower per-request lost revenue indicates fewer incident-induced service disruptions.
+Figure~\ref{fig:revenue} presents the rolling average revenue earned per request
+and Figure~\ref{fig:lost_revenue} presents the rolling average lost revenue per
+request due to incidents. Together these metrics capture the economic impact of
+placement quality: a higher per-request revenue indicates more SFCs accepted for
+longer durations, while a lower per-request lost revenue indicates fewer
+incident-induced service disruptions.
 
 \begin{figure}[!ht]
 \centering
@@ -148,7 +189,10 @@ Figure~\ref{fig:revenue} presents the rolling average revenue earned per request
 
 \subsection{Realized Incidents}
 
-Figure~\ref{fig:incidents_compare} shows the rolling average realized incidents per request. This metric captures the Monte Carlo outcome of the stochastic incident process and validates that the deterministic risk integral $\rho_r$ correlates with actual incident occurrences.
+Figure~\ref{fig:incidents_compare} shows the rolling average realized incidents
+per request. This metric captures the Monte Carlo outcome of the stochastic
+incident process and validates that the deterministic risk integral $\rho_r$
+correlates with actual incident occurrences.
 
 \begin{figure}[!ht]
 \centering
@@ -161,20 +205,58 @@ Figure~\ref{fig:incidents_compare} shows the rolling average realized incidents 
 
 \subsection{Benefits of Action Masking}
 
-Action masking provides three key benefits in this framework. First, it guarantees 100\% feasibility of accepted placements: since infeasible nodes are never selected, every placement that completes the chain satisfies all resource, bandwidth, latency, security posture, and isolation constraints. Second, it dramatically improves sample efficiency: without masking, the DRL agent would waste many gradient steps learning to avoid infeasible actions through penalty signals. Third, it simplifies reward design: since constraint violations cannot occur, there is no need for complex penalty terms for individual constraint types.
+Action masking provides three key benefits in this framework. First, it
+guarantees 100\% feasibility of accepted placements: since infeasible nodes are
+never selected, every placement that completes the chain satisfies all resource,
+bandwidth, latency, security posture, and isolation constraints. Second, it
+dramatically improves sample efficiency: without masking, the DRL agent would
+waste many gradient steps learning to avoid infeasible actions through penalty
+signals. Third, it simplifies reward design: since constraint violations cannot
+occur, there is no need for complex penalty terms for individual constraint
+types.
 
 \subsection{Effect of Security Posture-Aware Reward}
 
-The security posture risk penalty coefficient $\lambda = 4$ creates a trade-off between acceptance ratio and operational risk. A higher $\lambda$ biases the intelligent DRL agent toward fewer, less risky placements that favor nodes with strong security posture; a lower $\lambda$ prioritizes acceptance. The windowed AR modifier provides additional stability: when the agent has recently been accepting many requests (high $\overline{\text{AR}}_w$), the acceptance reward is amplified, encouraging continued good performance; when many rejections have occurred (low $\overline{\text{AR}}_w$), the rejection penalty is amplified, pushing the agent to explore better strategies.
+The security posture risk penalty coefficient $\lambda = 4$ creates a trade-off
+between acceptance ratio and operational risk. A higher $\lambda$ biases the
+intelligent DRL agent toward fewer, less risky placements that favor nodes with
+strong security posture; a lower $\lambda$ prioritizes acceptance. The windowed
+AR modifier provides additional stability: when the agent has recently been
+accepting many requests (high $\overline{\text{AR}}_w$), the acceptance reward
+is amplified, encouraging continued good performance; when many rejections have
+occurred (low $\overline{\text{AR}}_w$), the rejection penalty is amplified,
+pushing the agent to explore better strategies.
 
 \subsection{GNN vs. MLP Policies}
 
-The GNN-based feature extractor captures topology-dependent and security posture-dependent patterns that MLP-based policies cannot represent. For example, the DRL agent may learn to prefer substrate nodes that are central in the graph (with low average distance to all other nodes), reducing latency costs, or nodes with high residual resources, high security scores, and low incident pressure. The attention aggregation mechanism allows the policy to dynamically focus on the most informative nodes — for instance, attending strongly to nodes with degraded security posture when computing the security-aware risk component.
+The GNN-based feature extractor captures topology-dependent and security
+posture-dependent patterns that MLP-based policies cannot represent. For
+example, the DRL agent may learn to prefer substrate nodes that are central in
+the graph (with low average distance to all other nodes), reducing latency
+costs, or nodes with high residual resources, high security scores, and low
+incident pressure. The attention aggregation mechanism allows the policy to
+dynamically focus on the most informative nodes — for instance, attending
+strongly to nodes with degraded security posture when computing the
+security-aware risk component.
 
 \subsection{Comparison with Best-Fit}
 
-The Best-Fit by Minimum Risk baseline represents a competitive greedy approach that directly minimizes the same objective component ($\rho_n^{\text{node}}$) as the DRL agent's security posture risk penalty. The key distinction is that the intelligent DRL agent optimizes security posture risk \textit{jointly with} acceptance ratio and long-term resource efficiency, while the baseline myopically minimizes risk at each individual step. In heavily loaded scenarios, the DRL agent may choose slightly riskier placements early in the episode to preserve low-risk, high-security-posture nodes for future requests with stricter constraints, a strategy the greedy baseline cannot exhibit.
+The Best-Fit by Minimum Risk baseline represents a competitive greedy approach
+that directly minimizes the same objective component ($\rho_n^{\text{node}}$) as
+the DRL agent's security posture risk penalty. The key distinction is that the
+intelligent DRL agent optimizes security posture risk \textit{jointly with}
+acceptance ratio and long-term resource efficiency, while the baseline
+myopically minimizes risk at each individual step. In heavily loaded scenarios,
+the DRL agent may choose slightly riskier placements early in the episode to
+preserve low-risk, high-security-posture nodes for future requests with stricter
+constraints, a strategy the greedy baseline cannot exhibit.
 
 \subsection{Scalability Considerations}
 
-The current implementation uses a 25-node substrate, which enables efficient training within 100,000 timesteps. The GNN architecture is topology-agnostic by design: the `node\_mask` ensures that only real nodes are processed, and the edge index is reconstructed dynamically from the substrate graph. This means the same trained DRL policy can, in principle, be deployed on larger or reconfigured substrates, maintaining its security posture awareness across different network configurations.
+The current implementation uses a 25-node substrate, which enables efficient
+training within 100,000 timesteps. The GNN architecture is topology-agnostic by
+design: the `node\_mask` ensures that only real nodes are processed, and the
+edge index is reconstructed dynamically from the substrate graph. This means the
+same trained DRL policy can, in principle, be deployed on larger or reconfigured
+substrates, maintaining its security posture awareness across different network
+configurations.

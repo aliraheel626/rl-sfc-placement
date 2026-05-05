@@ -4,29 +4,75 @@
 
 \section{Summary}
 
-This thesis has presented an intelligent security posture aware Deep Reinforcement Learning framework for Service Function Chain placement in Network Function Virtualization environments. The framework addresses three key limitations of existing approaches: lack of hard constraint satisfaction in DRL-based placement, topology-blind policies, and unfair evaluation protocols --- while being the first DRL-based SFC placement framework to incorporate security as an explicit placement objective.
+This thesis has presented an intelligent security posture aware Deep
+Reinforcement Learning framework for Service Function Chain placement in Network
+Function Virtualization environments. The framework addresses three key
+limitations of existing approaches: lack of hard constraint satisfaction in
+DRL-based placement, topology-blind policies, and unfair evaluation protocols
+--- while being the first DRL-based SFC placement framework to incorporate
+security as an explicit placement objective.
 
 The proposed framework makes the following contributions:
 
 \begin{enumerate}
-  \item An \textbf{intelligent DRL-based placement agent} (Maskable PPO) that guarantees the feasibility of every accepted placement through hard action masking enforcing resource, bandwidth, latency, security posture, and isolation constraints simultaneously.
-  \item An \textbf{expected-loss security posture risk model} that quantifies operational risk as the mean per-node product of incident probability (driven by security posture, load, and incident pressure), chain co-location count, and TTL-proportional exposure, paired with a deterministic expected lost revenue penalty for low-variance policy optimization.
-  \item A \textbf{GNN feature extractor} (supporting GCN, GAT, and GraphSAGE) with attention-weighted graph aggregation and MLP global context fusion, enabling topology-aware and security posture-aware placement decisions within the DRL policy.
-  \item A \textbf{windowed acceptance ratio reward modifier} that provides adaptive, curriculum-style reward scaling to improve training stability of the DRL agent.
-  \item A \textbf{fair evaluation framework} that aligns the RNG state across algorithms to ensure unbiased performance comparison on identical request streams.
+  \item An \textbf{intelligent DRL-based placement agent} (Maskable PPO) that
+        guarantees the feasibility of every accepted placement through hard
+        action masking enforcing resource, bandwidth, latency, security posture,
+        and isolation constraints simultaneously.
+  \item An \textbf{expected-loss security posture risk model} that quantifies
+        operational risk as the mean per-node product of incident probability
+        (driven by security posture, load, and incident pressure), chain
+        co-location count, and TTL-proportional exposure, paired with a
+        deterministic expected lost revenue penalty for low-variance policy
+        optimization.
+  \item A \textbf{GNN feature extractor} (supporting GCN, GAT, and GraphSAGE)
+        with attention-weighted graph aggregation and MLP global context fusion,
+        enabling topology-aware and security posture-aware placement decisions
+        within the DRL policy.
+  \item A \textbf{windowed acceptance ratio reward modifier} that provides
+        adaptive, curriculum-style reward scaling to improve training stability
+        of the DRL agent.
+  \item A \textbf{fair evaluation framework} that aligns the RNG state across
+        algorithms to ensure unbiased performance comparison on identical
+        request streams.
 \end{enumerate}
 
 \section{Conclusions}
 
-The experimental results demonstrate that the intelligent DRL agent (Maskable PPO) successfully learns a security posture aware placement policy that achieves competitive acceptance ratios and risk metrics on a 25-node substrate network. The action masking mechanism provably enforces all hard constraints — including security posture constraints — eliminating the constraint-violation failure mode that plagues penalty-based soft constraint approaches. The GNN feature extractor provides topology-aware and security posture-aware embeddings that enable globally informed placement decisions, a capability that flat MLP policies lack.
+The experimental results demonstrate that the intelligent DRL agent (Maskable
+PPO) successfully learns a security posture aware placement policy that achieves
+competitive acceptance ratios and risk metrics on a 25-node substrate network.
+The action masking mechanism provably enforces all hard constraints — including
+security posture constraints — eliminating the constraint-violation failure mode
+that plagues penalty-based soft constraint approaches. The GNN feature extractor
+provides topology-aware and security posture-aware embeddings that enable
+globally informed placement decisions, a capability that flat MLP policies lack.
 
-The expected-loss security posture risk model introduces a principled operational objective beyond simple acceptance ratio maximization. By coupling the deterministic risk integral and expected lost revenue to the reward signal, the intelligent DRL agent learns to prefer placements that are both feasible and operationally resilient, avoiding nodes with degraded security posture and high co-location counts, and reducing the long-term revenue impact of security incidents and node downtime. The stochastic incident process with pressure accumulation and downtime provides a realistic model of the temporal dynamics of node security posture in a shared NFV environment.
+The expected-loss security posture risk model introduces a principled
+operational objective beyond simple acceptance ratio maximization. By coupling
+the deterministic risk integral and expected lost revenue to the reward signal,
+the intelligent DRL agent learns to prefer placements that are both feasible and
+operationally resilient, avoiding nodes with degraded security posture and high
+co-location counts, and reducing the long-term revenue impact of security
+incidents and node downtime. The stochastic incident process with pressure
+accumulation and downtime provides a realistic model of the temporal dynamics of
+node security posture in a shared NFV environment.
 
-The Best-Fit by Minimum Risk baseline serves as a strong greedy comparator. The key advantage of the intelligent DRL approach lies in its ability to reason about long-term consequences of placement decisions — preserving low-risk, high-security-posture, high-resource nodes for future demanding requests — a capability beyond reach of any myopic greedy strategy.
+The Best-Fit by Minimum Risk baseline serves as a strong greedy comparator. The
+key advantage of the intelligent DRL approach lies in its ability to reason
+about long-term consequences of placement decisions — preserving low-risk,
+high-security-posture, high-resource nodes for future demanding requests — a
+capability beyond reach of any myopic greedy strategy.
 
 \subsection{Comparative summary (aligned evaluation)}
 
-Table~\ref{tab:conclusion_compare} summarizes the mean metrics across evaluation episodes for Best-Fit versus Maskable PPO on the same aligned request stream (RNG state matched between algorithms). Acceptance ratio and total revenue differ by less than one percent in favour of Best-Fit, but PPO substantially improves security-oriented outcomes: lower average risk integral, higher average security margin, fewer realized incidents, and lower total and per-request lost revenue.
+Table~\ref{tab:conclusion_compare} summarizes the mean metrics across evaluation
+episodes for Best-Fit versus Maskable PPO on the same aligned request stream
+(RNG state matched between algorithms). Acceptance ratio and total revenue
+differ by less than one percent in favour of Best-Fit, but PPO substantially
+improves security-oriented outcomes: lower average risk integral, higher average
+security margin, fewer realized incidents, and lower total and per-request lost
+revenue.
 
 \begin{table}[!ht]
 \centering
@@ -50,29 +96,66 @@ Avg.\ lost revenue / request        & 0.0688 & 0.0448 & $-34.88$ & PPO \\
 
 \section{Limitations}
 
-The current work has several limitations that point to directions for future investigation:
+The current work has several limitations that point to directions for future
+investigation:
 
 \begin{enumerate}
-  \item The substrate network size is fixed at 25 nodes for efficient training. While the GNN architecture supports variable topology, transfer to significantly larger or topologically different substrates has not been systematically evaluated.
-  \item The training uses 100,000 timesteps, which may be insufficient for convergence to a highly optimized policy on more complex configurations. Longer training or distributed DRL could yield further improvement.
-  \item The security posture incident model is a simplified Bernoulli process. Real-world security posture dynamics may exhibit temporal correlation, spatial dependencies, and cascading failure effects not captured by the current model.
-  \item The evaluation compares only one baseline (Best-Fit by Minimum Risk). Comparison against additional approaches — including ILP for small instances and First-Fit — would provide a more complete picture of the relative performance of the intelligent DRL framework.
+  \item The substrate network size is fixed at 25 nodes for efficient training.
+        While the GNN architecture supports variable topology, transfer to
+        significantly larger or topologically different substrates has not been
+        systematically evaluated.
+  \item The training uses 100,000 timesteps, which may be insufficient for
+        convergence to a highly optimized policy on more complex configurations.
+        Longer training or distributed DRL could yield further improvement.
+  \item The security posture incident model is a simplified Bernoulli process.
+        Real-world security posture dynamics may exhibit temporal correlation,
+        spatial dependencies, and cascading failure effects not captured by the
+        current model.
+  \item The evaluation compares only one baseline (Best-Fit by Minimum Risk).
+        Comparison against additional approaches — including ILP for small
+        instances and First-Fit — would provide a more complete picture of the
+        relative performance of the intelligent DRL framework.
 \end{enumerate}
 
 \section{Future Work}
 
 Several promising directions extend this work:
 
-\textbf{Larger and dynamic topologies.} Evaluating the trained DRL policy on larger substrate networks (100–500 nodes) and validating the transfer-learning capability of the GraphSAGE architecture would demonstrate the practical scalability of the intelligent security posture aware framework.
+\textbf{Larger and dynamic topologies.} Evaluating the trained DRL policy on
+larger substrate networks (100–500 nodes) and validating the transfer-learning
+capability of the GraphSAGE architecture would demonstrate the practical
+scalability of the intelligent security posture aware framework.
 
-\textbf{Multi-agent placement.} In multi-domain NFV environments, multiple DRL agents coordinate placement across administrative domains, each maintaining awareness of its domain's security posture. Multi-agent DRL extensions of the proposed framework, combined with GNN policies that model inter-domain topology and security posture, would be a natural next step.
+\textbf{Multi-agent placement.} In multi-domain NFV environments, multiple DRL
+agents coordinate placement across administrative domains, each maintaining
+awareness of its domain's security posture. Multi-agent DRL extensions of the
+proposed framework, combined with GNN policies that model inter-domain topology
+and security posture, would be a natural next step.
 
-\textbf{Richer security posture models.} Incorporating correlated failure models, cascade effects, real threat intelligence feeds, and time-series data on historical incidents into the security posture model would improve the realism of the operational risk assessment and enable the DRL agent to respond to emerging threat patterns.
+\textbf{Richer security posture models.} Incorporating correlated failure
+models, cascade effects, real threat intelligence feeds, and time-series data on
+historical incidents into the security posture model would improve the realism
+of the operational risk assessment and enable the DRL agent to respond to
+emerging threat patterns.
 
-\textbf{Hierarchical DRL.} A hierarchical DRL policy that first selects a security zone or cluster of nodes with favorable security posture (high-level policy) and then assigns individual VNFs within the cluster (low-level policy) could improve scalability by reducing the effective action space.
+\textbf{Hierarchical DRL.} A hierarchical DRL policy that first selects a
+security zone or cluster of nodes with favorable security posture (high-level
+policy) and then assigns individual VNFs within the cluster (low-level policy)
+could improve scalability by reducing the effective action space.
 
-\textbf{Online learning and continual adaptation.} Deploying the intelligent DRL agent in an online setting where the policy is continuously updated as new data arrives — including evolving security posture telemetry — using techniques such as experience replay and progressive network expansion, would make the framework applicable to real NFV orchestration systems.
+\textbf{Online learning and continual adaptation.} Deploying the intelligent DRL
+agent in an online setting where the policy is continuously updated as new data
+arrives — including evolving security posture telemetry — using techniques such
+as experience replay and progressive network expansion, would make the framework
+applicable to real NFV orchestration systems.
 
-\textbf{Integration with ETSI MANO.} Integrating the proposed intelligent placement agent with the ETSI NFV-MANO stack (e.g., via a VNFM adapter) would enable deployment in real or emulated NFV testbeds with live security posture feeds, providing practical validation beyond simulation.
+\textbf{Integration with ETSI MANO.} Integrating the proposed intelligent
+placement agent with the ETSI NFV-MANO stack (e.g., via a VNFM adapter) would
+enable deployment in real or emulated NFV testbeds with live security posture
+feeds, providing practical validation beyond simulation.
 
-\textbf{Explainability.} The GNN attention weights provide a degree of interpretability, revealing which substrate nodes the DRL policy considers most important at each placement step. Systematic analysis of these attention patterns — particularly in the context of security posture — could yield insight into the security-aware structural properties the agent has learned to exploit.
+\textbf{Explainability.} The GNN attention weights provide a degree of
+interpretability, revealing which substrate nodes the DRL policy considers most
+important at each placement step. Systematic analysis of these attention
+patterns — particularly in the context of security posture — could yield insight
+into the security-aware structural properties the agent has learned to exploit.

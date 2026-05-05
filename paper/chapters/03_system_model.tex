@@ -10,15 +10,15 @@ The physical infrastructure is modeled as an undirected weighted graph $G_S = (N
 
 Each substrate node $n \in N$ is characterized by a resource vector:
 \begin{equation}
-\mathbf{r}_n = \left(r_n^{\text{ram}},\; r_n^{\text{cpu}},\; r_n^{\text{stor}},\; s_n\right),
+\mathbf{r}_n = \left(r_n^{\text{ram}},\; r_n^{\text{cpu}},\; r_n^{\text{stor}},\; c_n,\; i_n,\; a_n,\; z_n\right),
 \end{equation}
-where $r_n^{\text{ram}}$, $r_n^{\text{cpu}}$, $r_n^{\text{stor}}$ denote available RAM (GB), CPU (cores), and storage (GB) respectively, and $s_n \in [s_{\min}, s_{\max}]$ is the node's security score on a discrete scale.
+where $r_n^{\text{ram}}$, $r_n^{\text{cpu}}$, $r_n^{\text{stor}}$ denote available RAM (GB), CPU (cores), and storage (GB) respectively. The three CIA security dimensions --- $c_n$ (confidentiality), $i_n$ (integrity), and $a_n$ (availability) --- are independent scores sampled from $[1, 5]$, capturing the node's security posture along each axis of the CIA triad independently. The integer $z_n \in \{0, 1, 2\}$ denotes the node's trust zone assignment: 0 (public), 1 (private), or 2 (DMZ).
 
-The \textit{residual} resource vector $\tilde{\mathbf{r}}_n(t)$ at time $t$ reflects capacity remaining after currently active VNF allocations.
+The \textit{residual} resource vector $\tilde{\mathbf{r}}_n(t)$ at time $t$ reflects capacity remaining after currently active VNF allocations. CIA scores and zone assignments are static properties of the substrate node and do not change as VNFs are allocated.
 
 \subsection{Link Model}
 
-Each link $(u,v) \in E$ is characterized by bandwidth $b_{uv}$ (Mbps) and propagation latency $\ell_{uv}$ (ms). Routing follows shortest hop-count paths; the \textit{effective latency} between nodes $u$ and $v$ is the sum of link latencies along the shortest path $P(u,v)$:
+Each link $(u,v) \in E$ is characterized by bandwidth $b_{uv}$ (Mbps), propagation latency $\ell_{uv}$ (ms), and link security level $\sigma_{uv} \in [0.2, 1.0]$. Routing follows shortest hop-count paths; the \textit{effective latency} between nodes $u$ and $v$ is the sum of link latencies along the shortest path $P(u,v)$:
 \begin{equation}
 L(u,v) = \sum_{(i,j) \in P(u,v)} \ell_{ij}.
 \end{equation}
@@ -26,11 +26,15 @@ The \textit{effective bandwidth} between $u$ and $v$ is the bottleneck bandwidth
 \begin{equation}
 B(u,v) = \min_{(i,j) \in P(u,v)} \tilde{b}_{ij}(t),
 \end{equation}
-where $\tilde{b}_{ij}(t)$ is the residual bandwidth on link $(i,j)$ at time $t$.
+where $\tilde{b}_{ij}(t)$ is the residual bandwidth on link $(i,j)$ at time $t$. The \textit{minimum path link security} from $u$ to $v$ is the worst-case security level along the path:
+\begin{equation}
+\Sigma(u,v) = \min_{(i,j) \in P(u,v)} \sigma_{ij}.
+\end{equation}
+This models the fact that the security level of a traffic path is determined by its weakest link.
 
 \subsection{Topology Generation}
 
-In the experimental configuration, the substrate network is generated as an Erd\H{o}s-R\'enyi random graph $G(N, p)$ with $|N| = 25$ nodes and edge probability $p = 1.0$ (complete graph). Disconnected components are prevented by adding bridging edges between components when $p < 1$. Node resources are sampled uniformly: RAM $\in [20, 120]$ GB, CPU $\in [10, 60]$ cores, storage $\in [250, 1500]$ GB, security score $\in [1, 5]$. Link bandwidths are sampled uniformly in $[100, 500]$ Mbps with latencies in $[5, 60]$ ms.
+In the experimental configuration, the substrate network is generated as an Erd\H{o}s-R\'enyi random graph $G(N, p)$ with $|N| = 25$ nodes and edge probability $p = 1.0$ (complete graph). Node resources are sampled uniformly: RAM $\in [20, 120]$ GB, CPU $\in [10, 60]$ cores, storage $\in [250, 1500]$ GB. CIA security scores are sampled uniformly and independently per dimension: confidentiality, integrity, availability $\in [1, 5]$. Trust zones are assigned uniformly at random from $\{0, 1, 2\}$. Link bandwidths are sampled uniformly in $[100, 500]$ Mbps, latencies in $[5, 60]$ ms, and link security levels in $[0.2, 1.0]$.
 
 \subsection{Time-to-Live and Resource Release}
 
@@ -50,12 +54,14 @@ VNF demands are sampled uniformly: RAM $\in [2, 12]$ GB, CPU $\in [1, 6]$ cores,
 
 An SFC request $r$ is a tuple:
 \begin{equation}
-r = \left\langle \mathcal{V}_r,\; s_r^{\min},\; \ell_r^{\max},\; b_r^{\min},\; \tau_r,\; \delta_r \right\rangle,
+r = \left\langle \mathcal{V}_r,\; c_r^{\min},\; i_r^{\min},\; a_r^{\min},\; z_r^{\text{req}},\; \sigma_r^{\min},\; \ell_r^{\max},\; b_r^{\min},\; \tau_r,\; \delta_r \right\rangle,
 \end{equation}
 where:
 \begin{itemize}
   \item $\mathcal{V}_r = (v_1, v_2, \ldots, v_{K_r})$ is the ordered sequence of $K_r$ VNFs;
-  \item $s_r^{\min} \in [1, 5]$ is the minimum security score required at each placement node;
+  \item $c_r^{\min}, i_r^{\min}, a_r^{\min} \in [1, 5]$ are the minimum required CIA security scores at each placement node, sampled independently;
+  \item $z_r^{\text{req}} \in \{0, 1, 2, -1\}$ is the required trust zone: with probability 0.3 a specific zone is required (drawn uniformly from $\{0, 1, 2\}$); otherwise $z_r^{\text{req}} = -1$ (any zone accepted);
+  \item $\sigma_r^{\min} \in [0.0, 0.6]$ is the minimum link security level required on each inter-VNF path;
   \item $\ell_r^{\max} \in [35, 120]$ ms is the maximum allowed end-to-end latency;
   \item $b_r^{\min} \in [50, 250]$ Mbps is the minimum required bandwidth on each hop;
   \item $\tau_r$ is the TTL drawn from a truncated exponential distribution on $[1, 25]$;
@@ -75,15 +81,25 @@ A placement $\pi_r = (n_1, n_2, \ldots, n_{K_r})$ assigns VNF $v_k$ to substrate
 \tilde{r}_{n_k}^{\text{stor}}(t) \geq d_{v_k}^{\text{stor}}.
 \end{equation}
 
-\textbf{Security constraints:} For each node $n_k$ in the placement:
+\textbf{CIA security constraints:} For each node $n_k$ in the placement:
 \begin{equation}
-s_{n_k}^{\text{eff}}(t) \geq s_r^{\min},
+c_{n_k} \geq c_r^{\min}, \quad i_{n_k} \geq i_r^{\min}, \quad a_{n_k} \geq a_r^{\min}.
 \end{equation}
-where $s_{n_k}^{\text{eff}}(t)$ is the \textit{effective security} of node $n_k$ at time $t$ (which may be reduced by incident pressure; see Section~3.5).
+All three CIA dimensions must be satisfied independently and simultaneously.
+
+\textbf{Zone constraint:} If the SFC specifies a required zone ($z_r^{\text{req}} \geq 0$), all placement nodes must belong to that zone:
+\begin{equation}
+\forall k:\; z_{n_k} = z_r^{\text{req}}.
+\end{equation}
 
 \textbf{Bandwidth constraints:} For each consecutive pair $(n_k, n_{k+1})$:
 \begin{equation}
 B(n_k, n_{k+1}) \geq b_r^{\min}.
+\end{equation}
+
+\textbf{Link security constraints:} For each consecutive pair $(n_k, n_{k+1})$:
+\begin{equation}
+\Sigma(n_k, n_{k+1}) \geq \sigma_r^{\min}.
 \end{equation}
 
 \textbf{End-to-end latency constraint:}
@@ -97,8 +113,6 @@ B(n_k, n_{k+1}) \geq b_r^{\min}.
 \end{equation}
 Symmetrically, nodes reserved by hard-isolated SFCs cannot be used by any other SFC.
 
-\textbf{Incident downtime constraint:} If node $n_k$ is currently in a downtime period following a realized security incident (i.e.\ its remaining downtime counter $\Delta_{n_k}^{\text{down}}(t) > 0$), it is temporarily unavailable regardless of resources. Downtime counters decrement by one on each request tick and are set to $D_{\text{inc}} = 2$ steps upon an incident.
-
 \section{MDP Formulation}
 
 The SFC placement problem under online request arrivals is formalized as a finite-horizon Markov Decision Process (MDP) $\mathcal{M} = \langle \mathcal{S}, \mathcal{A}, \mathcal{P}, \mathcal{R}, \gamma \rangle$.
@@ -108,8 +122,8 @@ The SFC placement problem under online request arrivals is formalized as a finit
 The state $\mathbf{s}_t \in \mathcal{S}$ at time step $t$ encodes all information relevant to the current placement decision. It comprises:
 
 \begin{enumerate}
-  \item \textbf{Node feature matrix} $\mathbf{F} \in \mathbb{R}^{N \times 20}$: for each substrate node, a normalized vector comprising: (i)~base resources [RAM, CPU, storage, effective security score, average neighbor bandwidth, distance to previous placement node]; (ii)~global resource shares [RAM global share, CPU global share, storage global share] indicating each node's fraction of total consumed resources; (iii)~tenancy features [VNF global share, SFC tenancy ratio]; (iv)~VNF fit ratios [fit RAM, fit CPU, fit storage] measuring how much of each node's remaining capacity the current VNF would consume; (v)~incident features [incident pressure, load norm, base incident probability $p_{\text{base}}$, expected incidents]; (vi)~risk signals [node risk score ($= p_{\text{base}}$), expected lost revenue].
-  \item \textbf{Global context vector} $\mathbf{g} \in \mathbb{R}^{15}$: encoding current VNF demands (3), SFC constraints (3), VNF progress index (1), hard isolation flag (1), latency budget consumed (1), TTL (1), remaining VNF count and aggregate demands (4), and windowed acceptance ratio (1).
+  \item \textbf{Node feature matrix} $\mathbf{F} \in \mathbb{R}^{N \times 20}$: for each substrate node, a normalized vector comprising: (i)~base resources [RAM, CPU, storage, normalized by initial capacity]; (ii)~CIA security scores [confidentiality, integrity, availability, normalized by $s_{\max} = 5$]; (iii)~connectivity [average neighbor bandwidth, distance to previous placement node]; (iv)~global resource shares [RAM, CPU, storage share, VNF share, SFC tenancy]; (v)~VNF fit ratios [fit RAM, fit CPU, fit storage]; (vi)~zone one-hot encoding [is\_public, is\_private, is\_DMZ]; (vii)~link security from previous placement node.
+  \item \textbf{Global context vector} $\mathbf{g} \in \mathbb{R}^{20}$: encoding current VNF demands (3), SFC CIA minima (3), SFC required zone (1), SFC minimum link security (1), SFC constraints [max latency, min bandwidth] (2), VNF progress (1), hard isolation flag (1), latency progress (1), TTL (1), remaining VNF count and aggregate demands (4), and windowed acceptance ratio (1), plus reserved padding to reach dimension 20.
   \item \textbf{Placement mask} $\mathbf{m}^{P} \in \{0,1\}^{N}$: indicating which nodes are already used in the current partial placement.
   \item \textbf{Node mask} $\mathbf{m}^{N} \in \{0,1\}^{N}$: indicating real (non-padded) nodes.
 \end{enumerate}
@@ -133,86 +147,64 @@ Upon action $a_t = n_k$ (placing VNF $v_k$ on node $n_k$):
   \item Latency $L(n_{k-1}, n_k)$ is added to the accumulated latency $\hat{\ell}$.
   \item The VNF index advances: $k \leftarrow k+1$.
   \item If $k = K_r$: if $\hat{\ell} \leq \ell_r^{\max}$, acceptance is triggered; otherwise, all partial resources are released and rejection is triggered.
-  \item Upon SFC completion (accepted or rejected): substrate TTL is advanced via \texttt{tick()}, incident pressure decays, and the next SFC request is generated.
+  \item Upon SFC completion (accepted or rejected): substrate TTL is advanced via \texttt{tick()}, and the next SFC request is generated.
 \end{enumerate}
 
 \subsection{Reward Function}
 
-The reward signal is designed to encourage high acceptance ratios while penalizing operational risk:
+The reward signal is designed to encourage high acceptance ratios while providing explicit incentives for security-aware placements:
 
 \textbf{Intermediate step reward} (after placing VNF $v_k$, $k < K_r$):
 \begin{equation}
-r_t^{\text{step}} = 0.1 - 0.3 \cdot \min\!\left(\frac{L(n_{k-1}, n_k)}{\ell_r^{\max}}, 1\right).
+r_t^{\text{step}} = 0.1 - 0.3 \cdot \min\!\left(\frac{L(n_{k-1}, n_k)}{\ell_r^{\max}}, 1\right) + w_{\text{link}} \cdot \max(0,\, \Sigma(n_{k-1},n_k) - \sigma_r^{\min}) + w_{\text{CIA}} \cdot \overline{m}_{\text{CIA}},
 \end{equation}
-The 0.1 progress bonus rewards feasible VNF placements; the latency penalty encourages co-location of VNFs to reduce hop latency.
+where $w_{\text{link}} = 0.05$ is the link security margin weight, $w_{\text{CIA}} = 0.10$ is the CIA margin weight, and $\overline{m}_{\text{CIA}}$ is the normalized mean CIA margin of the placed node:
+\begin{equation}
+\overline{m}_{\text{CIA}} = \frac{1}{3 \cdot m_{\max}}\left[\max(0,\, c_{n_k} - c_r^{\min}) + \max(0,\, i_{n_k} - i_r^{\min}) + \max(0,\, a_{n_k} - a_r^{\min})\right],
+\end{equation}
+with $m_{\max} = s_{\max} - s_{\min} = 4$ (maximum possible margin per dimension). The $+0.1$ progress bonus rewards each feasible VNF placement; the latency term penalizes distant placements; the link security and CIA terms incentivise selecting nodes and paths with security posture exceeding the hard minimum.
 
 \textbf{Terminal acceptance reward:}
 \begin{equation}
-r_T^{\text{acc}} = \left( R_{\text{acc}} - \lambda \cdot \rho_r - \mu \cdot \widehat{C}_r \right) \cdot \left(1 + \omega \cdot \overline{\text{AR}}_w\right),
+r_T^{\text{acc}} = \left(R_{\text{acc}} + w_{\text{CIA}}^{\text{acc}} \cdot \overline{M}_{\text{CIA}}\right) \cdot \left(1 + \omega \cdot \overline{\text{AR}}_w\right),
 \end{equation}
-where $R_{\text{acc}} = 1$ is the base acceptance reward, $\lambda = 4$ is the risk penalty coefficient, $\rho_r \in [0,1]$ is the risk integral for request $r$, $\mu = 0.05$ is the expected-loss reward scale, $\widehat{C}_r$ is the deterministic expected lost revenue (see Section~3.5.2), $\omega = 0.5$ is the windowed AR weight, and $\overline{\text{AR}}_w$ is the acceptance ratio over the last $w = 10$ requests. The use of expected lost revenue $\widehat{C}_r$ instead of stochastic realized cost reduces gradient variance, giving the policy a smoother learning signal.
+where $R_{\text{acc}} = 1$ is the base acceptance reward, $w_{\text{CIA}}^{\text{acc}} = 0.30$ is the SFC-level CIA acceptance bonus weight, $\overline{M}_{\text{CIA}}$ is the mean normalized CIA margin averaged over all $K_r$ placement nodes, $\omega = 0.5$ is the windowed AR weight, and $\overline{\text{AR}}_w$ is the acceptance ratio over the last $w = 10$ requests. The AR modifier amplifies the reward when the agent has been accepting frequently, providing curriculum-style positive reinforcement.
 
 \textbf{Terminal rejection reward:}
 \begin{equation}
 r_T^{\text{rej}} = R_{\text{rej}} \cdot \left(1 + \omega \cdot (1 - \overline{\text{AR}}_w)\right),
 \end{equation}
-where $R_{\text{rej}} = -1$ is the base rejection penalty. The flipped AR modifier increases the penalty magnitude when the agent has been frequently rejecting (low AR), providing stronger training signal to correct poor behavior.
+where $R_{\text{rej}} = -1$. The flipped AR modifier $(1 - \overline{\text{AR}}_w)$ amplifies the penalty when the agent has been rejecting frequently, providing stronger corrective signal during poor-performance phases.
 
-\section{Security Posture and Risk Model}
+\section{CIA Triad Security Model}
 
-\subsection{Security Posture Model}
+\subsection{The CIA Triad as Placement Constraints}
 
-The \textit{security posture} of a substrate node captures its current vulnerability and resilience state, combining its static security score with the accumulated effect of past security incidents. Formally, the \textit{effective security} of node $n$ at time $t$ is reduced by accumulated incident pressure $p_n(t)$:
-\begin{equation}
-s_n^{\text{eff}}(t) = s_n \cdot \left(1 - \eta \cdot p_n(t)\right),
-\end{equation}
-where $\eta \in [0,1]$ is the security penalty coefficient.
+The CIA (Confidentiality, Integrity, Availability) triad is the foundational framework for information security assessment~\cite{editor_security_nodate}. In the context of SFC placement, each dimension captures a distinct and independently important aspect of the node's security posture:
 
-Incident pressure models the temporal degradation of a node's security posture following a security event, and recovers geometrically as the node is remediated:
-\begin{equation}
-p_n(t+1) = \gamma_p \cdot p_n(t),
-\end{equation}
-where $\gamma_p = 0.92$ is the decay factor. Upon a security incident on node $n$, pressure increases: $p_n \leftarrow p_n + \Delta_p$ with $\Delta_p = 0.20$.
+\begin{itemize}
+  \item \textbf{Confidentiality} ($c_n$): the node's ability to prevent unauthorized disclosure of data processed by hosted VNFs. A low confidentiality score indicates elevated risk of data leakage, making the node unsuitable for privacy-sensitive service chains.
+  \item \textbf{Integrity} ($i_n$): the node's ability to prevent unauthorized modification of data or VNF state. A low integrity score signals higher risk of tampering, which is critical for service chains involving authentication or policy enforcement functions.
+  \item \textbf{Availability} ($a_n$): the node's resilience to disruption and its capacity to remain operational under load or attack. A low availability score indicates higher risk of downtime, making the node a poor choice for latency-sensitive or mission-critical VNFs.
+\end{itemize}
 
-\textbf{Node downtime.} When a node experiences a realized incident, it enters a downtime period of $D_{\text{inc}} = 2$ request ticks, during which its resources are zeroed and no VNF may be placed on it. The remaining downtime counter $\Delta_n^{\text{down}}(t)$ decrements by one each tick. This models real-world remediation: an incident renders the node temporarily unavailable until service is restored.
+By treating these as three independent constraints rather than collapsing them into a single scalar, the framework enables operators to express nuanced security requirements. An SFC implementing a firewall may specify a high integrity minimum but a moderate confidentiality minimum; an SFC carrying sensitive medical traffic may specify a high confidentiality minimum but a lower availability minimum. The independent CIA constraints capture this specificity.
 
-This dynamic security posture model ensures that the DRL agent's placement decisions reflect the real-time security state of the substrate, not merely its static configuration.
+\subsection{Trust Zones}
 
-\subsection{Security Posture Risk Integral}
+Trust zones partition the substrate into security domains with different access control policies. The three zones model a standard network segmentation architecture:
 
-For an accepted placement $\pi_r$ with TTL $\tau_r$, the security posture risk integral $\rho_r \in [0,1]$ quantifies the expected loss due to incident exposure across all placement nodes. Let $\Pi_r^{\text{dist}}$ denote the set of distinct nodes in $\pi_r$. The per-node base incident probability is:
+\begin{itemize}
+  \item \textbf{Public zone} ($z = 0$): nodes accessible from the public network; lowest trust, highest exposure.
+  \item \textbf{Private zone} ($z = 1$): nodes in an internal, access-controlled segment; intermediate trust.
+  \item \textbf{DMZ} ($z = 2$): nodes in a demilitarized zone between the public and private networks; used for services that must be accessible from both segments.
+\end{itemize}
 
-\begin{equation}
-q_n = q_0 \cdot \left(1 - \frac{s_n^{\text{eff}}}{s_{\max}}\right)^{\alpha} \cdot \left(1 + \beta \cdot \ell_n\right) \cdot \left(1 + p_n\right),
-\label{eq:qn}
-\end{equation}
-where $q_0 = 0.025$ is the base rate, $\alpha = 1.6$ is the security sensitivity exponent, $\beta = 0.7$ is the load amplification factor, $\ell_n$ is the normalized node load (VNF count relative to the 75th-percentile reference), and $p_n$ is the accumulated incident pressure. $q_n$ is clamped to $[0, 1]$.
+An SFC that specifies a required zone must have all its VNFs placed within that zone, ensuring that sensitive processing is confined to the appropriate security domain. Zone compliance is enforced as a hard constraint via action masking: candidate nodes outside the required zone receive zero weight in the action distribution.
 
-The exposure window is $T_s = \min(\tau_r, T_{\text{cap}})$ with $T_{\text{cap}} = 12$. The risk integral is a deterministic expected-loss score:
+\subsection{Link Security}
 
-\begin{equation}
-\rho_r = \min\!\left(\frac{1}{|\Pi_r^{\text{dist}}|} \sum_{n \in \Pi_r^{\text{dist}}} q_n \cdot \text{SFC}(n) \cdot \frac{T_s}{\tau_{\max}},\; 1\right),
-\label{eq:risk}
-\end{equation}
-where $\text{SFC}(n)$ is the number of active SFC chains sharing node $n$. This formulation captures three key risk drivers: the probability of an incident ($q_n$), the blast radius (number of co-located chains), and the temporal exposure ($T_s / \tau_{\max}$). The per-node risk score used by the Best-Fit baseline (Section~4.5) is the individual-node analog of this mean.
-
-\textbf{Stochastic incident simulation.} Although $\rho_r$ is deterministic, realized incidents are still simulated to drive the security posture dynamics. For each node $n \in \Pi_r^{\text{dist}}$, $T_s$ independent Bernoulli trials with success probability $q_n$ are drawn:
-\begin{equation}
-I_r = \sum_{n \in \Pi_r^{\text{dist}}} \sum_{t=1}^{T_s} \mathbf{1}\!\left[\text{Bernoulli}(q_n) = 1\right].
-\end{equation}
-Nodes that suffer at least one hit receive a pressure increment $\Delta_p$ and enter a downtime period of $D_{\text{inc}}$ request ticks.
-
-\textbf{Incident cost (stochastic).} The realized incident cost is the revenue lost due to downtime across all affected nodes:
-\begin{equation}
-C_r = \sum_{n:\, \text{hit}} \text{SFC}(n) \cdot R_{\text{ttl}} \cdot D_{\text{inc}},
-\end{equation}
-where $R_{\text{ttl}}$ is the revenue per TTL step (default 1.0) and $D_{\text{inc}} = 2$ is the incident downtime in request ticks.
-
-\textbf{Expected lost revenue (deterministic).} The noise-free counterpart used in the reward signal is:
-\begin{equation}
-\widehat{C}_r = \sum_{n \in \Pi_r^{\text{dist}}} P_n^{\text{hit}} \cdot \text{SFC}(n) \cdot R_{\text{ttl}} \cdot D_{\text{inc}},
-\end{equation}
-where $P_n^{\text{hit}} = 1 - (1 - q_n)^{T_s}$ is the probability that node $n$ suffers at least one incident during the exposure window. This provides a smooth gradient signal to the policy while remaining semantically aligned with the stochastic cost.
+The link security attribute $\sigma_{uv} \in [0.2, 1.0]$ captures the security level of the physical or virtual link connecting nodes $u$ and $v$. This may reflect encryption strength, physical access control, monitoring intensity, or other link-level security properties. The minimum path link security $\Sigma(u, v)$ is the worst-case security level along the shortest path from $u$ to $v$, capturing the fact that the security of a traffic path is limited by its weakest link. The SFC's minimum link security requirement $\sigma_r^{\min}$ ensures that all inter-VNF paths meet a specified security floor, complementing the node-level CIA constraints with path-level security assurance.
 
 \section{Optimization Objective}
 
@@ -220,4 +212,4 @@ The DRL agent seeks to maximize the expected cumulative discounted reward over a
 \begin{equation}
 J(\pi) = \mathbb{E}_{\pi}\!\left[\sum_{t=0}^{T} \gamma^t r_t\right],
 \end{equation}
-with discount factor $\gamma = 0.99$. This objective simultaneously captures acceptance ratio (via the $R_{\text{acc}} / R_{\text{rej}}$ terms), latency efficiency (via intermediate latency penalties), security posture risk (via the $\lambda \rho_r$ penalty), and revenue protection (via the $\mu \widehat{C}_r$ expected-loss penalty), providing a holistic measure of intelligent, security-posture-aware placement quality.
+with discount factor $\gamma = 0.99$. This objective simultaneously captures acceptance ratio (via the $R_{\text{acc}} / R_{\text{rej}}$ terms), latency efficiency (via intermediate latency penalties), CIA security posture (via the CIA margin reward terms), and link-level security (via the link security margin reward), providing a holistic measure of intelligent, security-posture-aware placement quality.

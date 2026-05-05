@@ -387,7 +387,7 @@ Lin \textit{et al.}~\cite{lin_energy-aware_2023}           & Energy-aware ILP + 
 Liang \textit{et al.}~\cite{liang_position-aware_2024}     & Palos (pos.-aware)                       & \textendash  & \textendash & \textendash & \textendash \\
 Mohamad \& Hassanein~\cite{mohamad_preemptive_2024}        & PPPS (preemptive pred.)                  & \textendash  & \textendash & \textendash & \textendash \\
 \midrule
-\textbf{This thesis} & \textbf{Maskable PPO + GNN + posture risk} & \textbf{\checkmark} & \textbf{\checkmark} & \textbf{\checkmark} & \textbf{\checkmark} \\
+\textbf{This thesis} & \textbf{Maskable PPO + GNN + CIA triad + zones + link sec.} & \textbf{\checkmark} & \textbf{\checkmark} & \textbf{\checkmark} & \textbf{\checkmark} \\
 \bottomrule
 \end{tabularx}
 \end{table}
@@ -427,7 +427,9 @@ isolate algorithmic gain from evaluation variance.
 This thesis closes the primary gap by applying DRL to
 security-posture-aware SFC placement, and simultaneously addresses
 the secondary deficiencies: Maskable PPO with action masking
-guarantees hard-constraint feasibility, a GNN feature extractor
-provides principled topology awareness, and an aligned-RNG evaluation
-protocol ensures fair comparison --- as the final row of
-Table~\ref{tab:lr_comparison} summarises.
+guarantees hard-constraint feasibility across CIA, zone, and
+link-security constraints; a GNN feature extractor provides principled
+topology awareness; a security-aware reward signal incentivises
+placements with CIA posture exceeding the hard minimum; and an
+aligned-RNG evaluation protocol ensures fair comparison --- as the
+final row of Table~\ref{tab:lr_comparison} summarises.

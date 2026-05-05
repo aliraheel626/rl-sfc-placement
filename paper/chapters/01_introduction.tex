@@ -171,13 +171,17 @@ multi-objective, long-horizon nature of SFC placement.
 
 This thesis develops an \emph{intelligent, security posture aware} DRL
 framework for SFC placement on NFV substrates. In contrast to prior DRL
-placement work, the framework incorporates security posture into both the constraint mask and the reward signal,
-and evaluates placement decisions against an expected-loss risk model
-rather than an ad-hoc penalty. The agent is a Maskable Proximal Policy
+placement work, the framework models security posture along three
+independent CIA (Confidentiality, Integrity, Availability) dimensions,
+incorporates trust-zone affinity and path-level link security as
+explicit hard constraints, and shapes the reward signal to incentivise
+placements with security posture that exceeds the required minimum.
+The agent is a Maskable Proximal Policy
 Optimization (Maskable PPO) learner whose action mask enforces every
-hard constraint --- resource, latency, bandwidth, security, and
-isolation --- at both training and inference time, so that every chain
-the agent accepts is feasible by construction. A Graph Neural Network
+hard constraint --- resource, latency, bandwidth, CIA security,
+trust zone, link security, and isolation --- at both training and
+inference time, so that every chain the agent accepts is feasible by
+construction. A Graph Neural Network
 (GNN) feature extractor endows the policy with topology awareness, so
 that the agent can exploit the structural role of each substrate node
 in its placement decisions --- a structural awareness that a flat
@@ -228,22 +232,22 @@ The objectives of this thesis follow directly from these gaps:
   for security-posture-aware SFC placement} that learns adaptive
   placement policies from the request stream while treating security
   requirements as first-class constraints.
-  \item Develop an \textbf{expected-loss security posture risk model}
-  that quantifies operational risk as a function of per-node incident
-  probability (driven by posture, load, and accumulated incident
-  pressure), chain co-location, and time exposure, and use it both
-  as a reward signal and as an evaluation metric.
+  \item Develop a \textbf{multi-dimensional CIA triad security model}
+  that represents confidentiality, integrity, and availability as
+  independent node attributes, enforces them as hard placement
+  constraints, and shapes the reward signal to incentivise placements
+  with security posture exceeding the hard-constrained minimum.
   \item Guarantee \textbf{hard-constraint feasibility} through action
   masking, so that every chain the agent accepts satisfies resource,
-  latency, bandwidth, security posture, and isolation requirements by
-  construction.
+  latency, bandwidth, CIA security, trust-zone, link-security, and
+  isolation requirements by construction.
   \item Integrate a \textbf{Graph Neural Network feature extractor}
   into the policy so that placement decisions reflect substrate
   topology and the structural role of each node.
   \item Perform a \textbf{fair comparative evaluation} against a
-  risk-minimising best-fit baseline, aligning the random-number
-  stream across algorithms so that both see identical request
-  sequences.
+  best-fit baseline enforcing identical hard constraints, aligning the
+  random-number stream across algorithms so that both see identical
+  request sequences.
 \end{enumerate}
 
 \section{Thesis Contributions}
@@ -253,15 +257,20 @@ The principal contributions of this thesis are:
 \begin{enumerate}
   \item A \textbf{Maskable PPO placement agent with hard-masked
   security posture constraints}, in which resource, latency,
-  bandwidth, security posture, and isolation requirements are all
-  enforced before any action is sampled --- so every chain the agent
-  accepts is feasible by construction.
-  \item An \textbf{expected-loss security posture risk model}
-  combining load-dependent incident probability, chain co-location
-  (blast radius), and TTL-proportional exposure into a deterministic
-  risk integral $\rho \in [0,1]$, paired with a deterministic expected
-  lost revenue term that provides a low-variance gradient signal for
-  policy optimization.
+  bandwidth, CIA security, trust-zone, link-security, and isolation
+  requirements are all enforced before any action is sampled --- so
+  every chain the agent accepts is feasible by construction.
+  \item A \textbf{multi-dimensional CIA triad security model} that
+  independently represents and enforces confidentiality, integrity,
+  and availability as per-node security attributes, supplemented by
+  trust-zone affinity constraints and minimum path-level link security
+  requirements --- providing a richer and more operationally realistic
+  security model than prior scalar security-score approaches.
+  \item A \textbf{security-aware reward signal} combining per-VNF CIA
+  margin bonuses, per-hop link security rewards, and an SFC-level CIA
+  acceptance bonus, giving the DRL agent an explicit incentive to
+  prefer placements with security posture exceeding the hard-constrained
+  minimum.
   \item A \textbf{topology-aware GNN feature extractor} supporting
   GCN, GAT, and GraphSAGE variants with attention-weighted aggregation
   and MLP-based global context fusion, endowing the DRL policy with
@@ -272,13 +281,9 @@ The principal contributions of this thesis are:
   stability.
   \item A \textbf{fair comparative evaluation framework} that aligns
   the random-number generator state of the DRL agent and the
-  risk-minimising best-fit baseline so that both process identical
-  request streams.
-  \item A \textbf{comprehensive experimental analysis} covering
-  acceptance ratio, risk integral, security margin, substrate
-  utilization, per-node SFC/VNF tenancy, total and per-request
-  revenue, expected and realized lost revenue, and realized incident
-  counts.
+  Best-Fit baseline so that both process identical request streams,
+  with evaluation covering acceptance ratio, CIA security margins,
+  zone compliance, link security margin, and substrate utilization.
 \end{enumerate}
 
 \section{Thesis Organization}
@@ -289,9 +294,9 @@ security-aware placement, DRL-based placement, and classical heuristic
 and optimization-based approaches, and situates the proposed framework
 within this landscape. Chapter~3 formalizes the system model,
 introduces the Markov Decision Process formulation, and defines the
-security posture risk model. Chapter~4 presents the proposed
-methodology in detail, including the Maskable PPO agent, the GNN
-feature extractor, the reward design, the action-masking
-implementation, and the best-fit baseline. Chapter~5 describes the
-experimental setup and presents comparative results, and Chapter~6
-concludes the thesis and outlines directions for future work.
+CIA triad security model with trust zones and link security. Chapter~4
+presents the proposed methodology in detail, including the Maskable PPO
+agent, the GNN feature extractor, the security-aware reward design, the
+action-masking implementation, and the best-fit baseline. Chapter~5
+describes the experimental setup and presents comparative results, and
+Chapter~6 concludes the thesis and outlines directions for future work.

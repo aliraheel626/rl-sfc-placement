@@ -3,9 +3,24 @@
 \LARGE{\textbf{\textbf{Abstract}}}
 \end{center}
 \begin{center}
-\Large{Intelligent Security Posture Aware Service Function Chain Placement Using Deep Reinforcement Learning}\\
+\Large{Intelligent Security Posture Aware Service Function Chain Placement Using
+Deep Reinforcement Learning}\\
 \Large{By}\\
 \Large{Ali Raheel}
 \end{center}
 
-Classical Service Function Chain (SFC) placement algorithms are computationally expensive, fail to generalize across dynamic NFV substrates, and neglect security as a placement-time optimization objective. This thesis proposes an intelligent \textit{security posture aware} deep reinforcement learning framework that trains a Maskable Proximal Policy Optimization (PPO) agent to place Virtual Network Functions (VNFs) sequentially, with hard action masking guaranteeing that every accepted chain satisfies resource, latency, bandwidth, security posture, and isolation constraints by construction. A Graph Neural Network (GNN) feature extractor — supporting GCN, GAT, and GraphSAGE — provides topology-aware node embeddings, while a novel expected-loss risk model couples incident probability, chain co-location, and TTL-proportional exposure to the reward signal. Evaluation on a 25-node substrate with 1000 SFC requests shows the agent achieves an acceptance ratio within 0.87\% of a risk-minimizing Best-Fit baseline while reducing the average risk integral by 59\%, realized incidents by 77\%, and lost revenue by 35\%.
+Classical Service Function Chain (SFC) placement algorithms are computationally
+expensive, fail to generalize across dynamic NFV substrates, and neglect
+security as a placement-time optimization objective. This thesis proposes an
+intelligent \textit{security posture aware} deep reinforcement learning
+framework that trains a Maskable Proximal Policy Optimization (PPO) agent to
+place Virtual Network Functions (VNFs) sequentially, with hard action masking
+guaranteeing that every accepted chain satisfies resource, latency, bandwidth,
+security posture, and isolation constraints by construction. A Graph Neural
+Network (GNN) feature extractor — supporting GCN, GAT, and GraphSAGE — provides
+topology-aware node embeddings, while a novel expected-loss risk model couples
+incident probability, chain co-location, and TTL-proportional exposure to the
+reward signal. Evaluation on a 25-node substrate with 1000 SFC requests shows
+the agent achieves an acceptance ratio within 0.87\% of a risk-minimizing
+Best-Fit baseline while reducing the average risk integral by 59\%, realized
+incidents by 77\%, and lost revenue by 35\%.

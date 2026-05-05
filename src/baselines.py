@@ -2,7 +2,10 @@
 Baseline Algorithms for SFC Placement.
 
 This module implements BestFitPlacement for comparison with RL:
-greedy per-step choice by minimum risk, tie-break by resource waste (then node id).
+greedy per-step choice by minimum resource waste (then node id).
+CIA security, trust zone, and link security constraints are checked as
+hard constraints — identical to the RL agent's action masking — ensuring
+a fair comparison.
 """
 
 from abc import ABC, abstractmethod
@@ -10,7 +13,6 @@ from typing import Optional
 
 from src.substrate import SubstrateNetwork
 from src.requests import SFCRequest, VNF
-from src.risk import compute_node_risk_score
 
 
 class BasePlacement(ABC):
@@ -46,54 +48,54 @@ class BasePlacement(ABC):
         """
         Get list of valid nodes for placing a VNF.
 
+        Applies the same feasibility checks as the RL agent's action mask:
+        CIA security, trust zone, hard isolation, bandwidth, latency budget,
+        and link security.
+
         Args:
             substrate: The substrate network
             vnf: The VNF to place
-            request: The SFC request (for constraints)
-            prev_node: Previous node in the chain (for bandwidth check)
+            request: The SFC request (for all constraints)
+            prev_node: Previous node in the chain
             current_latency: Accumulated latency so far
             remaining_vnfs: Number of VNFs remaining after this one
             min_link_latency: Minimum possible link latency (for optimistic estimate)
+            current_placement: Nodes already placed in this SFC
 
         Returns:
             List of valid node IDs
         """
         valid_nodes = []
 
-        # Calculate latency budget (optimistic estimate for remaining hops).
-        # Clamp to zero: matches environment behaviour where a negative raw budget
-        # only allows zero-latency hops rather than immediately rejecting.
+        # Optimistic latency budget for remaining hops
         min_remaining_latency = remaining_vnfs * min_link_latency
         latency_budget = max(0.0, request.max_latency - current_latency - min_remaining_latency)
 
         for node_id in range(substrate.num_nodes):
-            # Check resource and security feasibility
-            if not substrate.check_node_feasibility(
-                node_id, vnf, request.min_security_score
-            ):
+            # CIA + zone feasibility
+            if not substrate.check_node_feasibility(node_id, vnf, request):
                 continue
 
-            # Check hard isolation: skip nodes isolated by other SFCs
+            # Hard isolation: skip nodes isolated by other SFCs
             if substrate.is_node_hard_isolated(node_id):
                 continue
 
             # If this SFC requires hard isolation, skip nodes with other SFCs
             if request.hard_isolation:
                 if substrate.has_any_sfc_on_node(node_id):
-                    # Allow if it's our own placement from earlier in this SFC
                     if current_placement is None or node_id not in current_placement:
                         continue
 
-            # Check bandwidth from previous node
+            # Bandwidth, latency, and link security from previous node
             if prev_node is not None:
-                if not substrate.check_bandwidth(
-                    prev_node, node_id, request.min_bandwidth
-                ):
+                if not substrate.check_bandwidth(prev_node, node_id, request.min_bandwidth):
                     continue
 
-                # Check latency constraint (early masking)
                 hop_latency = substrate.get_path_latency(prev_node, node_id)
                 if hop_latency > latency_budget:
+                    continue
+
+                if not substrate.check_link_security(prev_node, node_id, request.min_link_security):
                     continue
 
             valid_nodes.append(node_id)
@@ -103,28 +105,22 @@ class BasePlacement(ABC):
 
 class BestFitPlacement(BasePlacement):
     """
-    Best-fit by risk only: for each VNF, select the valid node with minimum risk.
-    Tie-break by resource waste (then node id).
+    Best-fit by resource waste: for each VNF, select the valid node with
+    minimum total resource waste (RAM + CPU + Storage slack), breaking ties
+    by node ID.  Security, zone, and link-security constraints are enforced
+    as hard filters in get_valid_nodes — identical to the RL agent's masking —
+    making the comparison fair.
     """
 
     def place(
         self,
         substrate: SubstrateNetwork,
         request: SFCRequest,
-        *,
-        risk_cfg: Optional[dict] = None,
-        node_incident_pressure: Optional[dict] = None,
-        max_security: Optional[float] = None,
-        max_ttl: int = 1,
     ) -> Optional[list[int]]:
-        """
-        Place VNFs by always choosing the valid node with minimum risk per step.
-        """
+        """Place VNFs by choosing the valid node with minimum resource waste per step."""
         placement = []
         current_latency = 0.0
         min_link_latency = 1.0
-        pressure = node_incident_pressure if node_incident_pressure else {}
-        max_sec = max_security if max_security is not None else 1.0
 
         for i, vnf in enumerate(request.vnfs):
             prev_node = placement[-1] if placement else None
@@ -145,18 +141,13 @@ class BestFitPlacement(BasePlacement):
                 return None
 
             def key(n: int):
-                risk = compute_node_risk_score(
-                    substrate, n, risk_cfg or {}, pressure, max_sec,
-                    request_ttl=request.ttl,
-                    max_ttl=max_ttl,
-                )
                 res = substrate.get_node_resources(n)
                 waste = (
                     (res["ram"] - vnf.ram)
                     + (res["cpu"] - vnf.cpu)
                     + (res["storage"] - vnf.storage)
                 )
-                return (risk, waste, n)
+                return (waste, n)
 
             best_node = min(valid_nodes, key=key)
             placement.append(best_node)

@@ -29,8 +29,6 @@ def _truncated_exponential_inverse_cdf(mean: float, low: float, high: float) -> 
     """
     if low >= high:
         return low
-    # Guard against invalid/degenerate means from user config.
-    # Falling back to uniform keeps request generation running safely.
     if not math.isfinite(mean) or mean <= 0:
         return random.uniform(low, high)
     lam = 1.0 / mean
@@ -61,7 +59,11 @@ class SFCRequest:
 
     Attributes:
         vnfs: List of VNFs in the chain (ordered)
-        min_security_score: All hosting nodes must meet this security level
+        min_confidentiality: All hosting nodes must meet this confidentiality level
+        min_integrity: All hosting nodes must meet this integrity level
+        min_availability: All hosting nodes must meet this availability level
+        required_zone: Trust zone all VNFs must be in (-1 = any zone allowed)
+        min_link_security: Minimum security level on every VNF-to-VNF path
         max_latency: Maximum end-to-end latency allowed
         min_bandwidth: Minimum bandwidth required between consecutive VNFs
         ttl: Time to live (number of timesteps before resources are released)
@@ -71,7 +73,11 @@ class SFCRequest:
     """
 
     vnfs: list[VNF]
-    min_security_score: float
+    min_confidentiality: float
+    min_integrity: float
+    min_availability: float
+    required_zone: int        # -1 = any zone; 0/1/2/... = specific zone required
+    min_link_security: float
     max_latency: float
     min_bandwidth: float
     ttl: int
@@ -102,7 +108,6 @@ class RequestGenerator:
         if self.ttl_distribution == "exponential":
             self.ttl_min = float(ttl_cfg["min"])
             self.ttl_max = float(ttl_cfg["max"])
-            # Default mean to midpoint of [min, max] if omitted
             if "mean" in ttl_cfg:
                 self.ttl_mean = float(ttl_cfg["mean"])
             else:
@@ -111,14 +116,16 @@ class RequestGenerator:
             self.ttl_range = (ttl_cfg["min"], ttl_cfg["max"])
         self.hard_isolation_probability = config.get("hard_isolation_probability", 0.0)
 
+        # Zone configuration
+        self.num_zones = self.constraints.get("num_zones", 3)
+        self.required_zone_probability = self.constraints.get("required_zone_probability", 0.0)
+
         self.next_request_id = 0
 
     def generate_request(self) -> SFCRequest:
         """Generate a new random SFC request."""
-        # Determine number of VNFs
         num_vnfs = random.randint(*self.vnf_count_range)
 
-        # Generate VNFs
         vnfs = []
         for i in range(num_vnfs):
             vnf = VNF(
@@ -136,11 +143,32 @@ class RequestGenerator:
             )
             vnfs.append(vnf)
 
-        # Generate SFC-level constraints
-        min_security = random.uniform(
-            self.constraints["security_score"]["min"],
-            self.constraints["security_score"]["max"],
+        # CIA security requirements
+        min_confidentiality = random.uniform(
+            self.constraints["confidentiality"]["min"],
+            self.constraints["confidentiality"]["max"],
         )
+        min_integrity = random.uniform(
+            self.constraints["integrity"]["min"],
+            self.constraints["integrity"]["max"],
+        )
+        min_availability = random.uniform(
+            self.constraints["availability"]["min"],
+            self.constraints["availability"]["max"],
+        )
+
+        # Zone requirement
+        if random.random() < self.required_zone_probability and self.num_zones > 0:
+            required_zone = random.randint(0, self.num_zones - 1)
+        else:
+            required_zone = -1
+
+        # Link security requirement
+        min_link_security = random.uniform(
+            self.constraints["min_link_security"]["min"],
+            self.constraints["min_link_security"]["max"],
+        )
+
         max_latency = random.uniform(
             self.constraints["max_latency"]["min"],
             self.constraints["max_latency"]["max"],
@@ -150,7 +178,6 @@ class RequestGenerator:
             self.constraints["min_bandwidth"]["max"],
         )
 
-        # Generate TTL (truncated exponential via inverse CDF, or uniform)
         if self.ttl_distribution == "exponential":
             ttl = int(round(_truncated_exponential_inverse_cdf(
                 self.ttl_mean, self.ttl_min, self.ttl_max
@@ -158,12 +185,15 @@ class RequestGenerator:
         else:
             ttl = random.randint(*self.ttl_range)
 
-        # Generate hard isolation requirement
         hard_isolation = random.random() < self.hard_isolation_probability
 
         request = SFCRequest(
             vnfs=vnfs,
-            min_security_score=min_security,
+            min_confidentiality=min_confidentiality,
+            min_integrity=min_integrity,
+            min_availability=min_availability,
+            required_zone=required_zone,
+            min_link_security=min_link_security,
             max_latency=max_latency,
             min_bandwidth=min_bandwidth,
             ttl=ttl,

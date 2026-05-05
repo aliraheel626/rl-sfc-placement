@@ -20,11 +20,20 @@ substrate:
     storage:
       min: 250
       max: 1500
-    security_score:
+    # CIA triad security dimensions (independent per node)
+    confidentiality:
       min: 1
       max: 5
+    integrity:
+      min: 1
+      max: 5
+    availability:
+      min: 1
+      max: 5
+    # Trust zones: 0=public, 1=private, 2=dmz
+    num_zones: 3
 
-  # Link attribute ranges (sufficient bandwidth)
+  # Link attribute ranges
   links:
     bandwidth:
       min: 100
@@ -32,15 +41,18 @@ substrate:
     latency:
       min: 5
       max: 60
+    security:
+      min: 0.2
+      max: 1.0
 
 # SFC Request Configuration (scaled for 25-node substrate; difficulty preserved)
 sfc:
-  # Number of VNFs per chain (smaller chains so multiple fit in 25 nodes)
+  # Number of VNFs per chain
   vnf_count:
     min: 3
     max: 3
 
-  # VNF resource demands (fits on nodes; similar relative load vs capacity)
+  # VNF resource demands
   vnf_resources:
     ram:
       min: 2
@@ -52,11 +64,25 @@ sfc:
       min: 20
       max: 120
 
-  # SFC-level constraints (achievable but require good placement)
+  # SFC-level constraints
   constraints:
-    security_score:
+    # CIA security requirements (independent per dimension)
+    confidentiality:
       min: 1
       max: 5
+    integrity:
+      min: 1
+      max: 5
+    availability:
+      min: 1
+      max: 5
+    # Zone constraint: probability that SFC requires a specific trust zone
+    required_zone_probability: 0.3
+    num_zones: 3  # must match substrate.resources.num_zones
+    # Minimum link security along each VNF-to-VNF path
+    min_link_security:
+      min: 0.0
+      max: 0.6
     max_latency:
       min: 35
       max: 120
@@ -64,27 +90,26 @@ sfc:
       min: 50
       max: 250
 
-  # Time to live (truncated exponential on [min, max] via inverse CDF; optional mean, default = midpoint)
+  # Time to live (truncated exponential on [min, max] via inverse CDF)
   ttl:
     distribution: exponential
     min: 1
     max: 25
 
-  # Lower isolation probability to reduce pressure
   hard_isolation_probability: 0.1
 
 # Training Configuration (PPO tuning for create_maskable_ppo)
 training:
   total_timesteps: 200000
-  # Learning rate: constant 1e-4, or linear decay from 3e-4 (set use_linear_lr_schedule: true)
-  learning_rate: 0.0001 # 1e-4 (final value when using schedule)
+  # Learning rate: constant 1e-4, or linear decay from 3e-4
+  learning_rate: 0.0001
   use_linear_lr_schedule: false
-  lr_initial: 0.0003 # 3e-4 (start value when use_linear_lr_schedule is true)
+  lr_initial: 0.0003
   n_steps: 4096
   batch_size: 512
   n_epochs: 10
   gamma: 0.99
-  ent_coef: 0.01 # entropy coefficient (decay later if desired)
+  ent_coef: 0.01
   gae_lambda: 0.97
   clip_range: 0.2
   max_requests_per_episode: 300
@@ -96,35 +121,16 @@ rewards:
   acceptance: 1
   rejection: -1
   # Windowed acceptance ratio (AR) reward modifier
-  acceptance_ratio_window: 10            # number of recent requests to consider
-  acceptance_ratio_reward_weight: 0.5    # scaling factor for the multiplicative modifier
-  acceptance_ratio_flip_rejection: true  # use flipped multiplier (1-AR) on rejections
-
-# Risk + Incident realism (full replacement model)
-risk:
-  enabled: true
-  lambda: 300 # Reward penalty: reward -= lambda * risk_integral
-
-  # Robust normalization floors (scale-aware and topology-agnostic)
-  tenancy_ref_floor: 1.0
-  load_ref_floor: 1.0
-
-  # Stochastic incident process
-  incident_base_rate: 0.025 # Base per-node, per-exposure-step incident probability
-  incident_alpha: 1.6 # Sensitivity to inverse effective security
-  incident_beta: 0.7 # Amplification from node load
-  incident_steps_cap: 12 # Max simulated exposure steps per request (min(TTL, cap))
-
-  # Incident pressure state (temporary node degradation, decays each request tick)
-  incident_pressure_gain: 0.20
-  incident_pressure_decay: 0.92
-  incident_downtime_steps: 2 # Request ticks a node is unavailable after an incident
-  incident_security_penalty: 0.00 # Effective security multiplier: (1 - penalty * pressure)
-
-  # Revenue model: revenue per accepted SFC = revenue_per_ttl_step × TTL
-  # Incident cost = lost revenue: realized_incidents × revenue_per_ttl_step × request_ttl
-  revenue_per_ttl_step: 1.0
-  incident_cost_reward_scale: 0.05
+  acceptance_ratio_window: 10
+  acceptance_ratio_reward_weight: 0.5
+  acceptance_ratio_flip_rejection: true
+  # CIA security margin rewards: incentivise choosing nodes with more security headroom.
+  # cia_margin_weight: per-VNF step reward = weight * mean_normalized_cia_margin
+  # cia_acceptance_weight: SFC-completion bonus added to acceptance reward before AR scale
+  # link_security_weight: per-hop reward = weight * (path_link_sec - req_min_link_sec)
+  cia_margin_weight: 0.10
+  cia_acceptance_weight: 0.30
+  link_security_weight: 0.05
 
 # Evaluation Configuration
 evaluation:

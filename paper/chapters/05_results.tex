@@ -15,21 +15,20 @@ Experiments were conducted on a workstation running Windows 10 with Python 3.12.
 \begin{tabularx}{\textwidth}{X r r r l}
 \hline
 \textbf{Metric} & \textbf{Best-Fit mean} & \textbf{PPO mean} & \textbf{$\Delta$\%} & \textbf{Winner} \\ \hline
-Acceptance Ratio & 0.9634 & 0.9550 & $-0.87$\% & Best-Fit \\
-Avg Risk Integral & 0.0014 & 0.0006 & $-59.45$\% & PPO \\
-Avg Security Margin & 0.8525 & 1.7593 & 106.38\% & PPO \\
-Total Realized Incidents & 35.2000 & 8.2000 & $-76.70$\% & PPO \\
-Total Lost Revenue & 68.8000 & 44.8000 & $-34.88$\% & PPO \\
-Total Revenue & 9319.8000 & 9244.0000 & $-0.81$\% & Best-Fit \\
-Avg Revenue / Request & 9.3198 & 9.2440 & $-0.81$\% & Best-Fit \\
-Avg Lost Revenue / Request & 0.0688 & 0.0448 & $-34.88$\% & PPO \\
+Acceptance Ratio         & TBD & TBD & TBD & TBD \\
+Avg Confidentiality Margin & TBD & TBD & TBD & TBD \\
+Avg Integrity Margin     & TBD & TBD & TBD & TBD \\
+Avg Availability Margin  & TBD & TBD & TBD & TBD \\
+Zone Compliance Ratio    & TBD & TBD & TBD & TBD \\
+Avg Link Security Margin & TBD & TBD & TBD & TBD \\
+Substrate Utilization    & TBD & TBD & TBD & TBD \\
 \hline
 \end{tabularx}
 \end{table}
 
 \subsection{Network Configuration}
 
-The substrate network consists of 25 nodes connected as a complete graph ($p = 1.0$) with resources sampled uniformly as described in Section~3.1.3. SFC requests consist of chains of 3 VNFs with demands and constraints sampled as described in Section~3.2. The TTL follows a truncated exponential distribution on $[1, 25]$ with decay mean at the midpoint.
+The substrate network consists of 25 nodes connected as a complete graph ($p = 1.0$) with resources sampled uniformly as described in Section~3.1.3. Each node carries three independent CIA security scores (confidentiality, integrity, availability) sampled from $[1, 5]$, and is assigned to one of three trust zones (public, private, DMZ). Each link carries a security level sampled from $[0.2, 1.0]$. SFC requests consist of chains of 3 VNFs whose CIA minimum requirements and zone constraints are sampled as described in Section~3.2. The TTL follows a truncated exponential distribution on $[1, 25]$ with decay mean at the midpoint.
 
 \subsection{Evaluation Protocol}
 
@@ -48,22 +47,36 @@ Figure~\ref{fig:ar} illustrates the training acceptance ratio (rolling average o
 \label{fig:ar}
 \end{figure}
 
-\subsection{Risk and Incident Metrics During Training}
+\subsection{CIA Security Margin Metrics During Training}
 
-Figure~\ref{fig:risk} shows the evolution of the average risk integral $\rho_r$ over training episodes. As the agent becomes more adept at minimizing risk-aware placement, the average risk per accepted SFC decreases.
+Figures~\ref{fig:conf_margin}--\ref{fig:avail_margin} show the evolution of the mean CIA security margins over training episodes. Each margin measures the surplus of the placed node's CIA attribute over the SFC's minimum requirement. Rising margins indicate that the agent increasingly selects nodes whose security posture substantially exceeds the request's hard constraints, reflecting an improved security-aware placement strategy.
 
 \begin{figure}[!ht]
 \centering
-\includegraphics[width=0.8\textwidth]{models/sfc_risk_training.png}
-\caption{Average risk integral per accepted SFC during training.}
-\label{fig:risk}
+\includegraphics[width=0.8\textwidth]{models/conf_margin_training.png}
+\caption{Average confidentiality margin per accepted SFC during training (node confidentiality $-$ request minimum).}
+\label{fig:conf_margin}
+\end{figure}
+
+\begin{figure}[!ht]
+\centering
+\includegraphics[width=0.8\textwidth]{models/integ_margin_training.png}
+\caption{Average integrity margin per accepted SFC during training (node integrity $-$ request minimum).}
+\label{fig:integ_margin}
+\end{figure}
+
+\begin{figure}[!ht]
+\centering
+\includegraphics[width=0.8\textwidth]{models/avail_margin_training.png}
+\caption{Average availability margin per accepted SFC during training (node availability $-$ request minimum).}
+\label{fig:avail_margin}
 \end{figure}
 
 \section{Comparative Evaluation}
 
 \subsection{Acceptance Ratio}
 
-Table~\ref{tab:results} presents the comparative evaluation of the Maskable PPO agent against the Best-Fit baseline over 1000 SFC requests. The PPO agent achieves a competitive acceptance ratio, demonstrating that the learned policy is capable of efficiently allocating resources across the substrate network. The Best-Fit baseline, which greedily minimizes node-level risk at each step, provides a strong comparison point.
+Table~\ref{tab:results} presents the comparative evaluation of the Maskable PPO agent against the Best-Fit baseline over 1000 SFC requests. The PPO agent achieves a competitive acceptance ratio, demonstrating that the learned policy is capable of efficiently allocating resources across the substrate network. The Best-Fit baseline, which greedily minimizes resource waste at each step while enforcing identical CIA, zone, and link-security hard constraints, provides a strong and fair comparison point.
 
 \begin{table}[!ht]
 \centering
@@ -72,21 +85,20 @@ Table~\ref{tab:results} presents the comparative evaluation of the Maskable PPO 
 \begin{tabularx}{\textwidth}{X r r r l}
 \hline
 \textbf{Metric} & \textbf{Best-Fit mean} & \textbf{PPO mean} & \textbf{$\Delta$\%} & \textbf{Winner} \\ \hline
-Acceptance Ratio & 0.9634 & 0.9550 & $-0.87$\% & Best-Fit \\
-Avg Risk Integral & 0.0014 & 0.0006 & $-59.45$\% & PPO \\
-Avg Security Margin & 0.8525 & 1.7593 & 106.38\% & PPO \\
-Total Realized Incidents & 35.2000 & 8.2000 & $-76.70$\% & PPO \\
-Total Lost Revenue & 68.8000 & 44.8000 & $-34.88$\% & PPO \\
-Total Revenue & 9319.8000 & 9244.0000 & $-0.81$\% & Best-Fit \\
-Avg Revenue / Request & 9.3198 & 9.2440 & $-0.81$\% & Best-Fit \\
-Avg Lost Revenue / Request & 0.0688 & 0.0448 & $-34.88$\% & PPO \\
+Acceptance Ratio         & TBD & TBD & TBD & TBD \\
+Avg Confidentiality Margin & TBD & TBD & TBD & TBD \\
+Avg Integrity Margin     & TBD & TBD & TBD & TBD \\
+Avg Availability Margin  & TBD & TBD & TBD & TBD \\
+Zone Compliance Ratio    & TBD & TBD & TBD & TBD \\
+Avg Link Security Margin & TBD & TBD & TBD & TBD \\
+Substrate Utilization    & TBD & TBD & TBD & TBD \\
 \hline
 \end{tabularx}
 \end{table}
 
 \subsection{Summary Bar Chart}
 
-Figure~\ref{fig:summary_bar} provides a visual overview of the mean $\pm$ standard deviation for all eight comparative metrics across evaluation episodes. The error bars indicate episode-to-episode variance, confirming the stability of both algorithms' performance.
+Figure~\ref{fig:summary_bar} provides a visual overview of the mean $\pm$ standard deviation for all seven comparative metrics across evaluation episodes. The error bars indicate episode-to-episode variance, confirming the stability of both algorithms' performance.
 
 \begin{figure}[!ht]
 \centering
@@ -95,7 +107,7 @@ Figure~\ref{fig:summary_bar} provides a visual overview of the mean $\pm$ standa
 \label{fig:summary_bar}
 \end{figure}
 
-\subsection{Rolling Average Metrics}
+\subsection{Rolling Average Acceptance Ratio}
 
 Figure~\ref{fig:rolling} presents the rolling average (window 50) of the acceptance ratio for both algorithms over the 1000-request evaluation. The rolling averages reveal the stability of each algorithm's performance over the course of the evaluation and highlight any temporal patterns such as performance degradation under high load.
 
@@ -106,75 +118,75 @@ Figure~\ref{fig:rolling} presents the rolling average (window 50) of the accepta
 \label{fig:rolling}
 \end{figure}
 
-\subsection{Risk Performance}
+\subsection{CIA Security Margins}
 
-Figure~\ref{fig:risk_compare} shows the rolling average risk integral for both algorithms. The risk penalty in the RL reward function incentivizes the agent to prefer low-risk placements, which may trade some acceptance ratio for reduced operational risk relative to a greedy risk-only baseline.
-
-\begin{figure}[!ht]
-\centering
-\includegraphics[width=0.8\textwidth]{compare/sfc_risk_training.png}
-\caption{Rolling average risk integral (window = 50) for Maskable PPO and Best-Fit over 1000 requests.}
-\label{fig:risk_compare}
-\end{figure}
-
-\subsection{Security Margin}
-
-Figure~\ref{fig:sec_margin} shows the rolling average security margin — the surplus of the placement node's effective security score over the SFC's minimum requirement — across the evaluation. A higher margin indicates that the algorithm consistently selects nodes with stronger security posture than strictly necessary.
+Figures~\ref{fig:conf_margin_compare}--\ref{fig:avail_margin_compare} show the rolling-average CIA security margins for both algorithms over the evaluation episode. The margins quantify how much each algorithm's placements exceed the hard security floor: a larger surplus indicates a stronger security posture than strictly required by the SFC, providing a buffer against dynamic security degradation.
 
 \begin{figure}[!ht]
 \centering
-\includegraphics[width=0.8\textwidth]{compare/security_score_training.png}
-\caption{Rolling average security margin (window = 50) for Maskable PPO and Best-Fit over 1000 requests.}
-\label{fig:sec_margin}
-\end{figure}
-
-\subsection{Revenue and Incident Cost}
-
-Figure~\ref{fig:revenue} presents the rolling average revenue earned per request and Figure~\ref{fig:lost_revenue} presents the rolling average lost revenue per request due to incidents. Together these metrics capture the economic impact of placement quality: a higher per-request revenue indicates more SFCs accepted for longer durations, while a lower per-request lost revenue indicates fewer incident-induced service disruptions.
-
-\begin{figure}[!ht]
-\centering
-\includegraphics[width=0.8\textwidth]{compare/revenue_training.png}
-\caption{Rolling average revenue per request (window = 50) for Maskable PPO and Best-Fit over 1000 requests.}
-\label{fig:revenue}
+\includegraphics[width=0.8\textwidth]{compare/conf_margin_training.png}
+\caption{Rolling average confidentiality margin (window = 50) for Maskable PPO and Best-Fit over 1000 requests.}
+\label{fig:conf_margin_compare}
 \end{figure}
 
 \begin{figure}[!ht]
 \centering
-\includegraphics[width=0.8\textwidth]{compare/incident_cost_training.png}
-\caption{Rolling average lost revenue per request (window = 50) for Maskable PPO and Best-Fit over 1000 requests.}
-\label{fig:lost_revenue}
+\includegraphics[width=0.8\textwidth]{compare/integ_margin_training.png}
+\caption{Rolling average integrity margin (window = 50) for Maskable PPO and Best-Fit over 1000 requests.}
+\label{fig:integ_margin_compare}
 \end{figure}
-
-\subsection{Realized Incidents}
-
-Figure~\ref{fig:incidents_compare} shows the rolling average realized incidents per request. This metric captures the Monte Carlo outcome of the stochastic incident process and validates that the deterministic risk integral $\rho_r$ correlates with actual incident occurrences.
 
 \begin{figure}[!ht]
 \centering
-\includegraphics[width=0.8\textwidth]{compare/realized_incidents_training.png}
-\caption{Rolling average realized incidents per request (window = 50) for Maskable PPO and Best-Fit over 1000 requests.}
-\label{fig:incidents_compare}
+\includegraphics[width=0.8\textwidth]{compare/avail_margin_training.png}
+\caption{Rolling average availability margin (window = 50) for Maskable PPO and Best-Fit over 1000 requests.}
+\label{fig:avail_margin_compare}
+\end{figure}
+
+\subsection{Zone Compliance}
+
+Figure~\ref{fig:zone_compliance} shows the rolling-average zone compliance ratio — the fraction of SFCs for which every VNF is placed in the required trust zone (or for which no zone constraint was specified). Both algorithms enforce the zone constraint as a hard filter, so the compliance ratio reflects how often requests that specify a zone are accepted and correctly placed within it.
+
+\begin{figure}[!ht]
+\centering
+\includegraphics[width=0.8\textwidth]{compare/zone_compliance_training.png}
+\caption{Rolling average zone compliance ratio (window = 50) for Maskable PPO and Best-Fit over 1000 requests.}
+\label{fig:zone_compliance}
+\end{figure}
+
+\subsection{Link Security Margin}
+
+Figure~\ref{fig:link_security} shows the rolling-average link security margin — the surplus of the worst-case path link security over the SFC's minimum link security requirement, averaged over all hops. A positive margin indicates that the paths chosen between consecutive VNFs carry higher link security than strictly required.
+
+\begin{figure}[!ht]
+\centering
+\includegraphics[width=0.8\textwidth]{compare/link_security_margin_training.png}
+\caption{Rolling average link security margin (window = 50) for Maskable PPO and Best-Fit over 1000 requests.}
+\label{fig:link_security}
 \end{figure}
 
 \section{Analysis and Discussion}
 
 \subsection{Benefits of Action Masking}
 
-Action masking provides three key benefits in this framework. First, it guarantees 100\% feasibility of accepted placements: since infeasible nodes are never selected, every placement that completes the chain satisfies all resource, bandwidth, latency, security posture, and isolation constraints. Second, it dramatically improves sample efficiency: without masking, the DRL agent would waste many gradient steps learning to avoid infeasible actions through penalty signals. Third, it simplifies reward design: since constraint violations cannot occur, there is no need for complex penalty terms for individual constraint types.
+Action masking provides three key benefits in this framework. First, it guarantees 100\% feasibility of accepted placements: since infeasible nodes are never selected, every placement that completes the chain satisfies all resource, bandwidth, latency, CIA security posture, trust-zone, and link-security constraints. Second, it dramatically improves sample efficiency: without masking, the DRL agent would waste many gradient steps learning to avoid infeasible actions through penalty signals. Third, it simplifies reward design: since constraint violations cannot occur, there is no need for complex penalty terms for individual constraint types.
 
-\subsection{Effect of Security Posture-Aware Reward}
+\subsection{Effect of Multi-Dimensional Security-Aware Placement}
 
-The security posture risk penalty coefficient $\lambda = 4$ creates a trade-off between acceptance ratio and operational risk. A higher $\lambda$ biases the intelligent DRL agent toward fewer, less risky placements that favor nodes with strong security posture; a lower $\lambda$ prioritizes acceptance. The windowed AR modifier provides additional stability: when the agent has recently been accepting many requests (high $\overline{\text{AR}}_w$), the acceptance reward is amplified, encouraging continued good performance; when many rejections have occurred (low $\overline{\text{AR}}_w$), the rejection penalty is amplified, pushing the agent to explore better strategies.
+By modelling security as three independent CIA dimensions rather than a single scalar, the framework captures the practical reality that confidentiality, integrity, and availability requirements are independently specified and independently satisfied. The agent observes per-node CIA scores and per-SFC CIA minima in its observation space, enabling it to distinguish between, for example, a highly available but low-confidentiality node and a balanced high-security node — a distinction that a scalar security score would collapse. The windowed acceptance-ratio modifier provides additional stability: when the agent has recently been accepting many requests, the acceptance reward is amplified, encouraging continued good performance; when many rejections have occurred, the rejection penalty is amplified, pushing the agent to explore better strategies.
 
-\subsection{GNN vs. MLP Policies}
+\subsection{Trust Zones and Link Security}
 
-The GNN-based feature extractor captures topology-dependent and security posture-dependent patterns that MLP-based policies cannot represent. For example, the DRL agent may learn to prefer substrate nodes that are central in the graph (with low average distance to all other nodes), reducing latency costs, or nodes with high residual resources, high security scores, and low incident pressure. The attention aggregation mechanism allows the policy to dynamically focus on the most informative nodes — for instance, attending strongly to nodes with degraded security posture when computing the security-aware risk component.
+The trust zone mechanism allows operators to express placement affinity requirements beyond resource constraints. SFCs that require placement in a specific zone (e.g., private infrastructure for high-confidentiality processing) are both feasibility-filtered and zero-margined if misplaced — making zone compliance a first-class evaluation metric. The link security margin similarly captures path-level rather than node-level security: a VNF chain may traverse nodes with excellent CIA scores yet be connected by low-security links, and the link security margin makes this distinction explicit in the evaluation.
+
+\subsection{GNN vs.\ MLP Policies}
+
+The GNN-based feature extractor captures topology-dependent security and resource patterns that MLP-based policies cannot represent. For example, the DRL agent may learn to prefer substrate nodes that are central in the graph (with low average distance to all other nodes), reducing latency costs, or nodes with high residual resources, strong CIA scores, and the correct zone assignment. The zone one-hot encoding in the node feature vector (columns 16--18) allows the GNN to aggregate zone-specific neighbourhood information, enabling the policy to reason about whether a candidate node's zone-neighbours are compatible with the SFC's zone requirement across future VNF placements.
 
 \subsection{Comparison with Best-Fit}
 
-The Best-Fit by Minimum Risk baseline represents a competitive greedy approach that directly minimizes the same objective component ($\rho_n^{\text{node}}$) as the DRL agent's security posture risk penalty. The key distinction is that the intelligent DRL agent optimizes security posture risk \textit{jointly with} acceptance ratio and long-term resource efficiency, while the baseline myopically minimizes risk at each individual step. In heavily loaded scenarios, the DRL agent may choose slightly riskier placements early in the episode to preserve low-risk, high-security-posture nodes for future requests with stricter constraints, a strategy the greedy baseline cannot exhibit.
+The Best-Fit baseline represents a strong greedy approach that enforces identical CIA, zone, and link-security hard constraints as the DRL agent and selects placement nodes by minimum resource waste, breaking ties by node ID. The key distinction is that the intelligent DRL agent optimizes security margins \textit{jointly with} acceptance ratio and long-term resource efficiency across the full SFC chain, while the baseline makes each VNF placement decision myopically. In heavily loaded scenarios, the DRL agent may choose nodes with a slightly smaller resource surplus early in the episode to preserve high-CIA, correctly-zoned nodes for future requests with stricter constraints — a look-ahead behaviour that a greedy step-wise baseline cannot exhibit.
 
 \subsection{Scalability Considerations}
 
-The current implementation uses a 25-node substrate, which enables efficient training within 100,000 timesteps. The GNN architecture is topology-agnostic by design: the `node\_mask` ensures that only real nodes are processed, and the edge index is reconstructed dynamically from the substrate graph. This means the same trained DRL policy can, in principle, be deployed on larger or reconfigured substrates, maintaining its security posture awareness across different network configurations.
+The current implementation uses a 25-node substrate, which enables efficient training within 100,000 timesteps. The GNN architecture is topology-agnostic by design: the \texttt{node\_mask} ensures that only real nodes are processed, and the edge index is reconstructed dynamically from the substrate graph. This means the same trained DRL policy can, in principle, be deployed on larger or reconfigured substrates while maintaining its multi-dimensional security awareness across different network configurations.

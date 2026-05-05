@@ -22,13 +22,6 @@ from src.substrate import SubstrateNetwork
 from src.requests import RequestGenerator, load_config
 from src.model import create_masked_env, load_model
 from src.baselines import BasePlacement, BestFitPlacement
-from src.risk import (
-    apply_incident_view,
-    compute_placement_risk_score,
-    decay_incident_pressure,
-    decrement_node_downtime,
-    restore_incident_view,
-)
 from src.eval_reporting import (
     COMPARISON_TABLE_ROWS,
     append_eval_result_to_by_algo,
@@ -36,34 +29,11 @@ from src.eval_reporting import (
 )
 
 
-def _build_risk_config(config: dict) -> dict:
-    """Build risk configuration with defaults."""
-    risk = config.get("risk", {})
-    return {
-        "enabled": bool(risk.get("enabled", False)),
-        "tenancy_ref_floor": float(risk.get("tenancy_ref_floor", 1.0)),
-        "load_ref_floor": float(risk.get("load_ref_floor", 1.0)),
-        "incident_base_rate": float(risk.get("incident_base_rate", 0.025)),
-        "incident_alpha": float(risk.get("incident_alpha", 1.6)),
-        "incident_beta": float(risk.get("incident_beta", 0.7)),
-        "incident_steps_cap": int(risk.get("incident_steps_cap", 12)),
-        "incident_pressure_gain": float(risk.get("incident_pressure_gain", 0.20)),
-        "incident_pressure_decay": float(risk.get("incident_pressure_decay", 0.92)),
-        "incident_security_penalty": float(risk.get("incident_security_penalty", 0.60)),
-        "revenue_per_ttl_step": float(risk.get("revenue_per_ttl_step", 1.0)),
-        "incident_downtime_steps": int(risk.get("incident_downtime_steps", 2)),
-        "risk_lambda": float(risk.get("lambda", 0.0)),
-    }
-
-
 def evaluate_baseline(
     substrate: SubstrateNetwork,
     request_generator: RequestGenerator,
     algorithm: BasePlacement,
     num_requests: int,
-    risk_cfg: dict,
-    max_security: float,
-    max_ttl: int,
     verbose: bool = False,
 ) -> dict:
     """
@@ -79,31 +49,23 @@ def evaluate_baseline(
     Returns:
         Dictionary with evaluation metrics
     """
-    # Create a copy of the substrate to not affect original
     substrate_copy = copy.deepcopy(substrate)
-    substrate_copy.reset()  # Start with fresh resources
+    substrate_copy.reset()
     request_generator.reset()
 
     accepted = 0
     rejected = 0
     total_latency = 0.0
     latencies = []
-    acceptance_samples = []  # 1 if accepted, 0 if rejected (per request)
-    revenue_samples = []  # Per-request revenue (0 if rejected)
-    security_margins = []  # Track security margins for each accepted request
-    sfc_tenancy_samples = []  # Track SFC tenancy per occupied node over time
-    vnf_tenancy_samples = []  # Track VNF tenancy per occupied node over time
-    substrate_utilization_samples = []  # Track % of nodes being used over time
-    risk_score_samples = []  # Per-request risk score
-    realized_incident_samples = []
-    incident_cost_samples = []
-    total_expected_incidents = 0.0
-    total_realized_incidents = 0.0
-    total_incident_cost = 0.0
-    total_risk_integral = 0.0
-    total_revenue = 0.0
-    node_incident_pressure = {node_id: 0.0 for node_id in range(substrate_copy.num_nodes)}
-    node_downtime: dict[int, int] = {}
+    acceptance_samples = []
+    conf_margin_samples = []
+    integ_margin_samples = []
+    avail_margin_samples = []
+    zone_match_samples = []
+    link_security_margin_samples = []
+    sfc_tenancy_samples = []
+    vnf_tenancy_samples = []
+    substrate_utilization_samples = []
 
     start_time = time.perf_counter()
 
@@ -112,116 +74,77 @@ def evaluate_baseline(
         iterator = tqdm(iterator, desc=f"Evaluating {algorithm.__class__.__name__}")
 
     for _ in iterator:
-        # Advance time first (release expired placements from previous steps)
         substrate_copy.tick()
-        decay_incident_pressure(
-            node_incident_pressure,
-            risk_cfg["incident_pressure_decay"],
-        )
-        decrement_node_downtime(node_downtime)
-
-        # Generate a new request
         request = request_generator.generate_request()
 
-        # Try to place
-        (
-            original_resource_matrix,
-            original_security,
-            original_ram,
-            original_cpu,
-            original_storage,
-        ) = apply_incident_view(
-            substrate_copy,
-            node_incident_pressure,
-            risk_cfg,
-            max_security,
-            node_downtime,
-        )
-        placement = algorithm.place(
-            substrate_copy,
-            request,
-            risk_cfg=risk_cfg,
-            node_incident_pressure=node_incident_pressure,
-            max_security=max_security,
-            max_ttl=max_ttl,
-        )
-        restore_incident_view(
-            substrate_copy,
-            original_resource_matrix,
-            original_security,
-            original_ram,
-            original_cpu,
-            original_storage,
-        )
+        placement = algorithm.place(substrate_copy, request)
 
         if placement is not None:
-            # Successful placement
             accepted += 1
             acceptance_samples.append(1)
 
-            # Calculate and record latency
             latency = substrate_copy.get_total_latency(placement)
             total_latency += latency
             latencies.append(latency)
 
-            # Calculate security margin for this placement
-            # Margin = node_security_score - sfc_min_security for each node
-            placement_margins = []
+            # CIA security margins (average over placed nodes)
+            conf_m = integ_m = avail_m = 0.0
             for node_id in placement:
-                node_security = substrate_copy.node_resources[node_id]["security_score"]
-                margin = node_security - request.min_security_score
-                placement_margins.append(margin)
-            avg_placement_margin = (
-                sum(placement_margins) / len(placement_margins)
-                if placement_margins
-                else 0.0
-            )
-            security_margins.append(avg_placement_margin)
+                res = substrate_copy.node_resources[node_id]
+                conf_m += res["confidentiality"] - request.min_confidentiality
+                integ_m += res["integrity"] - request.min_integrity
+                avail_m += res["availability"] - request.min_availability
+            n = len(placement)
+            conf_m /= n
+            integ_m /= n
+            avail_m /= n
 
-            # Allocate resources
+            # Zone compliance
+            if request.required_zone >= 0:
+                zone_ok = all(
+                    substrate_copy.node_resources[nid]["zone_id"] == request.required_zone
+                    for nid in placement
+                )
+            else:
+                zone_ok = True
+
+            # Link security margin (average over hops)
+            link_sec_m = 0.0
+            n_hops = len(placement) - 1
+            if n_hops > 0:
+                for i in range(n_hops):
+                    src, dst = placement[i], placement[i + 1]
+                    path_sec = float(substrate_copy.get_min_path_link_security_from(src)[dst])
+                    link_sec_m += path_sec - request.min_link_security
+                link_sec_m /= n_hops
+
+            conf_margin_samples.append(conf_m)
+            integ_margin_samples.append(integ_m)
+            avail_margin_samples.append(avail_m)
+            zone_match_samples.append(1.0 if zone_ok else 0.0)
+            link_security_margin_samples.append(link_sec_m)
+
             for vnf, node_id in zip(request.vnfs, placement):
                 substrate_copy.allocate_resources(node_id, vnf)
 
-            # Allocate bandwidth
             for i in range(len(placement) - 1):
                 substrate_copy.allocate_bandwidth(
                     placement[i], placement[i + 1], request.min_bandwidth
                 )
 
-            # Register for TTL tracking
             substrate_copy.register_placement(request, placement)
-            (
-                risk_integral,
-                realized_incidents,
-                incident_cost,
-                expected_incidents,
-                _expected_lost_revenue,
-            ) = compute_placement_risk_score(
-                substrate_copy,
-                placement,
-                request.ttl,
-                risk_cfg,
-                max_security,
-                max_ttl,
-                node_incident_pressure,
-                node_downtime,
-            )
-            risk_score_samples.append(risk_integral)
-            realized_incident_samples.append(realized_incidents)
-            incident_cost_samples.append(incident_cost)
-            total_expected_incidents += expected_incidents
-            total_realized_incidents += realized_incidents
-            total_incident_cost += incident_cost
-            total_risk_integral += risk_integral
-            req_revenue = risk_cfg.get("revenue_per_ttl_step", 1.0) * request.ttl
-            total_revenue += req_revenue
-            revenue_samples.append(req_revenue)
+        else:
+            rejected += 1
+            acceptance_samples.append(0)
+            conf_margin_samples.append(0.0)
+            integ_margin_samples.append(0.0)
+            avail_margin_samples.append(0.0)
+            zone_match_samples.append(0.0)
+            link_security_margin_samples.append(0.0)
 
-        # Sample tenancy metrics after each request (regardless of accept/reject)
         sfcs_per_node = substrate_copy.get_sfcs_per_node()
         vnfs_per_node = substrate_copy.get_vnfs_per_node()
 
-        # Calculate average tenancy only on occupied nodes (nodes with count > 0)
         occupied_sfc_nodes = [v for v in sfcs_per_node.values() if v > 0]
         occupied_vnf_nodes = [v for v in vnfs_per_node.values() if v > 0]
 
@@ -234,55 +157,28 @@ def evaluate_baseline(
                 sum(occupied_vnf_nodes) / len(occupied_vnf_nodes)
             )
 
-        # Substrate utilization: % of nodes being used
         if sfcs_per_node:
             nodes_in_use = len(occupied_sfc_nodes)
             total_nodes = len(sfcs_per_node)
             substrate_utilization_samples.append(nodes_in_use / total_nodes)
 
-        if placement is None:
-            rejected += 1
-            acceptance_samples.append(0)
-            revenue_samples.append(0.0)
-            # Rejected: no placement; risk 0 (consistent with env and RL eval)
-            risk_score_samples.append(0.0)
-            realized_incident_samples.append(0.0)
-            incident_cost_samples.append(0.0)
-
-    # Compute metrics
     total = accepted + rejected
     elapsed_time = time.perf_counter() - start_time
     acceptance_ratio = accepted / total if total > 0 else 0.0
     avg_latency = total_latency / accepted if accepted > 0 else 0.0
-    avg_time_per_request = (elapsed_time / total * 1000) if total > 0 else 0.0  # ms
-    avg_sec_margin = (
-        sum(security_margins) / len(security_margins) if security_margins else 0.0
-    )
-    avg_sfc_tenancy = (
-        sum(sfc_tenancy_samples) / len(sfc_tenancy_samples)
-        if sfc_tenancy_samples
-        else 0.0
-    )
-    avg_vnf_tenancy = (
-        sum(vnf_tenancy_samples) / len(vnf_tenancy_samples)
-        if vnf_tenancy_samples
-        else 0.0
-    )
-    avg_substrate_utilization = (
-        sum(substrate_utilization_samples) / len(substrate_utilization_samples)
-        if substrate_utilization_samples
-        else 0.0
-    )
-    avg_risk_score = sum(risk_score_samples) / len(risk_score_samples) if risk_score_samples else 0.0
-    avg_expected_incidents = total_expected_incidents / total if total > 0 else 0.0
-    avg_realized_incidents = total_realized_incidents / total if total > 0 else 0.0
-    avg_incident_cost = total_incident_cost / total if total > 0 else 0.0
-    avg_risk_integral = total_risk_integral / total if total > 0 else 0.0
-    avg_revenue_per_request = total_revenue / total if total > 0 else 0.0
-    avg_lost_revenue_per_request = total_incident_cost / total if total > 0 else 0.0
+    avg_time_per_request = (elapsed_time / total * 1000) if total > 0 else 0.0
 
-    # Baselines do not track rejection reason; use 0 for latency violation ratio
-    latency_violation_ratio = 0.0
+    def _safe_mean(lst):
+        return float(np.mean(lst)) if lst else 0.0
+
+    avg_conf_margin = _safe_mean(conf_margin_samples)
+    avg_integ_margin = _safe_mean(integ_margin_samples)
+    avg_avail_margin = _safe_mean(avail_margin_samples)
+    zone_compliance_ratio = _safe_mean(zone_match_samples)
+    avg_link_security_margin = _safe_mean(link_security_margin_samples)
+    avg_sfc_tenancy = _safe_mean(sfc_tenancy_samples)
+    avg_vnf_tenancy = _safe_mean(vnf_tenancy_samples)
+    avg_substrate_utilization = _safe_mean(substrate_utilization_samples)
 
     return {
         "algorithm": algorithm.__class__.__name__,
@@ -290,34 +186,27 @@ def evaluate_baseline(
         "accepted": accepted,
         "rejected": rejected,
         "acceptance_ratio": acceptance_ratio,
-        "latency_violation_ratio": latency_violation_ratio,
+        "latency_violation_ratio": 0.0,
         "avg_latency": avg_latency,
         "avg_time_ms": avg_time_per_request,
-        "avg_sec_margin": avg_sec_margin,
+        "avg_conf_margin": avg_conf_margin,
+        "avg_integ_margin": avg_integ_margin,
+        "avg_avail_margin": avg_avail_margin,
+        "zone_compliance_ratio": zone_compliance_ratio,
+        "avg_link_security_margin": avg_link_security_margin,
         "avg_sfc_tenancy": avg_sfc_tenancy,
         "avg_vnf_tenancy": avg_vnf_tenancy,
         "avg_substrate_utilization": avg_substrate_utilization,
-        "avg_risk_score": avg_risk_score,
-        "avg_risk_integral": avg_risk_integral,
-        "avg_expected_incidents": avg_expected_incidents,
-        "avg_realized_incidents": avg_realized_incidents,
-        "avg_incident_cost": avg_incident_cost,
-        "avg_revenue_per_request": avg_revenue_per_request,
-        "avg_lost_revenue_per_request": avg_lost_revenue_per_request,
-        "total_realized_incidents": total_realized_incidents,
-        "total_incident_cost": total_incident_cost,
-        "total_revenue": total_revenue,
         "latencies": latencies,
-        # Per-request samples for rolling average plots
         "acceptance_samples": acceptance_samples,
-        "revenue_samples": revenue_samples,
+        "conf_margin_samples": conf_margin_samples,
+        "integ_margin_samples": integ_margin_samples,
+        "avail_margin_samples": avail_margin_samples,
+        "zone_match_samples": zone_match_samples,
+        "link_security_margin_samples": link_security_margin_samples,
         "sfc_tenancy_samples": sfc_tenancy_samples,
         "vnf_tenancy_samples": vnf_tenancy_samples,
         "substrate_utilization_samples": substrate_utilization_samples,
-        "risk_score_samples": risk_score_samples,
-        "realized_incident_samples": realized_incident_samples,
-        "incident_cost_samples": incident_cost_samples,
-        "security_margin_samples": security_margins,
     }
 
 
@@ -346,8 +235,6 @@ def evaluate_rl_agent(
     Returns:
         Dictionary with evaluation metrics
     """
-    # Create masked environment (optionally on same substrate as baselines).
-    # Use one long episode (no resets) so utilization / VNF-per-node match baseline semantics.
     env = create_masked_env(
         config_path,
         substrate=substrate,
@@ -356,11 +243,8 @@ def evaluate_rl_agent(
     )
 
     if model is not None:
-        pass  # Use provided in-memory model
+        pass
     elif model_path:
-        # load_model → MaskablePPO.load → _setup_model → set_random_seed(saved_seed)
-        # which overrides the global RNG.  Snapshot and restore around the load so
-        # the caller's carefully-chosen RNG state (for fair comparison) is preserved.
         _rng_before = random.getstate()
         _np_rng_before = np.random.get_state()
         model = load_model(model_path, env)
@@ -371,25 +255,19 @@ def evaluate_rl_agent(
 
     accepted = 0
     rejected = 0
-    latency_violations = 0  # Rejections due to latency constraint
+    latency_violations = 0
     total_latency = 0.0
     latencies = []
-    acceptance_samples = []  # 1 if accepted, 0 if rejected (per request)
-    revenue_samples = []  # Per-request revenue (0 if rejected)
-    security_margins = []  # Track security margins for each accepted request
-    sfc_tenancy_samples = []  # Track SFC tenancy per occupied node over time
-    vnf_tenancy_samples = []  # Track VNF tenancy per occupied node over time
-    substrate_utilization_samples = []  # Track % of nodes being used over time
-    risk_score_samples = []  # Per-request integrated risk
-    realized_incident_samples = []
-    incident_cost_samples = []
-    total_expected_incidents = 0.0
-    total_realized_incidents = 0.0
-    total_incident_cost = 0.0
-    total_risk_integral = 0.0
-    total_revenue = 0.0
+    acceptance_samples = []
+    conf_margin_samples = []
+    integ_margin_samples = []
+    avail_margin_samples = []
+    zone_match_samples = []
+    link_security_margin_samples = []
+    sfc_tenancy_samples = []
+    vnf_tenancy_samples = []
+    substrate_utilization_samples = []
 
-    # Reset environment once
     obs, info = env.reset()
 
     requests_processed = 0
@@ -400,18 +278,13 @@ def evaluate_rl_agent(
     start_time = time.perf_counter()
 
     while requests_processed < num_requests:
-        # Get action mask
         action_mask = env.unwrapped.action_masks()
-
-        # Get action from model
         action, _ = model.predict(obs, action_masks=action_mask, deterministic=True)
         if isinstance(action, np.ndarray):
             action = action.item()
 
-        # Take action
         obs, reward, terminated, truncated, info = env.step(action)
 
-        # Check if request processing finished (sfc_complete is True)
         if info.get("sfc_complete", False):
             requests_processed += 1
             if pbar:
@@ -420,65 +293,32 @@ def evaluate_rl_agent(
             if info.get("success", False):
                 accepted += 1
                 acceptance_samples.append(1)
-                # Get latency from placement
+
                 placement = info.get("placement", [])
                 if placement:
                     latency = env.unwrapped.substrate.get_total_latency(placement)
                     total_latency += latency
                     latencies.append(latency)
 
-                # Calculate security margin for this placement
-                if placement:
-                    placement_margins = []
-                    min_security = info.get("request_min_security", 0)
-                    for node_id in placement:
-                        node_security = env.unwrapped.substrate.node_resources[node_id][
-                            "security_score"
-                        ]
-                        margin = node_security - min_security
-                        placement_margins.append(margin)
-                    avg_placement_margin = (
-                        sum(placement_margins) / len(placement_margins)
-                        if placement_margins
-                        else 0.0
-                    )
-                    security_margins.append(avg_placement_margin)
-                # Use risk from env info (computed before tick()); recomputing after step()
-                # would use post-tick substrate state and disagree with training rewards.
-                risk_score = info.get("request_risk_integral", info.get("request_risk_score", 0.0))
-                expected_incidents = info.get("request_expected_incidents", 0.0)
-                realized_incidents = info.get(
-                    "request_realized_incidents", info.get("request_incidents", 0.0)
-                )
-                incident_cost = info.get("request_incident_cost", 0.0)
-                risk_score_samples.append(risk_score)
-                realized_incident_samples.append(realized_incidents)
-                incident_cost_samples.append(incident_cost)
-                total_expected_incidents += expected_incidents
-                total_realized_incidents += realized_incidents
-                total_incident_cost += incident_cost
-                total_risk_integral += risk_score
-                req_revenue = info.get("request_revenue", 0.0)
-                total_revenue += req_revenue
-                revenue_samples.append(req_revenue)
+                conf_margin_samples.append(info.get("request_conf_margin", 0.0))
+                integ_margin_samples.append(info.get("request_integ_margin", 0.0))
+                avail_margin_samples.append(info.get("request_avail_margin", 0.0))
+                zone_match_samples.append(info.get("request_zone_matched", 0.0))
+                link_security_margin_samples.append(info.get("request_link_security_margin", 0.0))
             else:
                 rejected += 1
                 acceptance_samples.append(0)
-                revenue_samples.append(0.0)
                 if info.get("rejection_reason") == "latency_violation":
                     latency_violations += 1
-                # Rejected: use env's risk from info (0) for consistency with training.
-                risk_score_samples.append(info.get("request_risk_integral", info.get("request_risk_score", 0.0)))
-                realized_incident_samples.append(
-                    info.get("request_realized_incidents", info.get("request_incidents", 0.0))
-                )
-                incident_cost_samples.append(info.get("request_incident_cost", 0.0))
+                conf_margin_samples.append(0.0)
+                integ_margin_samples.append(0.0)
+                avail_margin_samples.append(0.0)
+                zone_match_samples.append(0.0)
+                link_security_margin_samples.append(0.0)
 
-            # Sample tenancy metrics after each request
             sfcs_per_node = env.unwrapped.substrate.get_sfcs_per_node()
             vnfs_per_node = env.unwrapped.substrate.get_vnfs_per_node()
 
-            # Calculate average tenancy only on occupied nodes (nodes with count > 0)
             occupied_sfc_nodes = [v for v in sfcs_per_node.values() if v > 0]
             occupied_vnf_nodes = [v for v in vnfs_per_node.values() if v > 0]
 
@@ -491,13 +331,11 @@ def evaluate_rl_agent(
                     sum(occupied_vnf_nodes) / len(occupied_vnf_nodes)
                 )
 
-            # Substrate utilization: % of nodes being used
             if sfcs_per_node:
                 nodes_in_use = len(occupied_sfc_nodes)
                 total_nodes = len(sfcs_per_node)
                 substrate_utilization_samples.append(nodes_in_use / total_nodes)
 
-        # Reset environment if episode terminated
         if terminated or truncated:
             obs, info = env.reset()
 
@@ -507,36 +345,12 @@ def evaluate_rl_agent(
     total = accepted + rejected
     elapsed_time = time.perf_counter() - start_time
     acceptance_ratio = accepted / total if total > 0 else 0.0
-    latency_violation_ratio = (
-        latency_violations / rejected if rejected > 0 else 0.0
-    )
+    latency_violation_ratio = latency_violations / rejected if rejected > 0 else 0.0
     avg_latency = total_latency / accepted if accepted > 0 else 0.0
-    avg_time_per_request = (elapsed_time / total * 1000) if total > 0 else 0.0  # ms
-    avg_sec_margin = (
-        sum(security_margins) / len(security_margins) if security_margins else 0.0
-    )
-    avg_sfc_tenancy = (
-        sum(sfc_tenancy_samples) / len(sfc_tenancy_samples)
-        if sfc_tenancy_samples
-        else 0.0
-    )
-    avg_vnf_tenancy = (
-        sum(vnf_tenancy_samples) / len(vnf_tenancy_samples)
-        if vnf_tenancy_samples
-        else 0.0
-    )
-    avg_substrate_utilization = (
-        sum(substrate_utilization_samples) / len(substrate_utilization_samples)
-        if substrate_utilization_samples
-        else 0.0
-    )
-    avg_risk_score = sum(risk_score_samples) / len(risk_score_samples) if risk_score_samples else 0.0
-    avg_expected_incidents = total_expected_incidents / total if total > 0 else 0.0
-    avg_realized_incidents = total_realized_incidents / total if total > 0 else 0.0
-    avg_incident_cost = total_incident_cost / total if total > 0 else 0.0
-    avg_risk_integral = total_risk_integral / total if total > 0 else 0.0
-    avg_revenue_per_request = total_revenue / total if total > 0 else 0.0
-    avg_lost_revenue_per_request = total_incident_cost / total if total > 0 else 0.0
+    avg_time_per_request = (elapsed_time / total * 1000) if total > 0 else 0.0
+
+    def _safe_mean(lst):
+        return float(np.mean(lst)) if lst else 0.0
 
     return {
         "algorithm": "MaskablePPO",
@@ -547,32 +361,26 @@ def evaluate_rl_agent(
         "latency_violation_ratio": latency_violation_ratio,
         "avg_latency": avg_latency,
         "avg_time_ms": avg_time_per_request,
-        "avg_sec_margin": avg_sec_margin,
-        "avg_sfc_tenancy": avg_sfc_tenancy,
-        "avg_vnf_tenancy": avg_vnf_tenancy,
-        "avg_substrate_utilization": avg_substrate_utilization,
-        "avg_risk_score": avg_risk_score,
-        "avg_risk_integral": avg_risk_integral,
-        "avg_expected_incidents": avg_expected_incidents,
-        "avg_realized_incidents": avg_realized_incidents,
-        "avg_incident_cost": avg_incident_cost,
-        "avg_revenue_per_request": avg_revenue_per_request,
-        "avg_lost_revenue_per_request": avg_lost_revenue_per_request,
-        "total_realized_incidents": total_realized_incidents,
-        "total_incident_cost": total_incident_cost,
-        "total_revenue": total_revenue,
+        "avg_conf_margin": _safe_mean(conf_margin_samples),
+        "avg_integ_margin": _safe_mean(integ_margin_samples),
+        "avg_avail_margin": _safe_mean(avail_margin_samples),
+        "zone_compliance_ratio": _safe_mean(zone_match_samples),
+        "avg_link_security_margin": _safe_mean(link_security_margin_samples),
+        "avg_sfc_tenancy": _safe_mean(sfc_tenancy_samples),
+        "avg_vnf_tenancy": _safe_mean(vnf_tenancy_samples),
+        "avg_substrate_utilization": _safe_mean(substrate_utilization_samples),
         "latencies": latencies,
-        # Per-request samples for rolling average plots
         "acceptance_samples": acceptance_samples,
-        "revenue_samples": revenue_samples,
+        "conf_margin_samples": conf_margin_samples,
+        "integ_margin_samples": integ_margin_samples,
+        "avail_margin_samples": avail_margin_samples,
+        "zone_match_samples": zone_match_samples,
+        "link_security_margin_samples": link_security_margin_samples,
         "sfc_tenancy_samples": sfc_tenancy_samples,
         "vnf_tenancy_samples": vnf_tenancy_samples,
         "substrate_utilization_samples": substrate_utilization_samples,
-        "risk_score_samples": risk_score_samples,
-        "realized_incident_samples": realized_incident_samples,
-        "incident_cost_samples": incident_cost_samples,
-        "security_margin_samples": security_margins,
     }
+
 
 # BOOKMARK, IMPORTANT: THIS IS THE FUNCTION THAT IS USED TO EVALUATE THE RL AGENT.
 def run_eval(
@@ -607,22 +415,17 @@ def run_eval(
         plot_rolling_dir: If set, call plot_rolling_averages(results, plot_rolling_dir, 50)
 
     Returns:
-        Dictionary mapping algorithm name -> result dict (acceptance_ratio,
-        latency_violation_ratio, avg_sfc_tenancy, avg_vnf_tenancy, avg_substrate_utilization, etc.)
+        Dictionary mapping algorithm name -> result dict
     """
     config = load_config(config_path)
     if substrate is None:
         substrate = SubstrateNetwork(config["substrate"])
     if request_generator is None:
         request_generator = RequestGenerator(config["sfc"])
-    risk_cfg = _build_risk_config(config)
-    max_security = config["substrate"]["resources"]["security_score"]["max"]
-    max_ttl = int(config["sfc"]["ttl"]["max"])
 
     results = {}
     baselines = [BestFitPlacement()]
 
-    # Snapshot RNG state so every algorithm sees the same request/incident stream.
     initial_rng_state = random.getstate()
     initial_np_rng_state = np.random.get_state()
 
@@ -638,16 +441,10 @@ def run_eval(
             request_generator,
             algorithm,
             num_requests=num_requests,
-            risk_cfg=risk_cfg,
-            max_security=max_security,
-            max_ttl=max_ttl,
             verbose=verbose,
         )
         results[result["algorithm"]] = result
 
-    # RL: use in-memory model if provided, else load from model_path if it exists.
-    # Do not create an env here when model is None: evaluate_rl_agent must create the only
-    # env and call reset() once, so the same RNG state produces the same request stream as baselines.
     run_rl = model is not None or (model_path and Path(model_path).exists())
     if run_rl:
         if verbose:
@@ -670,22 +467,44 @@ def run_eval(
         print(f"Warning: Model not found at {model_path}")
 
     if verbose:
-        print("\n" + "=" * 230)
+        col_w = 16
+        header_parts = [
+            f"{'Algorithm':<20}",
+            f"{'Accepted':<10}",
+            f"{'Rejected':<10}",
+            f"{'Acc Ratio':<10}",
+            f"{'Avg Lat':<10}",
+            f"{'Conf Mgn':<10}",
+            f"{'Integ Mgn':<10}",
+            f"{'Avail Mgn':<10}",
+            f"{'Zone Cmp':<10}",
+            f"{'LinkSec Mgn':<12}",
+            f"{'Sub Util':<10}",
+            f"{'Time(ms)':<10}",
+        ]
+        line = "".join(header_parts)
+        sep = "-" * len(line)
+        print(f"\n{'=' * len(line)}")
         print("COMPARISON RESULTS")
-        print("=" * 230)
-        print(
-            f"{'Algorithm':<20} {'Accepted':<10} {'Rejected':<10} {'Ratio':<10} {'Avg Latency':<12} {'Avg Sec Margin':<14} {'Avg SFC/Node':<14} {'Avg VNF/Node':<14} {'Substrate Util':<14} {'Risk Integral':<14} {'Real Inc':<10} {'Exp Inc':<10} {'Inc Cost':<10} {'Avg Time (ms)':<14}"
-        )
-        print("-" * 230)
-        for name, result in results.items():
+        print(f"{'=' * len(line)}")
+        print(line)
+        print(sep)
+        for name, r in results.items():
             print(
-                f"{name:<20} {result['accepted']:<10} {result['rejected']:<10} "
-                f"{result['acceptance_ratio']:.4f}     {result['avg_latency']:<12.2f} {result.get('avg_sec_margin', 0):<14.4f} "
-                f"{result.get('avg_sfc_tenancy', 0):<14.2f} {result.get('avg_vnf_tenancy', 0):<14.2f} {result.get('avg_substrate_utilization', 0):<14.2%} "
-                f"{result.get('avg_risk_integral', 0):<14.4f} {result.get('avg_realized_incidents', 0):<10.4f} {result.get('avg_expected_incidents', 0):<10.4f} "
-                f"{result.get('avg_incident_cost', 0):<10.4f} {result.get('avg_time_ms', 0):.3f}"
+                f"{name:<20}"
+                f"{r['accepted']:<10}"
+                f"{r['rejected']:<10}"
+                f"{r['acceptance_ratio']:<10.4f}"
+                f"{r['avg_latency']:<10.2f}"
+                f"{r.get('avg_conf_margin', 0):<10.4f}"
+                f"{r.get('avg_integ_margin', 0):<10.4f}"
+                f"{r.get('avg_avail_margin', 0):<10.4f}"
+                f"{r.get('zone_compliance_ratio', 0):<10.4f}"
+                f"{r.get('avg_link_security_margin', 0):<12.4f}"
+                f"{r.get('avg_substrate_utilization', 0):<10.2%}"
+                f"{r.get('avg_time_ms', 0):<10.3f}"
             )
-        print("=" * 230)
+        print("=" * len(line))
 
     if save_plot:
         plot_comparison(results, save_plot)
@@ -702,19 +521,7 @@ def compare_all(
     save_plot: Optional[str] = None,
     verbose: bool = True,
 ) -> dict:
-    """
-    Compare all placement algorithms.
-
-    Args:
-        config_path: Path to configuration file
-        model_path: Path to trained RL model (optional)
-        num_episodes: Number of episodes to process per algorithm
-        save_plot: Path to save comparison plot (optional)
-        verbose: Whether to print results
-
-    Returns:
-        Dictionary with results for all algorithms
-    """
+    """Compare all placement algorithms."""
     return run_eval(
         config_path,
         model=None,
@@ -727,20 +534,13 @@ def compare_all(
 
 
 def plot_comparison(results: dict, save_path: str):
-    """
-    Generate comparison bar charts.
-
-    Args:
-        results: Dictionary of algorithm results
-        save_path: Path to save the plot
-    """
+    """Generate comparison bar charts."""
     algorithms = list(results.keys())
     acceptance_ratios = [results[a]["acceptance_ratio"] for a in algorithms]
     avg_latencies = [results[a]["avg_latency"] for a in algorithms]
 
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
 
-    # Acceptance Ratio
     colors = plt.cm.viridis(np.linspace(0.2, 0.8, len(algorithms)))
     bars1 = axes[0].bar(algorithms, acceptance_ratios, color=colors)
     axes[0].set_ylabel("Acceptance Ratio")
@@ -748,32 +548,25 @@ def plot_comparison(results: dict, save_path: str):
     axes[0].set_ylim(0, 1)
     axes[0].tick_params(axis="x", rotation=45)
 
-    # Add value labels
     for bar, ratio in zip(bars1, acceptance_ratios):
         axes[0].text(
             bar.get_x() + bar.get_width() / 2,
             bar.get_height() + 0.02,
             f"{ratio:.3f}",
-            ha="center",
-            va="bottom",
-            fontsize=9,
+            ha="center", va="bottom", fontsize=9,
         )
 
-    # Average Latency
     bars2 = axes[1].bar(algorithms, avg_latencies, color=colors)
     axes[1].set_ylabel("Average Latency (ms)")
     axes[1].set_title("Average End-to-End Latency by Algorithm")
     axes[1].tick_params(axis="x", rotation=45)
 
-    # Add value labels
     for bar, lat in zip(bars2, avg_latencies):
         axes[1].text(
             bar.get_x() + bar.get_width() / 2,
             bar.get_height() + 0.5,
             f"{lat:.1f}",
-            ha="center",
-            va="bottom",
-            fontsize=9,
+            ha="center", va="bottom", fontsize=9,
         )
 
     plt.tight_layout()
@@ -789,15 +582,15 @@ def plot_rolling_comparison(
 ) -> None:
     """
     Generate rolling-average line charts from per-request samples for a single
-    evaluation episode.  Only the 8 canonical comparison metrics are plotted.
+    evaluation episode.
 
-    Produces (all rolling-average line charts):
-        sfc_ppo_acceptance_ratio.png  – rolling acceptance ratio
-        sfc_risk_training.png         – rolling risk integral
-        security_score_training.png   – rolling security margin
-        realized_incidents_training.png – rolling realized incidents
-        incident_cost_training.png    – rolling lost revenue per request
-        revenue_training.png          – rolling revenue per request
+    Produces rolling-average line charts for:
+        sfc_ppo_acceptance_ratio.png
+        conf_margin_training.png
+        integ_margin_training.png
+        avail_margin_training.png
+        zone_compliance_training.png
+        link_security_margin_training.png
 
     Args:
         results:     dict mapping algorithm name -> result dict (from run_eval)
@@ -811,7 +604,6 @@ def plot_rolling_comparison(
     colors_line = plt.cm.tab10(np.linspace(0, 1, max(len(algorithms), 10)))[: len(algorithms)]
     color_map = dict(zip(algorithms, colors_line))
 
-    # ── helper: rolling average ────────────────────────────────────────────────
     def _rolling(samples: np.ndarray):
         if len(samples) >= window_size:
             kernel = np.ones(window_size) / window_size
@@ -822,7 +614,6 @@ def plot_rolling_comparison(
             x = np.arange(len(samples))
         return x, y
 
-    # ── helper: rolling time-series chart ─────────────────────────────────────
     def _rolling_chart(
         metric_key: str,
         ylabel: str,
@@ -850,7 +641,6 @@ def plot_rolling_comparison(
         print(f"Plot saved to: {save_path}")
         plt.close()
 
-    # 1) Acceptance ratio (rolling)
     _rolling_chart(
         "acceptance_samples",
         "Acceptance Ratio",
@@ -858,44 +648,39 @@ def plot_rolling_comparison(
         "sfc_ppo_acceptance_ratio.png",
     )
 
-    # 2) Risk integral (rolling)
     _rolling_chart(
-        "risk_score_samples",
-        "Risk Integral (lower is better)",
-        f"Rolling Avg Risk Integral (window={window_size})",
-        "sfc_risk_training.png",
+        "conf_margin_samples",
+        "Avg Confidentiality Margin (node − req min)",
+        f"Rolling Avg Confidentiality Margin (window={window_size})",
+        "conf_margin_training.png",
     )
 
-    # 3) Avg security margin (rolling)
     _rolling_chart(
-        "security_margin_samples",
-        "Avg Security Margin (node score - req min)",
-        f"Rolling Avg Security Margin (window={window_size})",
-        "security_score_training.png",
+        "integ_margin_samples",
+        "Avg Integrity Margin (node − req min)",
+        f"Rolling Avg Integrity Margin (window={window_size})",
+        "integ_margin_training.png",
     )
 
-    # 4) Realized incidents per request (rolling)
     _rolling_chart(
-        "realized_incident_samples",
-        "Realized Incidents per Request",
-        f"Rolling Avg Realized Incidents (window={window_size})",
-        "realized_incidents_training.png",
+        "avail_margin_samples",
+        "Avg Availability Margin (node − req min)",
+        f"Rolling Avg Availability Margin (window={window_size})",
+        "avail_margin_training.png",
     )
 
-    # 5) Lost revenue / incident cost per request (rolling)
     _rolling_chart(
-        "incident_cost_samples",
-        "Lost Revenue per Request (lower is better)",
-        f"Rolling Avg Lost Revenue per Request (window={window_size})",
-        "incident_cost_training.png",
+        "zone_match_samples",
+        "Zone Compliance Ratio",
+        f"Rolling Zone Compliance Ratio (window={window_size})",
+        "zone_compliance_training.png",
     )
 
-    # 6) Revenue per request (rolling)
     _rolling_chart(
-        "revenue_samples",
-        "Revenue per Request",
-        f"Rolling Avg Revenue per Request (window={window_size})",
-        "revenue_training.png",
+        "link_security_margin_samples",
+        "Avg Link Security Margin (path sec − req min)",
+        f"Rolling Avg Link Security Margin (window={window_size})",
+        "link_security_margin_training.png",
     )
 
 
@@ -905,7 +690,7 @@ def plot_summary_bar_chart(
 ) -> None:
     """
     Generate a grouped bar chart with error bars (mean ± std across episodes)
-    for the 8 canonical comparison metrics.
+    for the canonical comparison metrics.
 
     Args:
         multi_ep_data: Output from run_multi_episode_eval()
@@ -923,7 +708,6 @@ def plot_summary_bar_chart(
         print("Warning: Need at least 2 algorithms for summary bar chart")
         return
 
-    # Friendly display names
     display_names = []
     for a in algos:
         name = a.replace("Placement", "").replace("Maskable", "")
@@ -962,7 +746,6 @@ def plot_summary_bar_chart(
         ax.set_xticklabels(display_names, fontsize=9)
         ax.grid(True, axis="y", linestyle="--", alpha=0.3)
 
-        # Add value labels on bars
         for bar, mean_val in zip(bars, means):
             fmt = f"{mean_val:.4f}" if abs(mean_val) < 10 else f"{mean_val:.1f}"
             ax.text(
@@ -972,7 +755,6 @@ def plot_summary_bar_chart(
                 ha="center", va="bottom", fontsize=7,
             )
 
-    # Hide unused subplots
     for j in range(n_metrics, len(axes)):
         axes[j].set_visible(False)
 
@@ -996,45 +778,20 @@ def plot_rolling_averages(results: dict, output_dir: str, window_size: int = 50)
         output_dir: Directory to save the plots
         window_size: Size of the rolling window for smoothing
     """
-    # Create output directory if it doesn't exist
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
 
-    # Define metrics to plot
     metrics = [
-        (
-            "sfc_tenancy_samples",
-            "Avg SFCs per Occupied Node",
-            "sfc_per_node_rolling.png",
-        ),
-        (
-            "vnf_tenancy_samples",
-            "Avg VNFs per Occupied Node",
-            "vnf_per_node_rolling.png",
-        ),
-        (
-            "substrate_utilization_samples",
-            "Substrate Utilization",
-            "substrate_util_rolling.png",
-        ),
-        (
-            "risk_score_samples",
-            "Risk Integral",
-            "risk_score_rolling.png",
-        ),
-        (
-            "realized_incident_samples",
-            "Realized Incidents per Request",
-            "realized_incidents_rolling.png",
-        ),
-        (
-            "incident_cost_samples",
-            "Incident Cost per Request",
-            "incident_cost_rolling.png",
-        ),
+        ("sfc_tenancy_samples",          "Avg SFCs per Occupied Node",          "sfc_per_node_rolling.png"),
+        ("vnf_tenancy_samples",          "Avg VNFs per Occupied Node",          "vnf_per_node_rolling.png"),
+        ("substrate_utilization_samples","Substrate Utilization",               "substrate_util_rolling.png"),
+        ("conf_margin_samples",          "Avg Confidentiality Margin",          "conf_margin_rolling.png"),
+        ("integ_margin_samples",         "Avg Integrity Margin",                "integ_margin_rolling.png"),
+        ("avail_margin_samples",         "Avg Availability Margin",             "avail_margin_rolling.png"),
+        ("zone_match_samples",           "Zone Compliance Ratio",               "zone_compliance_rolling.png"),
+        ("link_security_margin_samples", "Avg Link Security Margin",            "link_security_margin_rolling.png"),
     ]
 
-    # Color palette for algorithms
     colors = plt.cm.tab10(np.linspace(0, 1, len(results)))
 
     for metric_key, metric_title, filename in metrics:
@@ -1045,17 +802,13 @@ def plot_rolling_averages(results: dict, output_dir: str, window_size: int = 50)
             if not samples:
                 continue
 
-            # Convert to numpy array
             samples = np.array(samples)
 
-            # Calculate rolling average
             if len(samples) >= window_size:
-                # Use convolution for rolling average
                 kernel = np.ones(window_size) / window_size
                 rolling_avg = np.convolve(samples, kernel, mode="valid")
                 x_values = np.arange(window_size - 1, len(samples))
             else:
-                # Not enough data for rolling average, use raw data
                 rolling_avg = samples
                 x_values = np.arange(len(samples))
 
@@ -1069,7 +822,6 @@ def plot_rolling_averages(results: dict, output_dir: str, window_size: int = 50)
         ax.legend(loc="best", fontsize=10)
         ax.grid(True, alpha=0.3)
 
-        # Format y-axis as percentage for substrate utilization
         if "utilization" in metric_key:
             ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: f"{y:.0%}"))
 
@@ -1094,8 +846,7 @@ def run_multi_episode_eval(
     requests, and collect per-episode scalar metrics for every algorithm.
 
     When *substrate* / *request_generator* are provided they are deep-copied before
-    each episode so every round starts from the same initial state, mirroring what
-    the training callback does.
+    each episode so every round starts from the same initial state.
 
     Returns:
         {
@@ -1104,19 +855,14 @@ def run_multi_episode_eval(
                 algo_name: {
                     "acceptance_ratio": [...],
                     "latency_violation_ratio": [...],
-                    "avg_risk_integral": [...],
-                    "avg_sfc_tenancy": [...],
-                    "avg_vnf_tenancy": [...],
-                    "avg_substrate_utilization": [...],
+                    "avg_conf_margin": [...],
+                    ...
                 }
             }
         }
     """
     import copy
 
-    # Pre-load model once so we don't call load_model (which re-seeds global RNG
-    # via set_random_seed) every episode.  A throwaway env is used only for the
-    # GNN edge-getter; the real per-episode env is created inside evaluate_rl_agent.
     preloaded_model = None
     if model_path and Path(model_path).exists():
         _tmp_env = create_masked_env(
@@ -1135,8 +881,6 @@ def run_multi_episode_eval(
         if verbose:
             print(f"\n-- Episode {ep}/{num_episodes} --------------------------")
 
-        # Seed per-episode so every episode uses an equally "mixed" RNG state and
-        # episode 1 is not special (avoids the fresh-startup-seed anomaly).
         random.seed(ep * 7919)
         np.random.seed(ep * 7919)
 
@@ -1191,7 +935,7 @@ def main():
         "--model",
         type=str,
         default="models/sfc_ppo_best.zip",
-        help="Path to trained RL model (default: models/sfc_ppo_best.zip, use --no-model to skip)",
+        help="Path to trained RL model (default: models/sfc_ppo_best.zip)",
     )
     parser.add_argument(
         "--no-model",
@@ -1214,7 +958,7 @@ def main():
         "--models-dir",
         type=str,
         default="models/",
-        help="Directory containing sfc_ppo_best.zip and optional pickle files (default: models/)",
+        help="Directory containing sfc_ppo_best.zip and optional pickle files",
     )
     parser.add_argument(
         "--plot", type=str, default=None, help="Path to save single-run comparison bar chart"
@@ -1234,8 +978,6 @@ def main():
 
     models_dir = Path(args.models_dir)
 
-    # Load saved substrate / request_generator if the config flags are set and the
-    # pickles exist (they are written by train.py when the flags are enabled).
     substrate = None
     request_generator = None
 
@@ -1274,7 +1016,6 @@ def main():
     plot_summary_bar_chart(multi_ep, output_dir=out_dir)
 
     # 2) Rolling-average line charts from a single representative episode.
-    #    Re-use the first episode's RNG seed for reproducibility.
     print("\nGenerating rolling-average plots from a single evaluation run...")
     random.seed(1 * 7919)
     np.random.seed(1 * 7919)
@@ -1296,15 +1037,14 @@ def main():
         for algo, metrics in multi_ep["by_algo"].items():
             util = metrics.get("avg_substrate_utilization", [])
             ar   = metrics.get("acceptance_ratio", [])
-            risk = metrics.get("avg_risk_integral", [])
+            conf = metrics.get("avg_conf_margin", [])
             print(f"  {algo}:")
-            print(f"    substrate_util : {[f'{v:.4f}' for v in util]}")
+            print(f"    substrate_util  : {[f'{v:.4f}' for v in util]}")
             print(f"    acceptance_ratio: {[f'{v:.4f}' for v in ar]}")
-            print(f"    avg_risk_integral: {[f'{v:.4f}' for v in risk]}")
+            print(f"    avg_conf_margin : {[f'{v:.4f}' for v in conf]}")
 
-    # Print average-across-episodes performance difference table (PPO vs BestFit).
     by_algo = multi_ep["by_algo"]
-    bf_key = next((k for k in by_algo if "BestFit" in k), None)
+    bf_key  = next((k for k in by_algo if "BestFit" in k), None)
     ppo_key = next((k for k in by_algo if "PPO" in k or "Maskable" in k), None)
 
     if bf_key and ppo_key:
@@ -1321,6 +1061,7 @@ def main():
         print(sep)
         print(header)
         print(sep)
+
         bf_ep_count  = len(next(iter(by_algo[bf_key].values()),  []))
         ppo_ep_count = len(next(iter(by_algo[ppo_key].values()), []))
         n_paired = min(bf_ep_count, ppo_ep_count)

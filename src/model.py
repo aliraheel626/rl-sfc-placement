@@ -97,7 +97,7 @@ def create_maskable_ppo(
     policy_kwargs["features_extractor_class"] = GNNFeaturesExtractor
     policy_kwargs["features_extractor_kwargs"] = {
         "edge_getter": edge_getter,
-        "node_feat_dim": 20,  # [RAM, CPU, Storage, Security, AvgBW, DistToPrev, RAMGlobalShare, CPUGlobalShare, StorageGlobalShare, VNFGlobalShare, SFCTenancy, FitRAM, FitCPU, FitStorage, IncidentPressure, LoadNorm, PBase, ExpectedIncidents, NodeRiskScore(=PBase), ExpectedLostRevenue]
+        "node_feat_dim": 20,  # [RAM, CPU, Storage, Conf, Integ, Avail, AvgBW, DistToPrev, RAMShare, CPUShare, StorageShare, VNFShare, SFCTenancy, FitRAM, FitCPU, FitStorage, ZonePublic, ZonePrivate, ZoneDMZ, LinkSecFromPrev]
         "hidden_dim": gnn_hidden_dim,
         "features_dim": gnn_features_dim,
         "gnn_type": gnn_type,
@@ -938,16 +938,24 @@ class TrainingEvalCallback(BaseCallback):
                             "custom/eval_acceptance_ratio", ppo["acceptance_ratio"]
                         )
                         self.logger.record(
-                            "custom/eval_risk_integral",
-                            ppo.get("avg_risk_integral", ppo.get("avg_risk_score", 0.0)),
+                            "custom/eval_conf_margin",
+                            ppo.get("avg_conf_margin", 0.0),
                         )
                         self.logger.record(
-                            "custom/eval_realized_incidents",
-                            ppo.get("avg_realized_incidents", 0.0),
+                            "custom/eval_integ_margin",
+                            ppo.get("avg_integ_margin", 0.0),
                         )
                         self.logger.record(
-                            "custom/eval_incident_cost",
-                            ppo.get("avg_incident_cost", 0.0),
+                            "custom/eval_avail_margin",
+                            ppo.get("avg_avail_margin", 0.0),
+                        )
+                        self.logger.record(
+                            "custom/eval_zone_compliance",
+                            ppo.get("zone_compliance_ratio", 0.0),
+                        )
+                        self.logger.record(
+                            "custom/eval_link_security_margin",
+                            ppo.get("avg_link_security_margin", 0.0),
                         )
 
         if self.n_calls > 0 and self.n_calls % self.plot_freq == 0:

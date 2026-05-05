@@ -15,18 +15,14 @@ from typing import Any, Mapping, MutableMapping, Optional
 TRACKED_EVAL_METRIC_KEYS: tuple[str, ...] = (
     "acceptance_ratio",
     "latency_violation_ratio",
-    "avg_risk_integral",
     "avg_sfc_tenancy",
     "avg_vnf_tenancy",
     "avg_substrate_utilization",
-    "avg_sec_margin",
-    "avg_realized_incidents",
-    "avg_incident_cost",
-    "total_realized_incidents",
-    "total_incident_cost",
-    "total_revenue",
-    "avg_revenue_per_request",
-    "avg_lost_revenue_per_request",
+    "avg_conf_margin",
+    "avg_integ_margin",
+    "avg_avail_margin",
+    "zone_compliance_ratio",
+    "avg_link_security_margin",
 )
 
 
@@ -53,13 +49,6 @@ EVAL_PLOT_SPECS: tuple[EvalPlotSpec, ...] = (
         ylim=(0.0, 1.05),
     ),
     EvalPlotSpec(
-        key="avg_risk_integral",
-        filename="sfc_risk_training.png",
-        ylabel="Risk Integral (lower is better)",
-        title="Avg Risk Integral vs Episode Number",
-        ma_color="purple",
-    ),
-    EvalPlotSpec(
         key="avg_substrate_utilization",
         filename="substrate_util_training.png",
         ylabel="Substrate Utilization",
@@ -83,46 +72,40 @@ EVAL_PLOT_SPECS: tuple[EvalPlotSpec, ...] = (
         ma_color="darkgreen",
     ),
     EvalPlotSpec(
-        key="avg_sec_margin",
-        filename="security_score_training.png",
-        ylabel="Avg Security Margin (node score − req min)",
-        title="Avg Security Margin vs Episode Number",
+        key="avg_conf_margin",
+        filename="conf_margin_training.png",
+        ylabel="Avg Confidentiality Margin (node − req min)",
+        title="Avg Confidentiality Margin vs Episode Number",
         ma_color="teal",
     ),
     EvalPlotSpec(
-        key="total_realized_incidents",
-        filename="realized_incidents_training.png",
-        ylabel="Total Realized Incidents (episode sum)",
-        title="Total Realized Incidents vs Episode Number",
-        ma_color="saddlebrown",
+        key="avg_integ_margin",
+        filename="integ_margin_training.png",
+        ylabel="Avg Integrity Margin (node − req min)",
+        title="Avg Integrity Margin vs Episode Number",
+        ma_color="steelblue",
     ),
     EvalPlotSpec(
-        key="total_incident_cost",
-        filename="incident_cost_training.png",
-        ylabel="Total Lost Revenue (episode sum)",
-        title="Total Lost Revenue vs Episode Number",
-        ma_color="firebrick",
-    ),
-    EvalPlotSpec(
-        key="total_revenue",
-        filename="revenue_training.png",
-        ylabel="Total Revenue (episode sum, higher is better)",
-        title="Total Revenue vs Episode Number",
+        key="avg_avail_margin",
+        filename="avail_margin_training.png",
+        ylabel="Avg Availability Margin (node − req min)",
+        title="Avg Availability Margin vs Episode Number",
         ma_color="seagreen",
     ),
     EvalPlotSpec(
-        key="avg_revenue_per_request",
-        filename="avg_revenue_per_request_training.png",
-        ylabel="Avg revenue earned per request (all requests, rejects = 0)",
-        title="Avg Revenue Earned per Request vs Episode Number",
-        ma_color="forestgreen",
+        key="zone_compliance_ratio",
+        filename="zone_compliance_training.png",
+        ylabel="Zone Compliance Ratio (accepted SFCs)",
+        title="Zone Compliance Ratio vs Episode Number",
+        ma_color="darkviolet",
+        ylim=(0.0, 1.05),
     ),
     EvalPlotSpec(
-        key="avg_lost_revenue_per_request",
-        filename="avg_lost_revenue_per_request_training.png",
-        ylabel="Avg lost revenue per request (lower is better)",
-        title="Avg Lost Revenue per Request vs Episode Number",
-        ma_color="darkred",
+        key="avg_link_security_margin",
+        filename="link_security_margin_training.png",
+        ylabel="Avg Link Security Margin (path sec − req min)",
+        title="Avg Link Security Margin vs Episode Number",
+        ma_color="saddlebrown",
     ),
 )
 
@@ -135,25 +118,19 @@ class ComparisonTableRow:
 
 
 # PPO vs BestFit summary table (main() in compare.py).
-# Substrate utilisation and per-node SFC/VNF tenancy are omitted here; those series
-# still appear in compare/ plots and in verbose per-episode output.
 COMPARISON_TABLE_ROWS: tuple[ComparisonTableRow, ...] = (
-    ComparisonTableRow("acceptance_ratio", "Acceptance Ratio", True),
-    ComparisonTableRow("avg_risk_integral", "Avg Risk Integral", False),
-    ComparisonTableRow("avg_sec_margin", "Avg Security Margin", True),
-    ComparisonTableRow("total_realized_incidents", "Total Realized Incidents", False),
-    ComparisonTableRow("total_incident_cost", "Total Lost Revenue", False),
-    ComparisonTableRow("total_revenue", "Total Revenue", True),
-    ComparisonTableRow("avg_revenue_per_request", "Avg Revenue / Request", True),
-    ComparisonTableRow("avg_lost_revenue_per_request", "Avg Lost Revenue / Request", False),
+    ComparisonTableRow("acceptance_ratio",         "Acceptance Ratio",           True),
+    ComparisonTableRow("avg_conf_margin",          "Avg Confidentiality Margin", True),
+    ComparisonTableRow("avg_integ_margin",         "Avg Integrity Margin",       True),
+    ComparisonTableRow("avg_avail_margin",         "Avg Availability Margin",    True),
+    ComparisonTableRow("zone_compliance_ratio",    "Zone Compliance Ratio",      True),
+    ComparisonTableRow("avg_link_security_margin", "Avg Link Security Margin",   True),
+    ComparisonTableRow("avg_substrate_utilization","Substrate Utilization",      True),
 )
 
 
 def get_eval_metric(res: Mapping[str, Any], key: str) -> float:
-    """Extract a scalar from a run_eval result; handles avg_risk_integral fallback."""
-    if key == "avg_risk_integral":
-        v = res.get("avg_risk_integral", res.get("avg_risk_score", 0.0))
-        return float(v) if v is not None else 0.0
+    """Extract a scalar from a run_eval result dict."""
     v = res.get(key, 0.0)
     return float(v) if v is not None else 0.0
 

@@ -7,7 +7,7 @@
 The proposed framework is an intelligent Deep Reinforcement Learning system for security posture aware SFC placement. It consists of five principal components, as illustrated in Figure~\ref{fig:architecture}:
 
 \begin{enumerate}
-  \item \textbf{Substrate Network}: a dynamic graph whose node resources, link bandwidths, and security posture states evolve as VNFs are allocated, expire, and security incidents occur.
+  \item \textbf{Substrate Network}: a dynamic graph whose node resources, link bandwidths, and security posture states evolve as VNFs are allocated and expire.
   \item \textbf{SFC Request Generator}: produces incoming SFC requests with random VNF demands and constraints.
   \item \textbf{SFC Placement Environment}: a Gymnasium-compatible MDP environment implementing the state, action, security posture-aware reward, and constraint logic.
   \item \textbf{Maskable PPO Agent}: the DRL backbone that trains on rollouts collected from the environment, updating its policy and value networks using the PPO objective.
@@ -96,12 +96,12 @@ The node feature matrix $\mathbf{F} \in \mathbb{R}^{N_{\max} \times 20}$ provide
 16    & Base incident prob.\ $q_n$ & As defined in Eq.~(\ref{eq:qn}): the same signal the risk formula and baselines use \\
 17    & Expected incidents  & $q_n \cdot T_s / T_{\text{cap}}$, clipped to $[0, 1]$ \\
 18    & Node risk score     & Equals $q_n$ (feature 16); an explicit risk slot \\
-19    & Expected lost revenue & Inverse-normalized $1 - 1/(1 + \text{ELR}_n)$ where $\text{ELR}_n = P_n^{\text{hit}} \cdot \text{SFC}(n) \cdot R_{\text{ttl}} \cdot D_{\text{inc}}$ \\
+19    & Expected loss proxy   & Inverse-normalized blast-radius signal: $1 - 1/(1 + q_n \cdot \text{SFC}(n))$ \\
 \hline
 \end{tabularx}
 \end{table}
 
-\textbf{Design rationale.} Features 0--5 capture the \emph{local} resource and topology state visible to a myopic heuristic. Features 6--10 add \emph{global} context: resource concentration, instance density, and blast-radius signals that help the agent detect ``hot-spot'' nodes — nodes that are operationally important because they host a disproportionate share of the workload. Features 11--13 bridge the current VNF demand to each candidate node, directly informing how tight a fit each placement would be. Features 14--19 expose the \emph{risk-driving} quantities — incident pressure, load, $q_n$, expected incidents, and expected lost revenue — that the risk model and baselines use internally, closing the observational asymmetry between the RL agent and the reward/risk formulas.
+\textbf{Design rationale.} Features 0--5 capture the \emph{local} resource and topology state visible to a myopic heuristic. Features 6--10 add \emph{global} context: resource concentration, instance density, and blast-radius signals that help the agent detect ``hot-spot'' nodes — nodes that are operationally important because they host a disproportionate share of the workload. Features 11--13 bridge the current VNF demand to each candidate node, directly informing how tight a fit each placement would be. Features 14--19 expose the \emph{risk-driving} quantities — incident pressure, load, $q_n$, expected incidents, and the blast-radius-weighted loss proxy — that the security cost model and baselines use internally, closing the observational asymmetry between the RL agent and the reward/risk formulas.
 
 Padded nodes (indices $N$ through $N_{\max}-1$) are zeroed and excluded from GNN message passing via the node mask.
 
@@ -198,15 +198,15 @@ where $R_{\text{rej}} = -1$. The flipped AR modifier $(1 - \overline{\text{AR}}_
 
 \subsection{Revenue Tracking}
 
-Upon acceptance, the environment records the request revenue $R_{\text{ttl}} \cdot \tau_r$ (where $R_{\text{ttl}} = 1.0$ is the revenue per TTL step). Rejected requests contribute zero revenue. This metric is not part of the reward itself but is tracked for evaluation alongside the expected lost revenue from incident downtimes.
+Upon acceptance, the environment records the request revenue $R_{\text{ttl}} \cdot \tau_r$ (where $R_{\text{ttl}} = 1.0$ is the revenue per TTL step). Rejected requests contribute zero revenue. This metric is tracked for evaluation but does not contribute to the reward signal.
 
 \section{Best-Fit Baseline}
 
-To assess the value of intelligent DRL-based security posture awareness over a greedy approach, a \textbf{Best-Fit by Minimum Risk} (\texttt{BestFitPlacement}) heuristic is implemented. For each VNF in the chain, it applies the same feasibility checks as the environment (including \texttt{apply\_incident\_view} for consistent constraint semantics, with downtime-blocked nodes having their resources zeroed), then selects the valid node with minimum per-node risk score, tie-breaking by resource waste (then node index):
+To assess the value of intelligent DRL-based security posture awareness over a greedy approach, a \textbf{Best-Fit by Minimum Risk} (\texttt{BestFitPlacement}) heuristic is implemented. For each VNF in the chain, it applies the same feasibility checks as the environment (including \texttt{apply\_incident\_view} for consistent constraint semantics), then selects the valid node with minimum per-node risk score, tie-breaking by resource waste (then node index):
 \begin{equation}
 n^* = \argmin_{n \in \mathcal{V}_t^{\text{valid}}} \left(\rho_n^{\text{node}},\; w_n^{\text{waste}},\; n\right),
 \end{equation}
-where the per-node expected-loss risk score is:
+where the per-node risk score is:
 \begin{equation}
 \rho_n^{\text{node}} = \min\!\left(q_n \cdot \text{SFC}(n) \cdot \frac{T_s}{\tau_{\max}},\; 1\right),
 \end{equation}

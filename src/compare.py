@@ -46,7 +46,6 @@ def _build_risk_config(config: dict) -> dict:
         "incident_alpha": float(risk.get("incident_alpha", 1.6)),
         "incident_beta": float(risk.get("incident_beta", 0.7)),
         "incident_steps_cap": int(risk.get("incident_steps_cap", 12)),
-        "incident_pressure_gain": float(risk.get("incident_pressure_gain", 0.20)),
         "incident_pressure_decay": float(risk.get("incident_pressure_decay", 0.92)),
         "incident_security_penalty": float(risk.get("incident_security_penalty", 0.60)),
         "revenue_per_ttl_step": float(risk.get("revenue_per_ttl_step", 1.0)),
@@ -96,6 +95,8 @@ def evaluate_baseline(
     total_risk_integral = 0.0
     total_revenue = 0.0
     node_incident_pressure = {node_id: 0.0 for node_id in range(substrate_copy.num_nodes)}
+    node_sfc_placements: dict[int, int] = {}   # cumulative SFC chains per node
+    node_vnf_placements: dict[int, int] = {}   # cumulative VNF instances per node
 
     start_time = time.perf_counter()
 
@@ -180,6 +181,11 @@ def evaluate_baseline(
 
             # Register for TTL tracking
             substrate_copy.register_placement(request, placement)
+            # Cumulative per-node placement counts (for distribution analysis)
+            for node_id in set(placement):
+                node_sfc_placements[node_id] = node_sfc_placements.get(node_id, 0) + 1
+            for node_id in placement:
+                node_vnf_placements[node_id] = node_vnf_placements.get(node_id, 0) + 1
             risk_integral = compute_placement_risk_score(
                 substrate_copy,
                 placement,
@@ -281,6 +287,8 @@ def evaluate_baseline(
         "substrate_utilization_samples": substrate_utilization_samples,
         "risk_score_samples": risk_score_samples,
         "security_margin_samples": security_margins,
+        "node_sfc_placements": node_sfc_placements,
+        "node_vnf_placements": node_vnf_placements,
     }
 
 
@@ -346,6 +354,8 @@ def evaluate_rl_agent(
     risk_score_samples = []  # Per-request security cost heuristic
     total_risk_integral = 0.0
     total_revenue = 0.0
+    node_sfc_placements: dict[int, int] = {}   # cumulative SFC chains per node
+    node_vnf_placements: dict[int, int] = {}   # cumulative VNF instances per node
 
     # Reset environment once
     obs, info = env.reset()
@@ -401,6 +411,11 @@ def evaluate_rl_agent(
                         else 0.0
                     )
                     security_margins.append(avg_placement_margin)
+                # Cumulative per-node placement counts (for distribution analysis)
+                for node_id in set(placement):
+                    node_sfc_placements[node_id] = node_sfc_placements.get(node_id, 0) + 1
+                for node_id in placement:
+                    node_vnf_placements[node_id] = node_vnf_placements.get(node_id, 0) + 1
                 # Use risk from env info (computed before tick()); recomputing after step()
                 # would use post-tick substrate state and disagree with training rewards.
                 risk_score = info.get("request_risk_integral", info.get("request_risk_score", 0.0))
@@ -503,6 +518,8 @@ def evaluate_rl_agent(
         "substrate_utilization_samples": substrate_utilization_samples,
         "risk_score_samples": risk_score_samples,
         "security_margin_samples": security_margins,
+        "node_sfc_placements": node_sfc_placements,
+        "node_vnf_placements": node_vnf_placements,
     }
 
 # BOOKMARK, IMPORTANT: THIS IS THE FUNCTION THAT IS USED TO EVALUATE THE RL AGENT.
@@ -723,10 +740,8 @@ def plot_rolling_comparison(
 
     Produces (all rolling-average line charts):
         sfc_ppo_acceptance_ratio.png  – rolling acceptance ratio
-        sfc_risk_training.png         – rolling risk integral
+        sfc_risk_training.png         – rolling security cost heuristic
         security_score_training.png   – rolling security margin
-        realized_incidents_training.png – rolling realized incidents
-        incident_cost_training.png    – rolling lost revenue per request
         revenue_training.png          – rolling revenue per request
 
     Args:
@@ -898,6 +913,131 @@ def plot_summary_bar_chart(
     save_path = out / "summary_comparison.png"
     plt.savefig(save_path, dpi=150, bbox_inches="tight")
     print(f"Summary bar chart saved to: {save_path}")
+    plt.close()
+
+
+def plot_tenancy_distributions(results: dict, output_dir: str = "compare/") -> None:
+    """
+    Generate per-node tenancy distribution figures comparing algorithms.
+
+    Uses cumulative per-node SFC/VNF placement counts collected during evaluation
+    to show how each algorithm distributes load across substrate nodes.
+
+    Produces three files in output_dir:
+        tenancy_grouped_bar.png  – grouped bar chart: count per node per algorithm
+        tenancy_histogram.png    – histogram of per-node counts
+        tenancy_cdf.png          – empirical CDF of per-node counts
+    """
+    out = Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+
+    algorithms = list(results.keys())
+    palette = plt.cm.tab10(np.linspace(0, 0.4, max(len(algorithms), 2)))[: len(algorithms)]
+    color_map = dict(zip(algorithms, palette))
+
+    def _to_array(result: dict, key: str) -> np.ndarray:
+        d = result.get(key, {})
+        if not d:
+            return np.zeros(25, dtype=int)
+        n = max(d.keys()) + 1
+        arr = np.zeros(n, dtype=int)
+        for k, v in d.items():
+            arr[k] = v
+        return arr
+
+    sfc_counts = {a: _to_array(results[a], "node_sfc_placements") for a in algorithms}
+    vnf_counts = {a: _to_array(results[a], "node_vnf_placements") for a in algorithms}
+    n_nodes = max(len(v) for v in sfc_counts.values())
+    node_idx = np.arange(n_nodes)
+
+    # ── 1. Grouped bar chart ───────────────────────────────────────────────────
+    fig, axes = plt.subplots(2, 1, figsize=(14, 10), sharex=True)
+    bw = 0.8 / max(len(algorithms), 1)
+    offsets = np.linspace(
+        -(bw * (len(algorithms) - 1)) / 2,
+        (bw * (len(algorithms) - 1)) / 2,
+        len(algorithms),
+    )
+    for ax, counts_dict, ylabel, title in [
+        (axes[0], sfc_counts, "SFC Chains Placed", "Cumulative SFC Placements per Node"),
+        (axes[1], vnf_counts, "VNF Instances Placed", "Cumulative VNF Placements per Node"),
+    ]:
+        for algo, offset in zip(algorithms, offsets):
+            arr = counts_dict[algo]
+            ax.bar(
+                node_idx[: len(arr)] + offset, arr, bw,
+                label=algo, color=color_map[algo], alpha=0.82,
+                edgecolor="black", linewidth=0.3,
+            )
+        ax.set_ylabel(ylabel, fontsize=11)
+        ax.set_title(title, fontsize=12)
+        ax.legend(fontsize=10)
+        ax.grid(True, axis="y", linestyle="--", alpha=0.35)
+        ax.set_xticks(node_idx[::2])
+    axes[1].set_xlabel("Substrate Node Index", fontsize=11)
+    fig.suptitle(
+        "Per-Node Tenancy Distribution: PPO vs Best-Fit",
+        fontsize=14, fontweight="bold",
+    )
+    plt.tight_layout()
+    path = out / "tenancy_grouped_bar.png"
+    plt.savefig(path, dpi=150, bbox_inches="tight")
+    print(f"Tenancy grouped bar chart saved to: {path}")
+    plt.close()
+
+    # ── 2. Histogram ──────────────────────────────────────────────────────────
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+    for ax, counts_dict, xlabel, title in [
+        (axes[0], sfc_counts, "SFC Count per Node", "SFC Count Distribution per Node"),
+        (axes[1], vnf_counts, "VNF Instance Count per Node", "VNF Count Distribution per Node"),
+    ]:
+        all_vals = np.concatenate(list(counts_dict.values()))
+        max_val = int(all_vals.max()) if len(all_vals) > 0 else 1
+        bins = np.arange(0, max_val + 2) - 0.5
+        for algo in algorithms:
+            ax.hist(
+                counts_dict[algo], bins=bins, label=algo,
+                color=color_map[algo], alpha=0.62, edgecolor="black", linewidth=0.5,
+            )
+        ax.set_xlabel(xlabel, fontsize=11)
+        ax.set_ylabel("Number of Nodes", fontsize=11)
+        ax.set_title(title, fontsize=12)
+        ax.legend(fontsize=10)
+        ax.grid(True, axis="y", linestyle="--", alpha=0.35)
+    fig.suptitle(
+        "Per-Node Tenancy Histogram: PPO vs Best-Fit",
+        fontsize=14, fontweight="bold",
+    )
+    plt.tight_layout()
+    path = out / "tenancy_histogram.png"
+    plt.savefig(path, dpi=150, bbox_inches="tight")
+    print(f"Tenancy histogram saved to: {path}")
+    plt.close()
+
+    # ── 3. Empirical CDF ──────────────────────────────────────────────────────
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+    for ax, counts_dict, xlabel, title in [
+        (axes[0], sfc_counts, "SFC Count per Node", "Empirical CDF: SFC Count per Node"),
+        (axes[1], vnf_counts, "VNF Instance Count per Node", "Empirical CDF: VNF Count per Node"),
+    ]:
+        for algo in algorithms:
+            arr = np.sort(counts_dict[algo].astype(float))
+            cdf = np.arange(1, len(arr) + 1) / len(arr)
+            ax.step(arr, cdf, where="post", label=algo, color=color_map[algo], linewidth=2)
+        ax.set_xlabel(xlabel, fontsize=11)
+        ax.set_ylabel("Cumulative Fraction of Nodes", fontsize=11)
+        ax.set_title(title, fontsize=12)
+        ax.legend(fontsize=10)
+        ax.grid(True, linestyle="--", alpha=0.35)
+        ax.set_ylim(0, 1.05)
+    fig.suptitle(
+        "Per-Node Tenancy CDF: PPO vs Best-Fit",
+        fontsize=14, fontweight="bold",
+    )
+    plt.tight_layout()
+    path = out / "tenancy_cdf.png"
+    plt.savefig(path, dpi=150, bbox_inches="tight")
+    print(f"Tenancy CDF saved to: {path}")
     plt.close()
 
 
@@ -1194,6 +1334,9 @@ def main():
         model_path=model_path,
     )
     plot_rolling_comparison(rolling_results, output_dir=out_dir, window_size=50)
+
+    # 3) Per-node tenancy distribution figures (grouped bar, histogram, CDF)
+    plot_tenancy_distributions(rolling_results, output_dir=out_dir)
 
     if verbose:
         print("\nPer-episode raw values (to verify episode-to-episode variation):")

@@ -109,14 +109,14 @@ class ComparisonTableRow:
 
 
 # PPO vs BestFit summary table (main() in compare.py).
-# Substrate utilisation and per-node SFC/VNF tenancy are omitted here; those series
-# still appear in compare/ plots and in verbose per-episode output.
 COMPARISON_TABLE_ROWS: tuple[ComparisonTableRow, ...] = (
     ComparisonTableRow("acceptance_ratio", "Acceptance Ratio", True),
     ComparisonTableRow("avg_risk_integral", "Avg Security Cost Heuristic", False),
     ComparisonTableRow("avg_sec_margin", "Avg Security Margin", True),
     ComparisonTableRow("total_revenue", "Total Revenue", True),
     ComparisonTableRow("avg_revenue_per_request", "Avg Revenue / Request", True),
+    ComparisonTableRow("avg_sfc_tenancy", "Avg SFC Tenancy (SFCs/occupied node)", False),
+    ComparisonTableRow("avg_vnf_tenancy", "Avg VNF Tenancy (VNFs/occupied node)", False),
 )
 
 

@@ -122,9 +122,7 @@ class SFCPlacementEnv(gym.Env):
         self.incident_alpha = float(risk_cfg.get("incident_alpha", 1.6))
         self.incident_beta = float(risk_cfg.get("incident_beta", 0.7))
         self.incident_steps_cap = int(risk_cfg.get("incident_steps_cap", 12))
-        self.incident_pressure_gain = float(risk_cfg.get("incident_pressure_gain", 0.20))
         self.incident_pressure_decay = float(risk_cfg.get("incident_pressure_decay", 0.92))
-        self.incident_downtime_steps = int(risk_cfg.get("incident_downtime_steps", 2))
         self.incident_security_penalty = float(
             risk_cfg.get("incident_security_penalty", 0.60)
         )
@@ -638,17 +636,12 @@ class SFCPlacementEnv(gym.Env):
         #    captured by other features, so the agent just needs raw p_base here.
         node_risk_arr = p_base_col  # same as index 16, explicit risk slot
 
-        # h. Expected lost revenue per node: (num_nodes, 1) [ExpectedLostRevenue]
-        #    E[lost_revenue_i] = P(node i hit) × sfcs_i × revenue_per_ttl_step × downtime_steps
-        #    P(node i hit) = 1 - (1 - p_base_i)^exposure_steps
-        #    Inverse-normalized: 1 - 1/(1 + x)  →  [0, 1) without a fixed ceiling.
-        downtime_steps_obs = float(self.incident_downtime_steps)
-        p_hit_arr = 1.0 - np.power(
-            np.maximum(1.0 - p_base_arr, 0.0), float(exposure_steps_obs)
-        )
-        elr_raw = p_hit_arr * np.array(
+        # h. Expected loss proxy per node: (num_nodes, 1)
+        #    Blast-radius-weighted risk: 1 - 1/(1 + q_n × SFC(n))
+        sfc_counts_arr = np.array(
             [float(sfcs_per_node.get(i, 0)) for i in range(N)], dtype=np.float32
-        ) * self.revenue_per_ttl_step * downtime_steps_obs
+        )
+        elr_raw = p_base_arr * sfc_counts_arr
         elr_arr = (1.0 - 1.0 / (1.0 + elr_raw)).reshape(-1, 1).astype(np.float32)
 
         # Combine real node features (num_nodes, 20)

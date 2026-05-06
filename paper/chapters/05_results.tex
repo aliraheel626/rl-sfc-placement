@@ -20,6 +20,8 @@ Avg Security Cost Heuristic & 0.0014 & 0.0006 & $-59.45$\% & PPO \\
 Avg Security Margin & 0.8525 & 1.7593 & 106.38\% & PPO \\
 Total Revenue & 9319.8000 & 9244.0000 & $-0.81$\% & Best-Fit \\
 Avg Revenue / Request & 9.3198 & 9.2440 & $-0.81$\% & Best-Fit \\
+Avg SFC Tenancy (SFCs/occupied node) & --- & --- & --- & --- \\
+Avg VNF Tenancy (VNFs/occupied node) & --- & --- & --- & --- \\
 \hline
 \end{tabularx}
 \end{table}
@@ -45,7 +47,7 @@ Figure~\ref{fig:ar} illustrates the training acceptance ratio (rolling average o
 \label{fig:ar}
 \end{figure}
 
-\subsection{Risk and Incident Metrics During Training}
+\subsection{Security Cost Heuristic During Training}
 
 Figure~\ref{fig:risk} shows the evolution of the average security cost heuristic $\rho_r$ over training episodes. As the agent becomes more adept at minimizing risk-aware placement, the average security cost per accepted SFC decreases.
 
@@ -74,6 +76,8 @@ Avg Security Cost Heuristic & 0.0014 & 0.0006 & $-59.45$\% & PPO \\
 Avg Security Margin & 0.8525 & 1.7593 & 106.38\% & PPO \\
 Total Revenue & 9319.8000 & 9244.0000 & $-0.81$\% & Best-Fit \\
 Avg Revenue / Request & 9.3198 & 9.2440 & $-0.81$\% & Best-Fit \\
+Avg SFC Tenancy (SFCs/occupied node) & --- & --- & --- & --- \\
+Avg VNF Tenancy (VNFs/occupied node) & --- & --- & --- & --- \\
 \hline
 \end{tabularx}
 \end{table}
@@ -133,6 +137,31 @@ Figure~\ref{fig:revenue} presents the rolling average revenue earned per request
 \label{fig:revenue}
 \end{figure}
 
+\subsection{Per-Node Tenancy Distribution}
+
+Figures~\ref{fig:tenancy_bar}, \ref{fig:tenancy_hist}, and \ref{fig:tenancy_cdf} show the cumulative per-node SFC and VNF placement counts over the 1000-request evaluation — i.e., how many SFC chains and VNF instances each substrate node hosted in total. This distribution captures which nodes each algorithm tends to prefer and how evenly load is spread across the substrate.
+
+\begin{figure}[!ht]
+\centering
+\includegraphics[width=\textwidth]{compare/tenancy_grouped_bar.png}
+\caption{Cumulative per-node SFC (top) and VNF (bottom) placement counts for Maskable PPO and Best-Fit over 1000 requests. Each bar group represents one substrate node.}
+\label{fig:tenancy_bar}
+\end{figure}
+
+\begin{figure}[!ht]
+\centering
+\includegraphics[width=\textwidth]{compare/tenancy_histogram.png}
+\caption{Histogram of cumulative per-node SFC (left) and VNF (right) placement counts, showing how many nodes received each count value. A distribution concentrated at high counts indicates hot-spotting; a spread distribution indicates more uniform utilisation.}
+\label{fig:tenancy_hist}
+\end{figure}
+
+\begin{figure}[!ht]
+\centering
+\includegraphics[width=\textwidth]{compare/tenancy_cdf.png}
+\caption{Empirical CDF of cumulative per-node SFC (left) and VNF (right) placement counts for Maskable PPO and Best-Fit. A CDF that rises steeply at higher count values indicates that a small number of nodes absorb a disproportionate share of placements.}
+\label{fig:tenancy_cdf}
+\end{figure}
+
 \section{Analysis and Discussion}
 
 \subsection{Benefits of Action Masking}
@@ -150,6 +179,9 @@ The GNN-based feature extractor captures topology-dependent and security posture
 \subsection{Comparison with Best-Fit}
 
 The Best-Fit by Minimum Risk baseline represents a competitive greedy approach that directly minimizes the same objective component ($\rho_n^{\text{node}}$) as the DRL agent's security posture risk penalty. The key distinction is that the intelligent DRL agent optimizes security posture risk \textit{jointly with} acceptance ratio and long-term resource efficiency, while the baseline myopically minimizes risk at each individual step. In heavily loaded scenarios, the DRL agent may choose slightly riskier placements early in the episode to preserve low-risk, high-security-posture nodes for future requests with stricter constraints, a strategy the greedy baseline cannot exhibit.
+
+\textbf{Tenancy spread.}
+The per-node tenancy distribution (Figures~\ref{fig:tenancy_bar}--\ref{fig:tenancy_cdf}) reveals that PPO concentrates placements on a smaller set of preferred nodes compared to Best-Fit, exhibiting a \textit{hot-spotting} pattern. This is a direct and honest consequence of the reward structure. The security cost heuristic $\rho_r$ is a mean over all placement nodes: $\rho_r \propto \frac{1}{|\Pi_r|}\sum_n q_n \cdot \text{SFC}(n)$. On a high-security node where $q_n \approx 0$, the product $q_n \cdot \text{SFC}(n)$ remains near zero regardless of how large $\text{SFC}(n)$ grows. The PPO policy therefore learns that repeatedly placing SFCs on high-security nodes incurs a negligible risk penalty, making those nodes persistently attractive. Best-Fit, by contrast, selects $\arg\min_n \rho_n^{\text{node}} = q_n \cdot \text{SFC}(n) \cdot T_s/\tau_{\max}$ at each step: as $\text{SFC}(n)$ accumulates on any node, that node's per-node score grows and previously under-used nodes become comparatively more attractive, producing a natural anti-concentration effect. The PPO reward does not encode this per-node SFC-count aversion directly — the mean over nodes smooths out individual hot-spots. In security terms, PPO's hot-spotting on high-security nodes is arguably rational: the affected nodes carry very low $q_n$, so their increased co-location does not substantially raise $\rho_r$. Nevertheless, concentration on a small subset of nodes increases blast radius in the event of a correlated failure, a risk not captured by the current security cost model. An explicit co-location penalty or a per-node SFC-count cap in the reward function would be a straightforward countermeasure.
 
 \subsection{Scalability Considerations}
 

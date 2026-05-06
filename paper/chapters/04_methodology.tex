@@ -151,7 +151,6 @@ Each SFC request requires $K_r$ consecutive actions (one per VNF). Upon completi
 The \texttt{action\_masks()} method of \texttt{SFCPlacementEnv} computes the binary feasibility mask at each step by:
 \begin{enumerate}
   \item \textbf{Resource feasibility check:} A vectorized scan over all node resource matrices identifies nodes with $\tilde{\mathbf{r}}_n \geq \mathbf{d}_{v_k}$ and $s_n^{\text{eff}} \geq s_r^{\min}$.
-  \item \textbf{Incident downtime check:} Nodes with active downtime ($\Delta_n^{\text{down}} > 0$) are excluded.
   \item \textbf{Hard isolation check:} Hard-isolated nodes and (if $\delta_r = 1$) occupied nodes are excluded.
   \item \textbf{Bandwidth and latency budget check:} For each resource-feasible node, bandwidth $B(n_{k-1}, n) \geq b_r^{\min}$ and hop latency $L(n_{k-1}, n) \leq \ell_{\text{budget}}$ must hold, where the latency budget is:
   \begin{equation}
@@ -163,7 +162,7 @@ The \texttt{action\_masks()} method of \texttt{SFCPlacementEnv} computes the bin
 
 \section{Reward Design}
 
-The reward function is structured to balance three objectives: maximizing SFC acceptance, minimizing security posture risk, and reducing the expected revenue impact of incidents. It operates at two time scales: intermediate per-VNF step rewards and terminal per-SFC rewards.
+The reward function is structured to balance two objectives: maximizing SFC acceptance and minimizing security posture risk. It operates at two time scales: intermediate per-VNF step rewards and terminal per-SFC rewards.
 
 \subsection{Intermediate Step Reward}
 
@@ -175,17 +174,15 @@ The constant $+0.1$ provides a progress bonus for each feasible VNF placement. T
 
 \subsection{Terminal Acceptance Reward}
 
-When all $K_r$ VNFs have been placed and the end-to-end latency constraint is satisfied, the environment computes the risk integral $\rho_r$ and expected lost revenue $\widehat{C}_r$ (both defined in Section~3.5.2), then returns:
+When all $K_r$ VNFs have been placed and the end-to-end latency constraint is satisfied, the environment computes the security cost heuristic $\rho_r$ (defined in Section~3.5.2), then returns:
 \begin{equation}
-r_T^{\text{acc}} = \left(R_{\text{acc}} - \lambda \cdot \rho_r - \mu \cdot \widehat{C}_r\right) \cdot \left(1 + \omega \cdot \overline{\text{AR}}_w\right),
+r_T^{\text{acc}} = \left(R_{\text{acc}} - \lambda \cdot \rho_r\right) \cdot \left(1 + \omega \cdot \overline{\text{AR}}_w\right),
 \end{equation}
 where:
 \begin{itemize}
   \item $R_{\text{acc}} = 1$ is the base acceptance reward;
   \item $\lambda = 4$ is the risk penalty coefficient, controlling the trade-off between acceptance and operational risk;
-  \item $\rho_r \in [0,1]$ is the deterministic expected-loss risk integral for the placement;
-  \item $\mu = 0.05$ is the expected-loss reward scale;
-  \item $\widehat{C}_r$ is the deterministic expected lost revenue (see Section~3.5.2), used instead of stochastic realized cost to reduce gradient variance;
+  \item $\rho_r \in [0,1]$ is the deterministic security cost heuristic for the placement;
   \item $\omega = 0.5$ is the windowed acceptance ratio (AR) modifier weight;
   \item $\overline{\text{AR}}_w$ is the acceptance ratio over the last $w = 10$ requests.
 \end{itemize}
@@ -213,7 +210,7 @@ where the per-node expected-loss risk score is:
 \begin{equation}
 \rho_n^{\text{node}} = \min\!\left(q_n \cdot \text{SFC}(n) \cdot \frac{T_s}{\tau_{\max}},\; 1\right),
 \end{equation}
-with $q_n$ defined as in Eq.~(\ref{eq:qn}), $\text{SFC}(n)$ the number of active chains on node $n$, $T_s = \min(\tau_r, T_{\text{cap}})$, and $\tau_{\max}$ the maximum TTL. This is the per-node analog of the placement risk integral (Eq.~\ref{eq:risk}). The waste tie-breaker is $w_n^{\text{waste}} = (r_n^{\text{ram}} - d_v^{\text{ram}}) + (r_n^{\text{cpu}} - d_v^{\text{cpu}}) + (r_n^{\text{stor}} - d_v^{\text{stor}})$.
+with $q_n$ defined as in Eq.~(\ref{eq:qn}), $\text{SFC}(n)$ the number of active chains on node $n$, $T_s = \min(\tau_r, T_{\text{cap}})$, and $\tau_{\max}$ the maximum TTL. This is the per-node analog of the placement security cost heuristic (Eq.~\ref{eq:risk}). The waste tie-breaker is $w_n^{\text{waste}} = (r_n^{\text{ram}} - d_v^{\text{ram}}) + (r_n^{\text{cpu}} - d_v^{\text{cpu}}) + (r_n^{\text{stor}} - d_v^{\text{stor}})$.
 
 This baseline is a strong comparator: it explicitly minimizes expected loss at each step, matching the primary objective of the DRL agent's security posture-aware risk penalty. It is used to assess whether the DRL agent's learned, intelligent policy provides any advantage over greedy risk minimization — in particular, whether the DRL agent exploits long-horizon reasoning about security posture dynamics that a myopic greedy strategy cannot.
 

@@ -172,7 +172,7 @@ multi-objective, long-horizon nature of SFC placement.
 This thesis develops an \emph{intelligent, security posture aware} DRL
 framework for SFC placement on NFV substrates. In contrast to prior DRL
 placement work, the framework incorporates security posture into both the constraint mask and the reward signal,
-and evaluates placement decisions against an expected-loss risk model
+and evaluates placement decisions against a security cost model
 rather than an ad-hoc penalty. The agent is a Maskable Proximal Policy
 Optimization (Maskable PPO) learner whose action mask enforces every
 hard constraint --- resource, latency, bandwidth, security, and
@@ -228,7 +228,7 @@ The objectives of this thesis follow directly from these gaps:
   for security-posture-aware SFC placement} that learns adaptive
   placement policies from the request stream while treating security
   requirements as first-class constraints.
-  \item Develop an \textbf{expected-loss security posture risk model}
+  \item Develop a \textbf{security cost model}
   that quantifies operational risk as a function of per-node incident
   probability (driven by posture, load, and accumulated incident
   pressure), chain co-location, and time exposure, and use it both
@@ -256,12 +256,10 @@ The principal contributions of this thesis are:
   bandwidth, security posture, and isolation requirements are all
   enforced before any action is sampled --- so every chain the agent
   accepts is feasible by construction.
-  \item An \textbf{expected-loss security posture risk model}
+  \item A \textbf{security cost model}
   combining load-dependent incident probability, chain co-location
   (blast radius), and TTL-proportional exposure into a deterministic
-  risk integral $\rho \in [0,1]$, paired with a deterministic expected
-  lost revenue term that provides a low-variance gradient signal for
-  policy optimization.
+  security cost heuristic $\rho \in [0,1]$.
   \item A \textbf{topology-aware GNN feature extractor} supporting
   GCN, GAT, and GraphSAGE variants with attention-weighted aggregation
   and MLP-based global context fusion, endowing the DRL policy with
@@ -275,10 +273,9 @@ The principal contributions of this thesis are:
   risk-minimising best-fit baseline so that both process identical
   request streams.
   \item A \textbf{comprehensive experimental analysis} covering
-  acceptance ratio, risk integral, security margin, substrate
-  utilization, per-node SFC/VNF tenancy, total and per-request
-  revenue, expected and realized lost revenue, and realized incident
-  counts.
+  acceptance ratio, security cost heuristic, security margin, substrate
+  utilization, per-node SFC/VNF tenancy, and total and per-request
+  revenue.
 \end{enumerate}
 
 \section{Thesis Organization}

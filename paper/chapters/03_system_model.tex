@@ -97,8 +97,6 @@ B(n_k, n_{k+1}) \geq b_r^{\min}.
 \end{equation}
 Symmetrically, nodes reserved by hard-isolated SFCs cannot be used by any other SFC.
 
-\textbf{Incident downtime constraint:} If node $n_k$ is currently in a downtime period following a realized security incident (i.e.\ its remaining downtime counter $\Delta_{n_k}^{\text{down}}(t) > 0$), it is temporarily unavailable regardless of resources. Downtime counters decrement by one on each request tick and are set to $D_{\text{inc}} = 2$ steps upon an incident.
-
 \section{MDP Formulation}
 
 The SFC placement problem under online request arrivals is formalized as a finite-horizon Markov Decision Process (MDP) $\mathcal{M} = \langle \mathcal{S}, \mathcal{A}, \mathcal{P}, \mathcal{R}, \gamma \rangle$.
@@ -148,9 +146,9 @@ The 0.1 progress bonus rewards feasible VNF placements; the latency penalty enco
 
 \textbf{Terminal acceptance reward:}
 \begin{equation}
-r_T^{\text{acc}} = \left( R_{\text{acc}} - \lambda \cdot \rho_r - \mu \cdot \widehat{C}_r \right) \cdot \left(1 + \omega \cdot \overline{\text{AR}}_w\right),
+r_T^{\text{acc}} = \left( R_{\text{acc}} - \lambda \cdot \rho_r \right) \cdot \left(1 + \omega \cdot \overline{\text{AR}}_w\right),
 \end{equation}
-where $R_{\text{acc}} = 1$ is the base acceptance reward, $\lambda = 4$ is the risk penalty coefficient, $\rho_r \in [0,1]$ is the risk integral for request $r$, $\mu = 0.05$ is the expected-loss reward scale, $\widehat{C}_r$ is the deterministic expected lost revenue (see Section~3.5.2), $\omega = 0.5$ is the windowed AR weight, and $\overline{\text{AR}}_w$ is the acceptance ratio over the last $w = 10$ requests. The use of expected lost revenue $\widehat{C}_r$ instead of stochastic realized cost reduces gradient variance, giving the policy a smoother learning signal.
+where $R_{\text{acc}} = 1$ is the base acceptance reward, $\lambda = 4$ is the risk penalty coefficient, $\rho_r \in [0,1]$ is the security cost heuristic for request $r$, $\omega = 0.5$ is the windowed AR weight, and $\overline{\text{AR}}_w$ is the acceptance ratio over the last $w = 10$ requests.
 
 \textbf{Terminal rejection reward:}
 \begin{equation}
@@ -168,19 +166,17 @@ s_n^{\text{eff}}(t) = s_n \cdot \left(1 - \eta \cdot p_n(t)\right),
 \end{equation}
 where $\eta \in [0,1]$ is the security penalty coefficient.
 
-Incident pressure models the temporal degradation of a node's security posture following a security event, and recovers geometrically as the node is remediated:
+Incident pressure models the temporal degradation of a node's security posture and recovers geometrically as the node is remediated:
 \begin{equation}
 p_n(t+1) = \gamma_p \cdot p_n(t),
 \end{equation}
-where $\gamma_p = 0.92$ is the decay factor. Upon a security incident on node $n$, pressure increases: $p_n \leftarrow p_n + \Delta_p$ with $\Delta_p = 0.20$.
-
-\textbf{Node downtime.} When a node experiences a realized incident, it enters a downtime period of $D_{\text{inc}} = 2$ request ticks, during which its resources are zeroed and no VNF may be placed on it. The remaining downtime counter $\Delta_n^{\text{down}}(t)$ decrements by one each tick. This models real-world remediation: an incident renders the node temporarily unavailable until service is restored.
+where $\gamma_p = 0.92$ is the decay factor.
 
 This dynamic security posture model ensures that the DRL agent's placement decisions reflect the real-time security state of the substrate, not merely its static configuration.
 
-\subsection{Security Posture Risk Integral}
+\subsection{Security Cost Heuristic}
 
-For an accepted placement $\pi_r$ with TTL $\tau_r$, the security posture risk integral $\rho_r \in [0,1]$ quantifies the expected loss due to incident exposure across all placement nodes. Let $\Pi_r^{\text{dist}}$ denote the set of distinct nodes in $\pi_r$. The per-node base incident probability is:
+For an accepted placement $\pi_r$ with TTL $\tau_r$, the security cost heuristic $\rho_r \in [0,1]$ quantifies the expected loss due to incident exposure across all placement nodes. Let $\Pi_r^{\text{dist}}$ denote the set of distinct nodes in $\pi_r$. The per-node base incident probability is:
 
 \begin{equation}
 q_n = q_0 \cdot \left(1 - \frac{s_n^{\text{eff}}}{s_{\max}}\right)^{\alpha} \cdot \left(1 + \beta \cdot \ell_n\right) \cdot \left(1 + p_n\right),
@@ -188,7 +184,7 @@ q_n = q_0 \cdot \left(1 - \frac{s_n^{\text{eff}}}{s_{\max}}\right)^{\alpha} \cdo
 \end{equation}
 where $q_0 = 0.025$ is the base rate, $\alpha = 1.6$ is the security sensitivity exponent, $\beta = 0.7$ is the load amplification factor, $\ell_n$ is the normalized node load (VNF count relative to the 75th-percentile reference), and $p_n$ is the accumulated incident pressure. $q_n$ is clamped to $[0, 1]$.
 
-The exposure window is $T_s = \min(\tau_r, T_{\text{cap}})$ with $T_{\text{cap}} = 12$. The risk integral is a deterministic expected-loss score:
+The exposure window is $T_s = \min(\tau_r, T_{\text{cap}})$ with $T_{\text{cap}} = 12$. The security cost heuristic is a deterministic score:
 
 \begin{equation}
 \rho_r = \min\!\left(\frac{1}{|\Pi_r^{\text{dist}}|} \sum_{n \in \Pi_r^{\text{dist}}} q_n \cdot \text{SFC}(n) \cdot \frac{T_s}{\tau_{\max}},\; 1\right),
@@ -196,28 +192,10 @@ The exposure window is $T_s = \min(\tau_r, T_{\text{cap}})$ with $T_{\text{cap}}
 \end{equation}
 where $\text{SFC}(n)$ is the number of active SFC chains sharing node $n$. This formulation captures three key risk drivers: the probability of an incident ($q_n$), the blast radius (number of co-located chains), and the temporal exposure ($T_s / \tau_{\max}$). The per-node risk score used by the Best-Fit baseline (Section~4.5) is the individual-node analog of this mean.
 
-\textbf{Stochastic incident simulation.} Although $\rho_r$ is deterministic, realized incidents are still simulated to drive the security posture dynamics. For each node $n \in \Pi_r^{\text{dist}}$, $T_s$ independent Bernoulli trials with success probability $q_n$ are drawn:
-\begin{equation}
-I_r = \sum_{n \in \Pi_r^{\text{dist}}} \sum_{t=1}^{T_s} \mathbf{1}\!\left[\text{Bernoulli}(q_n) = 1\right].
-\end{equation}
-Nodes that suffer at least one hit receive a pressure increment $\Delta_p$ and enter a downtime period of $D_{\text{inc}}$ request ticks.
-
-\textbf{Incident cost (stochastic).} The realized incident cost is the revenue lost due to downtime across all affected nodes:
-\begin{equation}
-C_r = \sum_{n:\, \text{hit}} \text{SFC}(n) \cdot R_{\text{ttl}} \cdot D_{\text{inc}},
-\end{equation}
-where $R_{\text{ttl}}$ is the revenue per TTL step (default 1.0) and $D_{\text{inc}} = 2$ is the incident downtime in request ticks.
-
-\textbf{Expected lost revenue (deterministic).} The noise-free counterpart used in the reward signal is:
-\begin{equation}
-\widehat{C}_r = \sum_{n \in \Pi_r^{\text{dist}}} P_n^{\text{hit}} \cdot \text{SFC}(n) \cdot R_{\text{ttl}} \cdot D_{\text{inc}},
-\end{equation}
-where $P_n^{\text{hit}} = 1 - (1 - q_n)^{T_s}$ is the probability that node $n$ suffers at least one incident during the exposure window. This provides a smooth gradient signal to the policy while remaining semantically aligned with the stochastic cost.
-
 \section{Optimization Objective}
 
 The DRL agent seeks to maximize the expected cumulative discounted reward over an episode of $T = 300$ requests:
 \begin{equation}
 J(\pi) = \mathbb{E}_{\pi}\!\left[\sum_{t=0}^{T} \gamma^t r_t\right],
 \end{equation}
-with discount factor $\gamma = 0.99$. This objective simultaneously captures acceptance ratio (via the $R_{\text{acc}} / R_{\text{rej}}$ terms), latency efficiency (via intermediate latency penalties), security posture risk (via the $\lambda \rho_r$ penalty), and revenue protection (via the $\mu \widehat{C}_r$ expected-loss penalty), providing a holistic measure of intelligent, security-posture-aware placement quality.
+with discount factor $\gamma = 0.99$. This objective simultaneously captures acceptance ratio (via the $R_{\text{acc}} / R_{\text{rej}}$ terms), latency efficiency (via intermediate latency penalties), and security posture risk (via the $\lambda \rho_r$ penalty), providing a holistic measure of intelligent, security-posture-aware placement quality.

@@ -20,13 +20,8 @@ TRACKED_EVAL_METRIC_KEYS: tuple[str, ...] = (
     "avg_vnf_tenancy",
     "avg_substrate_utilization",
     "avg_sec_margin",
-    "avg_realized_incidents",
-    "avg_incident_cost",
-    "total_realized_incidents",
-    "total_incident_cost",
     "total_revenue",
     "avg_revenue_per_request",
-    "avg_lost_revenue_per_request",
 )
 
 
@@ -55,8 +50,8 @@ EVAL_PLOT_SPECS: tuple[EvalPlotSpec, ...] = (
     EvalPlotSpec(
         key="avg_risk_integral",
         filename="sfc_risk_training.png",
-        ylabel="Risk Integral (lower is better)",
-        title="Avg Risk Integral vs Episode Number",
+        ylabel="Security Cost Heuristic (lower is better)",
+        title="Avg Security Cost Heuristic vs Episode Number",
         ma_color="purple",
     ),
     EvalPlotSpec(
@@ -90,20 +85,6 @@ EVAL_PLOT_SPECS: tuple[EvalPlotSpec, ...] = (
         ma_color="teal",
     ),
     EvalPlotSpec(
-        key="total_realized_incidents",
-        filename="realized_incidents_training.png",
-        ylabel="Total Realized Incidents (episode sum)",
-        title="Total Realized Incidents vs Episode Number",
-        ma_color="saddlebrown",
-    ),
-    EvalPlotSpec(
-        key="total_incident_cost",
-        filename="incident_cost_training.png",
-        ylabel="Total Lost Revenue (episode sum)",
-        title="Total Lost Revenue vs Episode Number",
-        ma_color="firebrick",
-    ),
-    EvalPlotSpec(
         key="total_revenue",
         filename="revenue_training.png",
         ylabel="Total Revenue (episode sum, higher is better)",
@@ -116,13 +97,6 @@ EVAL_PLOT_SPECS: tuple[EvalPlotSpec, ...] = (
         ylabel="Avg revenue earned per request (all requests, rejects = 0)",
         title="Avg Revenue Earned per Request vs Episode Number",
         ma_color="forestgreen",
-    ),
-    EvalPlotSpec(
-        key="avg_lost_revenue_per_request",
-        filename="avg_lost_revenue_per_request_training.png",
-        ylabel="Avg lost revenue per request (lower is better)",
-        title="Avg Lost Revenue per Request vs Episode Number",
-        ma_color="darkred",
     ),
 )
 
@@ -139,13 +113,10 @@ class ComparisonTableRow:
 # still appear in compare/ plots and in verbose per-episode output.
 COMPARISON_TABLE_ROWS: tuple[ComparisonTableRow, ...] = (
     ComparisonTableRow("acceptance_ratio", "Acceptance Ratio", True),
-    ComparisonTableRow("avg_risk_integral", "Avg Risk Integral", False),
+    ComparisonTableRow("avg_risk_integral", "Avg Security Cost Heuristic", False),
     ComparisonTableRow("avg_sec_margin", "Avg Security Margin", True),
-    ComparisonTableRow("total_realized_incidents", "Total Realized Incidents", False),
-    ComparisonTableRow("total_incident_cost", "Total Lost Revenue", False),
     ComparisonTableRow("total_revenue", "Total Revenue", True),
     ComparisonTableRow("avg_revenue_per_request", "Avg Revenue / Request", True),
-    ComparisonTableRow("avg_lost_revenue_per_request", "Avg Lost Revenue / Request", False),
 )
 
 

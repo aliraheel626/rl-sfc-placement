@@ -16,13 +16,10 @@ Experiments were conducted on a workstation running Windows 10 with Python 3.12.
 \hline
 \textbf{Metric} & \textbf{Best-Fit mean} & \textbf{PPO mean} & \textbf{$\Delta$\%} & \textbf{Winner} \\ \hline
 Acceptance Ratio & 0.9634 & 0.9550 & $-0.87$\% & Best-Fit \\
-Avg Risk Integral & 0.0014 & 0.0006 & $-59.45$\% & PPO \\
+Avg Security Cost Heuristic & 0.0014 & 0.0006 & $-59.45$\% & PPO \\
 Avg Security Margin & 0.8525 & 1.7593 & 106.38\% & PPO \\
-Total Realized Incidents & 35.2000 & 8.2000 & $-76.70$\% & PPO \\
-Total Lost Revenue & 68.8000 & 44.8000 & $-34.88$\% & PPO \\
 Total Revenue & 9319.8000 & 9244.0000 & $-0.81$\% & Best-Fit \\
 Avg Revenue / Request & 9.3198 & 9.2440 & $-0.81$\% & Best-Fit \\
-Avg Lost Revenue / Request & 0.0688 & 0.0448 & $-34.88$\% & PPO \\
 \hline
 \end{tabularx}
 \end{table}
@@ -50,12 +47,12 @@ Figure~\ref{fig:ar} illustrates the training acceptance ratio (rolling average o
 
 \subsection{Risk and Incident Metrics During Training}
 
-Figure~\ref{fig:risk} shows the evolution of the average risk integral $\rho_r$ over training episodes. As the agent becomes more adept at minimizing risk-aware placement, the average risk per accepted SFC decreases.
+Figure~\ref{fig:risk} shows the evolution of the average security cost heuristic $\rho_r$ over training episodes. As the agent becomes more adept at minimizing risk-aware placement, the average security cost per accepted SFC decreases.
 
 \begin{figure}[!ht]
 \centering
 \includegraphics[width=0.8\textwidth]{models/sfc_risk_training.png}
-\caption{Average risk integral per accepted SFC during training.}
+\caption{Average security cost heuristic per accepted SFC during training.}
 \label{fig:risk}
 \end{figure}
 
@@ -73,13 +70,10 @@ Table~\ref{tab:results} presents the comparative evaluation of the Maskable PPO 
 \hline
 \textbf{Metric} & \textbf{Best-Fit mean} & \textbf{PPO mean} & \textbf{$\Delta$\%} & \textbf{Winner} \\ \hline
 Acceptance Ratio & 0.9634 & 0.9550 & $-0.87$\% & Best-Fit \\
-Avg Risk Integral & 0.0014 & 0.0006 & $-59.45$\% & PPO \\
+Avg Security Cost Heuristic & 0.0014 & 0.0006 & $-59.45$\% & PPO \\
 Avg Security Margin & 0.8525 & 1.7593 & 106.38\% & PPO \\
-Total Realized Incidents & 35.2000 & 8.2000 & $-76.70$\% & PPO \\
-Total Lost Revenue & 68.8000 & 44.8000 & $-34.88$\% & PPO \\
 Total Revenue & 9319.8000 & 9244.0000 & $-0.81$\% & Best-Fit \\
 Avg Revenue / Request & 9.3198 & 9.2440 & $-0.81$\% & Best-Fit \\
-Avg Lost Revenue / Request & 0.0688 & 0.0448 & $-34.88$\% & PPO \\
 \hline
 \end{tabularx}
 \end{table}
@@ -108,12 +102,12 @@ Figure~\ref{fig:rolling} presents the rolling average (window 50) of the accepta
 
 \subsection{Risk Performance}
 
-Figure~\ref{fig:risk_compare} shows the rolling average risk integral for both algorithms. The risk penalty in the RL reward function incentivizes the agent to prefer low-risk placements, which may trade some acceptance ratio for reduced operational risk relative to a greedy risk-only baseline.
+Figure~\ref{fig:risk_compare} shows the rolling average security cost heuristic for both algorithms. The risk penalty in the RL reward function incentivizes the agent to prefer low-risk placements, which may trade some acceptance ratio for reduced operational risk relative to a greedy risk-only baseline.
 
 \begin{figure}[!ht]
 \centering
 \includegraphics[width=0.8\textwidth]{compare/sfc_risk_training.png}
-\caption{Rolling average risk integral (window = 50) for Maskable PPO and Best-Fit over 1000 requests.}
+\caption{Rolling average security cost heuristic (window = 50) for Maskable PPO and Best-Fit over 1000 requests.}
 \label{fig:risk_compare}
 \end{figure}
 
@@ -128,33 +122,15 @@ Figure~\ref{fig:sec_margin} shows the rolling average security margin — the su
 \label{fig:sec_margin}
 \end{figure}
 
-\subsection{Revenue and Incident Cost}
+\subsection{Revenue}
 
-Figure~\ref{fig:revenue} presents the rolling average revenue earned per request and Figure~\ref{fig:lost_revenue} presents the rolling average lost revenue per request due to incidents. Together these metrics capture the economic impact of placement quality: a higher per-request revenue indicates more SFCs accepted for longer durations, while a lower per-request lost revenue indicates fewer incident-induced service disruptions.
+Figure~\ref{fig:revenue} presents the rolling average revenue earned per request. A higher per-request revenue indicates more SFCs accepted for longer durations.
 
 \begin{figure}[!ht]
 \centering
 \includegraphics[width=0.8\textwidth]{compare/revenue_training.png}
 \caption{Rolling average revenue per request (window = 50) for Maskable PPO and Best-Fit over 1000 requests.}
 \label{fig:revenue}
-\end{figure}
-
-\begin{figure}[!ht]
-\centering
-\includegraphics[width=0.8\textwidth]{compare/incident_cost_training.png}
-\caption{Rolling average lost revenue per request (window = 50) for Maskable PPO and Best-Fit over 1000 requests.}
-\label{fig:lost_revenue}
-\end{figure}
-
-\subsection{Realized Incidents}
-
-Figure~\ref{fig:incidents_compare} shows the rolling average realized incidents per request. This metric captures the Monte Carlo outcome of the stochastic incident process and validates that the deterministic risk integral $\rho_r$ correlates with actual incident occurrences.
-
-\begin{figure}[!ht]
-\centering
-\includegraphics[width=0.8\textwidth]{compare/realized_incidents_training.png}
-\caption{Rolling average realized incidents per request (window = 50) for Maskable PPO and Best-Fit over 1000 requests.}
-\label{fig:incidents_compare}
 \end{figure}
 
 \section{Analysis and Discussion}

@@ -24,7 +24,6 @@ from src.risk import (
     compute_node_risk_score,
     compute_placement_risk_score,
     decay_incident_pressure,
-    decrement_node_downtime,
     effective_node_security,
     robust_ratio,
 )
@@ -130,9 +129,6 @@ class SFCPlacementEnv(gym.Env):
             risk_cfg.get("incident_security_penalty", 0.60)
         )
         self.revenue_per_ttl_step = float(risk_cfg.get("revenue_per_ttl_step", 1.0))
-        self.incident_cost_reward_scale = float(
-            risk_cfg.get("incident_cost_reward_scale", 0.05)
-        )
 
         # Link latency bounds for latency-aware masking
         self.min_link_latency = self.config["substrate"]["links"]["latency"]["min"]
@@ -163,9 +159,6 @@ class SFCPlacementEnv(gym.Env):
         self.episode_vnf_tenancy_samples: list[float] = []
         self.episode_substrate_utilization_samples: list[float] = []
         self.episode_risk_scores: list[float] = []
-        self.episode_incidents: list[float] = []
-        self.episode_expected_incidents: list[float] = []
-        self.episode_incident_costs: list[float] = []
         self.episode_risk_integrals: list[float] = []
         self.episode_revenues: list[float] = []
 
@@ -173,13 +166,9 @@ class SFCPlacementEnv(gym.Env):
         self.total_requests = 0
         self.accepted_requests = 0
         self.total_episodes = 0
-        self.total_incidents: float = 0.0
-        self.total_incident_cost: float = 0.0
-        self.total_expected_incidents: float = 0.0
         self.total_risk_integral: float = 0.0
         self.total_revenue: float = 0.0
         self.node_incident_pressure: dict[int, float] = {}
-        self.node_downtime: dict[int, int] = {}
 
         # Rejection reason tracking
         self.rejection_reasons = {
@@ -267,13 +256,9 @@ class SFCPlacementEnv(gym.Env):
         self.episode_vnf_tenancy_samples = []
         self.episode_substrate_utilization_samples = []
         self.episode_risk_scores = []
-        self.episode_incidents = []
-        self.episode_expected_incidents = []
-        self.episode_incident_costs = []
         self.episode_risk_integrals = []
         self.episode_revenues = []
         self.node_incident_pressure = {node_id: 0.0 for node_id in range(self.num_nodes)}
-        self.node_downtime = {}
         self.total_episodes += 1
 
         # Generate first SFC request for this episode
@@ -292,7 +277,6 @@ class SFCPlacementEnv(gym.Env):
         decay_incident_pressure(
             self.node_incident_pressure, self.incident_pressure_decay
         )
-        decrement_node_downtime(self.node_downtime)
 
         # Generate new SFC request
         self.current_request = self.request_generator.generate_request()
@@ -385,36 +369,21 @@ class SFCPlacementEnv(gym.Env):
         # Sample substrate metrics after placement
         self._sample_substrate_metrics()
 
-        # Compute risk before tick(): with TTL=1, tick() can release this placement,
-        # so risk must be computed while the placement is still registered.
-        (
-            risk_integral,
-            realized_incidents,
-            incident_cost,
-            expected_incidents,
-            expected_lost_revenue,
-        ) = self._compute_request_risk(completed_placement)
+        # Compute security cost before tick(): with TTL=1, tick() can release this
+        # placement, so cost must be computed while the placement is still registered.
+        risk_integral = self._compute_request_risk(completed_placement)
         self.episode_risk_scores.append(risk_integral)
         self.episode_risk_integrals.append(risk_integral)
-        self.episode_incidents.append(realized_incidents)
-        self.episode_expected_incidents.append(expected_incidents)
-        self.episode_incident_costs.append(incident_cost)
-        self.total_incidents += realized_incidents
-        self.total_expected_incidents += expected_incidents
-        self.total_incident_cost += incident_cost
         self.total_risk_integral += risk_integral
         request_revenue = self.revenue_per_ttl_step * (self.current_request.ttl if self.current_request is not None else 1)
         self.episode_revenues.append(request_revenue)
         self.total_revenue += request_revenue
-        reward = (
-            self.acceptance_reward
-            - self.risk_lambda * risk_integral
-            - self.incident_cost_reward_scale * expected_lost_revenue
-        )
 
         self.recent_outcomes.append(1.0)
         windowed_ar = sum(self.recent_outcomes) / len(self.recent_outcomes)
-        reward *= 1.0 + self.ar_reward_weight * windowed_ar
+        reward = (self.acceptance_reward - self.risk_lambda * risk_integral) * (
+            1.0 + self.ar_reward_weight * windowed_ar
+        )
 
         # Check if episode is complete
         terminated = self.episode_requests >= self.max_requests_per_episode
@@ -431,11 +400,6 @@ class SFCPlacementEnv(gym.Env):
         info["sfc_complete"] = True  # This SFC was completed
         info["request_risk_score"] = risk_integral
         info["request_risk_integral"] = risk_integral
-        info["request_realized_incidents"] = realized_incidents
-        info["request_expected_incidents"] = expected_incidents
-        info["request_incidents"] = realized_incidents
-        info["request_incident_cost"] = incident_cost
-        info["request_expected_lost_revenue"] = expected_lost_revenue
         info["request_revenue"] = request_revenue
         return observation, reward, terminated, False, info
 
@@ -444,14 +408,8 @@ class SFCPlacementEnv(gym.Env):
     ) -> tuple[np.ndarray, float, bool, bool, dict]:
         """Handle SFC rejection."""
         risk_integral = 0.0
-        realized_incidents = 0.0
-        expected_incidents = 0.0
-        incident_cost = 0.0
         self.episode_risk_scores.append(risk_integral)
         self.episode_risk_integrals.append(risk_integral)
-        self.episode_incidents.append(realized_incidents)
-        self.episode_expected_incidents.append(expected_incidents)
-        self.episode_incident_costs.append(incident_cost)
         self.episode_revenues.append(0.0)
 
         # Track rejection reason
@@ -478,18 +436,16 @@ class SFCPlacementEnv(gym.Env):
         # Sample substrate metrics after rejection
         self._sample_substrate_metrics()
 
-        reward = (
-            self.rejection_penalty
-            - self.risk_lambda * risk_integral
-            - self.incident_cost_reward_scale * incident_cost
-        )
-
         self.recent_outcomes.append(0.0)
         windowed_ar = sum(self.recent_outcomes) / len(self.recent_outcomes)
         if self.ar_flip_rejection:
-            reward *= 1.0 + self.ar_reward_weight * (1.0 - windowed_ar)
+            reward = self.rejection_penalty * (
+                1.0 + self.ar_reward_weight * (1.0 - windowed_ar)
+            )
         else:
-            reward *= 1.0 + self.ar_reward_weight * windowed_ar
+            reward = self.rejection_penalty * (
+                1.0 + self.ar_reward_weight * windowed_ar
+            )
 
         # Check if episode is complete
         terminated = self.episode_requests >= self.max_requests_per_episode
@@ -505,15 +461,11 @@ class SFCPlacementEnv(gym.Env):
         info["sfc_complete"] = True  # This SFC was completed (rejected)
         info["request_risk_score"] = risk_integral
         info["request_risk_integral"] = risk_integral
-        info["request_realized_incidents"] = realized_incidents
-        info["request_expected_incidents"] = expected_incidents
-        info["request_incidents"] = realized_incidents
-        info["request_incident_cost"] = incident_cost
 
         return observation, reward, terminated, False, info
 
     def _placement_risk_cfg(self) -> dict:
-        """Risk parameters for compute_placement_risk_score (shared with baselines / compare)."""
+        """Security cost parameters for compute_placement_risk_score (shared with baselines / compare)."""
         return {
             "enabled": self.risk_enabled,
             "tenancy_ref_floor": self.tenancy_ref_floor,
@@ -522,16 +474,11 @@ class SFCPlacementEnv(gym.Env):
             "incident_base_rate": self.incident_base_rate,
             "incident_alpha": self.incident_alpha,
             "incident_beta": self.incident_beta,
-            "incident_pressure_gain": self.incident_pressure_gain,
             "incident_security_penalty": self.incident_security_penalty,
-            "revenue_per_ttl_step": self.revenue_per_ttl_step,
-            "incident_downtime_steps": self.incident_downtime_steps,
         }
 
-    def _compute_request_risk(
-        self, placement: list[int]
-    ):
-        """Compute stochastic, time-integrated risk for one accepted request."""
+    def _compute_request_risk(self, placement: list[int]) -> float:
+        """Compute deterministic security cost heuristic for one accepted placement."""
         ttl = self.current_request.ttl if self.current_request is not None else 1
         return compute_placement_risk_score(
             self.substrate,
@@ -541,7 +488,6 @@ class SFCPlacementEnv(gym.Env):
             self.max_security,
             self.max_ttl,
             self.node_incident_pressure,
-            self.node_downtime,
         )
 
     def _sample_substrate_metrics(self):
@@ -839,21 +785,6 @@ class SFCPlacementEnv(gym.Env):
             if self.episode_risk_scores
             else 0.0
         )
-        episode_avg_incidents = (
-            sum(self.episode_incidents) / len(self.episode_incidents)
-            if self.episode_incidents
-            else 0.0
-        )
-        episode_avg_expected_incidents = (
-            sum(self.episode_expected_incidents) / len(self.episode_expected_incidents)
-            if self.episode_expected_incidents
-            else 0.0
-        )
-        episode_avg_incident_cost = (
-            sum(self.episode_incident_costs) / len(self.episode_incident_costs)
-            if self.episode_incident_costs
-            else 0.0
-        )
         episode_total_revenue = sum(self.episode_revenues)
         episode_avg_risk_integral = (
             sum(self.episode_risk_integrals) / len(self.episode_risk_integrals)
@@ -881,18 +812,12 @@ class SFCPlacementEnv(gym.Env):
             "episode_avg_vnf_tenancy": episode_avg_vnf_tenancy,
             "episode_avg_substrate_util": episode_avg_substrate_util,
             "episode_avg_risk_score": episode_avg_risk_score,
-            "episode_avg_incidents": episode_avg_incidents,
-            "episode_avg_expected_incidents": episode_avg_expected_incidents,
-            "episode_avg_incident_cost": episode_avg_incident_cost,
             "episode_total_revenue": episode_total_revenue,
             "episode_avg_risk_integral": episode_avg_risk_integral,
             # Global stats
             "total_requests": self.total_requests,
             "accepted_requests": self.accepted_requests,
             "total_episodes": self.total_episodes,
-            "total_incidents": self.total_incidents,
-            "total_expected_incidents": self.total_expected_incidents,
-            "total_incident_cost": self.total_incident_cost,
             "total_revenue": self.total_revenue,
             "total_risk_integral": self.total_risk_integral,
             "acceptance_ratio": (
@@ -907,8 +832,6 @@ class SFCPlacementEnv(gym.Env):
         """Check if an action is valid for the current state."""
         if action < 0 or action >= self.num_nodes:
             return False  # Padded nodes or out-of-range
-        if self.node_downtime.get(action, 0) > 0:
-            return False
 
         current_vnf = self.current_request.vnfs[self.current_vnf_index]
 
@@ -979,9 +902,6 @@ class SFCPlacementEnv(gym.Env):
         feasible_mask = self.substrate.get_feasible_nodes(current_vnf, min_security)
         feasible_indices = np.where(feasible_mask)[0]
         for node_id in feasible_indices:
-            if self.node_downtime.get(node_id, 0) > 0:
-                feasible_mask[node_id] = False
-                continue
             eff_sec, _ = effective_node_security(
                 self.substrate,
                 node_id,

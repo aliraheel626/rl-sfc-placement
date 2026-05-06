@@ -26,7 +26,6 @@ from src.risk import (
     apply_incident_view,
     compute_placement_risk_score,
     decay_incident_pressure,
-    decrement_node_downtime,
     restore_incident_view,
 )
 from src.eval_reporting import (
@@ -51,7 +50,6 @@ def _build_risk_config(config: dict) -> dict:
         "incident_pressure_decay": float(risk.get("incident_pressure_decay", 0.92)),
         "incident_security_penalty": float(risk.get("incident_security_penalty", 0.60)),
         "revenue_per_ttl_step": float(risk.get("revenue_per_ttl_step", 1.0)),
-        "incident_downtime_steps": int(risk.get("incident_downtime_steps", 2)),
         "risk_lambda": float(risk.get("lambda", 0.0)),
     }
 
@@ -94,16 +92,10 @@ def evaluate_baseline(
     sfc_tenancy_samples = []  # Track SFC tenancy per occupied node over time
     vnf_tenancy_samples = []  # Track VNF tenancy per occupied node over time
     substrate_utilization_samples = []  # Track % of nodes being used over time
-    risk_score_samples = []  # Per-request risk score
-    realized_incident_samples = []
-    incident_cost_samples = []
-    total_expected_incidents = 0.0
-    total_realized_incidents = 0.0
-    total_incident_cost = 0.0
+    risk_score_samples = []  # Per-request security cost heuristic
     total_risk_integral = 0.0
     total_revenue = 0.0
     node_incident_pressure = {node_id: 0.0 for node_id in range(substrate_copy.num_nodes)}
-    node_downtime: dict[int, int] = {}
 
     start_time = time.perf_counter()
 
@@ -118,7 +110,6 @@ def evaluate_baseline(
             node_incident_pressure,
             risk_cfg["incident_pressure_decay"],
         )
-        decrement_node_downtime(node_downtime)
 
         # Generate a new request
         request = request_generator.generate_request()
@@ -135,7 +126,6 @@ def evaluate_baseline(
             node_incident_pressure,
             risk_cfg,
             max_security,
-            node_downtime,
         )
         placement = algorithm.place(
             substrate_copy,
@@ -190,13 +180,7 @@ def evaluate_baseline(
 
             # Register for TTL tracking
             substrate_copy.register_placement(request, placement)
-            (
-                risk_integral,
-                realized_incidents,
-                incident_cost,
-                expected_incidents,
-                _expected_lost_revenue,
-            ) = compute_placement_risk_score(
+            risk_integral = compute_placement_risk_score(
                 substrate_copy,
                 placement,
                 request.ttl,
@@ -204,14 +188,8 @@ def evaluate_baseline(
                 max_security,
                 max_ttl,
                 node_incident_pressure,
-                node_downtime,
             )
             risk_score_samples.append(risk_integral)
-            realized_incident_samples.append(realized_incidents)
-            incident_cost_samples.append(incident_cost)
-            total_expected_incidents += expected_incidents
-            total_realized_incidents += realized_incidents
-            total_incident_cost += incident_cost
             total_risk_integral += risk_integral
             req_revenue = risk_cfg.get("revenue_per_ttl_step", 1.0) * request.ttl
             total_revenue += req_revenue
@@ -244,10 +222,7 @@ def evaluate_baseline(
             rejected += 1
             acceptance_samples.append(0)
             revenue_samples.append(0.0)
-            # Rejected: no placement; risk 0 (consistent with env and RL eval)
             risk_score_samples.append(0.0)
-            realized_incident_samples.append(0.0)
-            incident_cost_samples.append(0.0)
 
     # Compute metrics
     total = accepted + rejected
@@ -274,12 +249,8 @@ def evaluate_baseline(
         else 0.0
     )
     avg_risk_score = sum(risk_score_samples) / len(risk_score_samples) if risk_score_samples else 0.0
-    avg_expected_incidents = total_expected_incidents / total if total > 0 else 0.0
-    avg_realized_incidents = total_realized_incidents / total if total > 0 else 0.0
-    avg_incident_cost = total_incident_cost / total if total > 0 else 0.0
     avg_risk_integral = total_risk_integral / total if total > 0 else 0.0
     avg_revenue_per_request = total_revenue / total if total > 0 else 0.0
-    avg_lost_revenue_per_request = total_incident_cost / total if total > 0 else 0.0
 
     # Baselines do not track rejection reason; use 0 for latency violation ratio
     latency_violation_ratio = 0.0
@@ -299,13 +270,7 @@ def evaluate_baseline(
         "avg_substrate_utilization": avg_substrate_utilization,
         "avg_risk_score": avg_risk_score,
         "avg_risk_integral": avg_risk_integral,
-        "avg_expected_incidents": avg_expected_incidents,
-        "avg_realized_incidents": avg_realized_incidents,
-        "avg_incident_cost": avg_incident_cost,
         "avg_revenue_per_request": avg_revenue_per_request,
-        "avg_lost_revenue_per_request": avg_lost_revenue_per_request,
-        "total_realized_incidents": total_realized_incidents,
-        "total_incident_cost": total_incident_cost,
         "total_revenue": total_revenue,
         "latencies": latencies,
         # Per-request samples for rolling average plots
@@ -315,8 +280,6 @@ def evaluate_baseline(
         "vnf_tenancy_samples": vnf_tenancy_samples,
         "substrate_utilization_samples": substrate_utilization_samples,
         "risk_score_samples": risk_score_samples,
-        "realized_incident_samples": realized_incident_samples,
-        "incident_cost_samples": incident_cost_samples,
         "security_margin_samples": security_margins,
     }
 
@@ -380,12 +343,7 @@ def evaluate_rl_agent(
     sfc_tenancy_samples = []  # Track SFC tenancy per occupied node over time
     vnf_tenancy_samples = []  # Track VNF tenancy per occupied node over time
     substrate_utilization_samples = []  # Track % of nodes being used over time
-    risk_score_samples = []  # Per-request integrated risk
-    realized_incident_samples = []
-    incident_cost_samples = []
-    total_expected_incidents = 0.0
-    total_realized_incidents = 0.0
-    total_incident_cost = 0.0
+    risk_score_samples = []  # Per-request security cost heuristic
     total_risk_integral = 0.0
     total_revenue = 0.0
 
@@ -446,17 +404,7 @@ def evaluate_rl_agent(
                 # Use risk from env info (computed before tick()); recomputing after step()
                 # would use post-tick substrate state and disagree with training rewards.
                 risk_score = info.get("request_risk_integral", info.get("request_risk_score", 0.0))
-                expected_incidents = info.get("request_expected_incidents", 0.0)
-                realized_incidents = info.get(
-                    "request_realized_incidents", info.get("request_incidents", 0.0)
-                )
-                incident_cost = info.get("request_incident_cost", 0.0)
                 risk_score_samples.append(risk_score)
-                realized_incident_samples.append(realized_incidents)
-                incident_cost_samples.append(incident_cost)
-                total_expected_incidents += expected_incidents
-                total_realized_incidents += realized_incidents
-                total_incident_cost += incident_cost
                 total_risk_integral += risk_score
                 req_revenue = info.get("request_revenue", 0.0)
                 total_revenue += req_revenue
@@ -467,12 +415,7 @@ def evaluate_rl_agent(
                 revenue_samples.append(0.0)
                 if info.get("rejection_reason") == "latency_violation":
                     latency_violations += 1
-                # Rejected: use env's risk from info (0) for consistency with training.
                 risk_score_samples.append(info.get("request_risk_integral", info.get("request_risk_score", 0.0)))
-                realized_incident_samples.append(
-                    info.get("request_realized_incidents", info.get("request_incidents", 0.0))
-                )
-                incident_cost_samples.append(info.get("request_incident_cost", 0.0))
 
             # Sample tenancy metrics after each request
             sfcs_per_node = env.unwrapped.substrate.get_sfcs_per_node()
@@ -531,12 +474,8 @@ def evaluate_rl_agent(
         else 0.0
     )
     avg_risk_score = sum(risk_score_samples) / len(risk_score_samples) if risk_score_samples else 0.0
-    avg_expected_incidents = total_expected_incidents / total if total > 0 else 0.0
-    avg_realized_incidents = total_realized_incidents / total if total > 0 else 0.0
-    avg_incident_cost = total_incident_cost / total if total > 0 else 0.0
     avg_risk_integral = total_risk_integral / total if total > 0 else 0.0
     avg_revenue_per_request = total_revenue / total if total > 0 else 0.0
-    avg_lost_revenue_per_request = total_incident_cost / total if total > 0 else 0.0
 
     return {
         "algorithm": "MaskablePPO",
@@ -553,13 +492,7 @@ def evaluate_rl_agent(
         "avg_substrate_utilization": avg_substrate_utilization,
         "avg_risk_score": avg_risk_score,
         "avg_risk_integral": avg_risk_integral,
-        "avg_expected_incidents": avg_expected_incidents,
-        "avg_realized_incidents": avg_realized_incidents,
-        "avg_incident_cost": avg_incident_cost,
         "avg_revenue_per_request": avg_revenue_per_request,
-        "avg_lost_revenue_per_request": avg_lost_revenue_per_request,
-        "total_realized_incidents": total_realized_incidents,
-        "total_incident_cost": total_incident_cost,
         "total_revenue": total_revenue,
         "latencies": latencies,
         # Per-request samples for rolling average plots
@@ -569,8 +502,6 @@ def evaluate_rl_agent(
         "vnf_tenancy_samples": vnf_tenancy_samples,
         "substrate_utilization_samples": substrate_utilization_samples,
         "risk_score_samples": risk_score_samples,
-        "realized_incident_samples": realized_incident_samples,
-        "incident_cost_samples": incident_cost_samples,
         "security_margin_samples": security_margins,
     }
 
@@ -670,22 +601,21 @@ def run_eval(
         print(f"Warning: Model not found at {model_path}")
 
     if verbose:
-        print("\n" + "=" * 230)
+        print("\n" + "=" * 160)
         print("COMPARISON RESULTS")
-        print("=" * 230)
+        print("=" * 160)
         print(
-            f"{'Algorithm':<20} {'Accepted':<10} {'Rejected':<10} {'Ratio':<10} {'Avg Latency':<12} {'Avg Sec Margin':<14} {'Avg SFC/Node':<14} {'Avg VNF/Node':<14} {'Substrate Util':<14} {'Risk Integral':<14} {'Real Inc':<10} {'Exp Inc':<10} {'Inc Cost':<10} {'Avg Time (ms)':<14}"
+            f"{'Algorithm':<20} {'Accepted':<10} {'Rejected':<10} {'Ratio':<10} {'Avg Latency':<12} {'Avg Sec Margin':<14} {'Avg SFC/Node':<14} {'Avg VNF/Node':<14} {'Substrate Util':<14} {'Sec Cost':<12} {'Avg Time (ms)':<14}"
         )
-        print("-" * 230)
+        print("-" * 160)
         for name, result in results.items():
             print(
                 f"{name:<20} {result['accepted']:<10} {result['rejected']:<10} "
                 f"{result['acceptance_ratio']:.4f}     {result['avg_latency']:<12.2f} {result.get('avg_sec_margin', 0):<14.4f} "
                 f"{result.get('avg_sfc_tenancy', 0):<14.2f} {result.get('avg_vnf_tenancy', 0):<14.2f} {result.get('avg_substrate_utilization', 0):<14.2%} "
-                f"{result.get('avg_risk_integral', 0):<14.4f} {result.get('avg_realized_incidents', 0):<10.4f} {result.get('avg_expected_incidents', 0):<10.4f} "
-                f"{result.get('avg_incident_cost', 0):<10.4f} {result.get('avg_time_ms', 0):.3f}"
+                f"{result.get('avg_risk_integral', 0):<12.4f} {result.get('avg_time_ms', 0):.3f}"
             )
-        print("=" * 230)
+        print("=" * 160)
 
     if save_plot:
         plot_comparison(results, save_plot)
@@ -874,23 +804,7 @@ def plot_rolling_comparison(
         "security_score_training.png",
     )
 
-    # 4) Realized incidents per request (rolling)
-    _rolling_chart(
-        "realized_incident_samples",
-        "Realized Incidents per Request",
-        f"Rolling Avg Realized Incidents (window={window_size})",
-        "realized_incidents_training.png",
-    )
-
-    # 5) Lost revenue / incident cost per request (rolling)
-    _rolling_chart(
-        "incident_cost_samples",
-        "Lost Revenue per Request (lower is better)",
-        f"Rolling Avg Lost Revenue per Request (window={window_size})",
-        "incident_cost_training.png",
-    )
-
-    # 6) Revenue per request (rolling)
+    # 4) Revenue per request (rolling)
     _rolling_chart(
         "revenue_samples",
         "Revenue per Request",
@@ -1019,18 +933,8 @@ def plot_rolling_averages(results: dict, output_dir: str, window_size: int = 50)
         ),
         (
             "risk_score_samples",
-            "Risk Integral",
+            "Security Cost Heuristic",
             "risk_score_rolling.png",
-        ),
-        (
-            "realized_incident_samples",
-            "Realized Incidents per Request",
-            "realized_incidents_rolling.png",
-        ),
-        (
-            "incident_cost_samples",
-            "Incident Cost per Request",
-            "incident_cost_rolling.png",
         ),
     ]
 

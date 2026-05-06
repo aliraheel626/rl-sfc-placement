@@ -47,32 +47,17 @@ def decay_incident_pressure(
             node_incident_pressure[node_id] = 0.0
 
 
-def decrement_node_downtime(node_downtime: dict[int, int]) -> None:
-    """Decrement downtime counters by one request tick. Remove when zero."""
-    for node_id in list(node_downtime.keys()):
-        if node_downtime[node_id] > 0:
-            node_downtime[node_id] -= 1
-        if node_downtime[node_id] <= 0:
-            del node_downtime[node_id]
-
-
 def apply_incident_view(
     substrate: SubstrateNetwork,
     node_incident_pressure: dict[int, float],
     risk_cfg: dict,
     max_security: float,
-    node_downtime: dict[int, int] | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
-    Temporarily project incident state into substrate feasibility fields
-    so baseline planners see the same node degradation as RL masking.
-
-    Nodes with active downtime (node_downtime[i] > 0) have their resources
-    zeroed so baselines cannot place on them, mirroring the RL action mask.
+    Temporarily project incident pressure into substrate security fields
+    so baseline planners see the same effective security as RL masking.
     Returns backups for restore_incident_view.
     """
-    if node_downtime is None:
-        node_downtime = {}
     original_resource_matrix = substrate.resource_matrix.copy()
     original_security = np.array(
         [substrate.node_resources[i]["security_score"] for i in range(substrate.num_nodes)],
@@ -101,13 +86,6 @@ def apply_incident_view(
         )
         substrate.node_resources[node_id]["security_score"] = eff_security
         substrate.resource_matrix[node_id, 3] = eff_security
-        if node_downtime.get(node_id, 0) > 0:
-            substrate.node_resources[node_id]["ram"] = 0.0
-            substrate.node_resources[node_id]["cpu"] = 0.0
-            substrate.node_resources[node_id]["storage"] = 0.0
-            substrate.resource_matrix[node_id, 0] = 0.0
-            substrate.resource_matrix[node_id, 1] = 0.0
-            substrate.resource_matrix[node_id, 2] = 0.0
     return (
         original_resource_matrix,
         original_security,
@@ -192,34 +170,17 @@ def compute_placement_risk_score(
     max_security: float,
     max_ttl: int,
     node_incident_pressure: dict[int, float],
-    node_downtime: dict[int, int],
-):
+) -> float:
     """
-    TTL-aware expected-loss risk integral and stochastic incident metrics.
+    TTL-aware deterministic security cost heuristic for one accepted placement.
 
-    risk_integral is fully deterministic:
-        risk = min(mean_i(p_base_i × sfcs_i) × exposure_steps / T_max, 1.0)
+        rho_r = min(mean_i(p_base_i × sfcs_i) × exposure_steps / T_max, 1.0)
 
-    Monte Carlo rolls produce realized_incidents and trigger node downtime.
-    When a node takes a hit it is marked unavailable for incident_downtime_steps
-    request ticks (mutates node_downtime in-place).
-
-    incident_cost (stochastic) = Σ_{nodes_with_hits} sfcs_on_node
-                                  × revenue_per_ttl_step × downtime_steps
-
-    expected_lost_revenue (deterministic) = Σ_i P(node i hit) × sfcs_i
-                                             × revenue_per_ttl_step × downtime_steps
-    where P(node i hit) = 1 - (1 - p_base_i)^exposure_steps
-    This is the learnable, noise-free version used in the reward signal.
-
-    Mutates node_incident_pressure and node_downtime in-place.
-
-    Returns:
-        (risk_integral, realized_incidents, incident_cost,
-         expected_incidents, expected_lost_revenue)
+    Symmetrical with compute_node_risk_score: placement cost = mean of per-node scores.
+    Lower is better. Does not mutate any state.
     """
     if not risk_cfg.get("enabled", False) or not placement:
-        return 0.0, 0.0, 0.0, 0.0
+        return 0.0
 
     penalty = risk_cfg["incident_security_penalty"]
     sfcs_per_node = substrate.get_sfcs_per_node()
@@ -253,47 +214,5 @@ def compute_placement_risk_score(
     p_base *= 1.0 + pressures
     np.clip(p_base, 0.0, 1.0, out=p_base)
 
-    # Deterministic risk integral: mean expected loss per node × TTL exposure.
-    # Symmetrical with compute_node_risk_score: placement_risk = mean(compute_node_risk_score_i).
     ttl_exposure = exposure_steps / max(max_ttl, 1)
-    risk_integral = min(float(np.mean(p_base * sfc_counts)) * ttl_exposure, 1.0)
-
-    # Stochastic incident simulation (for realized_incidents / incident_cost only).
-    rolls = np.random.random((exposure_steps, n_nodes))
-    hits = rolls < p_base[np.newaxis, :]
-    expected_incidents = float(p_base.sum() * exposure_steps)
-    realized_incidents = float(hits.sum())
-
-    revenue_per_ttl_step = risk_cfg.get("revenue_per_ttl_step", 1.0)
-    downtime_steps = int(risk_cfg.get("incident_downtime_steps", 2))
-    pressure_gain = risk_cfg["incident_pressure_gain"]
-    incident_cost = 0.0
-
-    for idx, node_id in enumerate(placement_nodes):
-        node_hits = int(hits[:, idx].sum())
-        if node_hits > 0:
-            node_incident_pressure[node_id] = min(
-                1.0,
-                node_incident_pressure.get(node_id, 0.0) + pressure_gain * node_hits,
-            )
-            # Mark node unavailable for downtime_steps request ticks.
-            node_downtime[node_id] = max(
-                node_downtime.get(node_id, 0), downtime_steps
-            )
-            # Revenue lost = every SFC on this node loses downtime_steps ticks of revenue.
-            incident_cost += sfc_counts[idx] * revenue_per_ttl_step * downtime_steps
-
-    # Deterministic expected lost revenue: P(node hit) × sfcs × revenue × downtime.
-    # P(node i hit in exposure_steps steps) = 1 - (1 - p_base_i)^exposure_steps
-    p_hit = 1.0 - np.power(np.maximum(1.0 - p_base, 0.0), exposure_steps)
-    expected_lost_revenue = float(
-        np.sum(p_hit * sfc_counts) * revenue_per_ttl_step * downtime_steps
-    )
-
-    return (
-        float(risk_integral),
-        float(realized_incidents),
-        float(incident_cost),
-        float(expected_incidents),
-        expected_lost_revenue,
-    )
+    return float(min(float(np.mean(p_base * sfc_counts)) * ttl_exposure, 1.0))

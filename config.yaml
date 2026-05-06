@@ -99,11 +99,14 @@ rewards:
   acceptance_ratio_window: 10            # number of recent requests to consider
   acceptance_ratio_reward_weight: 0.5    # scaling factor for the multiplicative modifier
   acceptance_ratio_flip_rejection: true  # use flipped multiplier (1-AR) on rejections
+  # Per-VNF shaping rewards (applied at every VNF placement step)
+  security_margin_weight: 0.1    # reward for (s_eff - s_min) / s_max at each placed node
+  colocation_penalty_weight: 0.1 # penalty for SFC co-location at each placed node
+  colocation_ref_sfcs: 3.0       # normalization reference: SFC count that maps to full penalty
 
 # Risk + Incident realism (full replacement model)
 risk:
   enabled: true
-  lambda: 300 # Reward penalty: reward -= lambda * risk_integral
 
   # Robust normalization floors (scale-aware and topology-agnostic)
   tenancy_ref_floor: 1.0

@@ -113,9 +113,17 @@ class SFCPlacementEnv(gym.Env):
             "acceptance_ratio_flip_rejection", True
         )
         self.recent_outcomes: deque[float] = deque(maxlen=self.ar_window_size)
+        self.security_margin_weight = float(
+            self.config["rewards"].get("security_margin_weight", 0.1)
+        )
+        self.colocation_penalty_weight = float(
+            self.config["rewards"].get("colocation_penalty_weight", 0.1)
+        )
+        self.colocation_ref_sfcs = float(
+            self.config["rewards"].get("colocation_ref_sfcs", 3.0)
+        )
         risk_cfg = self.config.get("risk", {})
         self.risk_enabled = risk_cfg.get("enabled", False)
-        self.risk_lambda = float(risk_cfg.get("lambda", 0.0))
         self.tenancy_ref_floor = float(risk_cfg.get("tenancy_ref_floor", 1.0))
         self.load_ref_floor = float(risk_cfg.get("load_ref_floor", 1.0))
         self.incident_base_rate = float(risk_cfg.get("incident_base_rate", 0.025))
@@ -352,6 +360,15 @@ class SFCPlacementEnv(gym.Env):
             norm_latency = min(hop_latency / self.current_request.max_latency, 1.0)
             reward -= 0.3 * norm_latency
 
+        # Security margin shaping: reward placing on nodes with security well above the request minimum
+        node_sec = float(self.substrate.node_resources[action]["security_score"])
+        sec_margin = max(node_sec - self.current_request.min_security_score, 0.0) / self.max_security
+        reward += self.security_margin_weight * sec_margin
+
+        # Co-location shaping: penalise placing on nodes that already host many SFC chains
+        sfc_count = float(self.substrate.get_sfcs_per_node().get(action, 0))
+        reward -= self.colocation_penalty_weight * min(sfc_count / self.colocation_ref_sfcs, 1.0)
+
         return observation, reward, False, False, info
 
     def _handle_acceptance(self) -> tuple[np.ndarray, float, bool, bool, dict]:
@@ -360,6 +377,10 @@ class SFCPlacementEnv(gym.Env):
         completed_placement = self.current_placement.copy()
         completed_min_security = self.current_request.min_security_score
 
+        # Snapshot SFC counts BEFORE registration so the last-VNF shaping sees
+        # the co-location count that existed when the placement decision was made.
+        sfcs_before_register = self.substrate.get_sfcs_per_node()
+
         self.substrate.register_placement(self.current_request, self.current_placement)
         self.accepted_requests += 1
         self.episode_accepted += 1
@@ -367,8 +388,7 @@ class SFCPlacementEnv(gym.Env):
         # Sample substrate metrics after placement
         self._sample_substrate_metrics()
 
-        # Compute security cost before tick(): with TTL=1, tick() can release this
-        # placement, so cost must be computed while the placement is still registered.
+        # Security cost heuristic is computed for evaluation tracking only (not in reward).
         risk_integral = self._compute_request_risk(completed_placement)
         self.episode_risk_scores.append(risk_integral)
         self.episode_risk_integrals.append(risk_integral)
@@ -377,9 +397,20 @@ class SFCPlacementEnv(gym.Env):
         self.episode_revenues.append(request_revenue)
         self.total_revenue += request_revenue
 
+        # Shaping signal for the last VNF placement
+        last_node = completed_placement[-1]
+        last_sec = float(self.substrate.node_resources[last_node]["security_score"])
+        last_margin = max(last_sec - completed_min_security, 0.0) / self.max_security
+        last_sfc_count = float(sfcs_before_register.get(last_node, 0))
+        last_coloc = min(last_sfc_count / self.colocation_ref_sfcs, 1.0)
+        terminal_shaping = (
+            self.security_margin_weight * last_margin
+            - self.colocation_penalty_weight * last_coloc
+        )
+
         self.recent_outcomes.append(1.0)
         windowed_ar = sum(self.recent_outcomes) / len(self.recent_outcomes)
-        reward = (self.acceptance_reward - self.risk_lambda * risk_integral) * (
+        reward = (self.acceptance_reward + terminal_shaping) * (
             1.0 + self.ar_reward_weight * windowed_ar
         )
 

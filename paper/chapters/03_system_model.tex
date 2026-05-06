@@ -136,19 +136,25 @@ Upon action $a_t = n_k$ (placing VNF $v_k$ on node $n_k$):
 
 \subsection{Reward Function}
 
-The reward signal is designed to encourage high acceptance ratios while penalizing operational risk:
+The reward signal is designed to encourage high acceptance ratios while shaping per-VNF decisions toward high security margin and low co-location:
 
 \textbf{Intermediate step reward} (after placing VNF $v_k$, $k < K_r$):
 \begin{equation}
-r_t^{\text{step}} = 0.1 - 0.3 \cdot \min\!\left(\frac{L(n_{k-1}, n_k)}{\ell_r^{\max}}, 1\right).
+r_t^{\text{step}} = 0.1
+  - 0.3 \cdot \min\!\left(\frac{L(n_{k-1}, n_k)}{\ell_r^{\max}}, 1\right)
+  + \alpha_s \cdot \frac{\max\!\left(s_{n_k}^{\text{eff}} - s_r^{\min},\, 0\right)}{s_{\max}}
+  - \alpha_c \cdot \min\!\left(\frac{\text{SFC}(n_k)}{S_{\text{ref}}},\, 1\right).
 \end{equation}
-The 0.1 progress bonus rewards feasible VNF placements; the latency penalty encourages co-location of VNFs to reduce hop latency.
+The 0.1 progress bonus rewards feasible VNF placements; the latency term encourages locality. The security margin term ($\alpha_s = 0.1$) rewards placing on nodes whose effective security exceeds the request minimum, directly incentivising high-margin placements. The co-location penalty ($\alpha_c = 0.1$, $S_{\text{ref}} = 3$) discourages stacking SFCs on already-occupied nodes, reducing blast radius.
 
 \textbf{Terminal acceptance reward:}
 \begin{equation}
-r_T^{\text{acc}} = \left( R_{\text{acc}} - \lambda \cdot \rho_r \right) \cdot \left(1 + \omega \cdot \overline{\text{AR}}_w\right),
+r_T^{\text{acc}} = \left( R_{\text{acc}}
+  + \alpha_s \cdot \frac{\max\!\left(s_{n_{K_r}}^{\text{eff}} - s_r^{\min},\, 0\right)}{s_{\max}}
+  - \alpha_c \cdot \min\!\left(\frac{\text{SFC}^{-}(n_{K_r})}{S_{\text{ref}}},\, 1\right)
+\right) \cdot \left(1 + \omega \cdot \overline{\text{AR}}_w\right),
 \end{equation}
-where $R_{\text{acc}} = 1$ is the base acceptance reward, $\lambda = 4$ is the risk penalty coefficient, $\rho_r \in [0,1]$ is the security cost heuristic for request $r$, $\omega = 0.5$ is the windowed AR weight, and $\overline{\text{AR}}_w$ is the acceptance ratio over the last $w = 10$ requests.
+where $R_{\text{acc}} = 1$, $\text{SFC}^{-}(n_{K_r})$ is the chain count on the last placement node \emph{before} the current SFC is registered, $\omega = 0.5$, and $\overline{\text{AR}}_w$ is the acceptance ratio over the last $w = 10$ requests. The security cost heuristic $\rho_r$ is computed for evaluation purposes but is not part of the reward signal.
 
 \textbf{Terminal rejection reward:}
 \begin{equation}
@@ -198,4 +204,4 @@ The DRL agent seeks to maximize the expected cumulative discounted reward over a
 \begin{equation}
 J(\pi) = \mathbb{E}_{\pi}\!\left[\sum_{t=0}^{T} \gamma^t r_t\right],
 \end{equation}
-with discount factor $\gamma = 0.99$. This objective simultaneously captures acceptance ratio (via the $R_{\text{acc}} / R_{\text{rej}}$ terms), latency efficiency (via intermediate latency penalties), and security posture risk (via the $\lambda \rho_r$ penalty), providing a holistic measure of intelligent, security-posture-aware placement quality.
+with discount factor $\gamma = 0.99$. This objective simultaneously captures acceptance ratio (via the $R_{\text{acc}} / R_{\text{rej}}$ terms), latency efficiency (via intermediate latency penalties), security margin quality (via the $\alpha_s$ shaping bonus), and co-location risk (via the $\alpha_c$ shaping penalty), providing a holistic measure of intelligent, security-posture-aware placement quality.

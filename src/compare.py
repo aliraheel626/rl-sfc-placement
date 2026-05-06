@@ -49,7 +49,6 @@ def _build_risk_config(config: dict) -> dict:
         "incident_pressure_decay": float(risk.get("incident_pressure_decay", 0.92)),
         "incident_security_penalty": float(risk.get("incident_security_penalty", 0.60)),
         "revenue_per_ttl_step": float(risk.get("revenue_per_ttl_step", 1.0)),
-        "risk_lambda": float(risk.get("lambda", 0.0)),
     }
 
 

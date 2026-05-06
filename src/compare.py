@@ -1223,6 +1223,63 @@ def plot_comparison_episodes(
     )
 
 
+def _write_results_table_tex(
+    by_algo: dict,
+    bf_key: str,
+    ppo_key: str,
+    output_dir: str,
+    n_paired: int,
+) -> None:
+    """
+    Write COMPARISON_TABLE_ROWS as a LaTeX table body to <output_dir>/results_table.tex.
+
+    The file contains only the data rows (no tabular environment, no header, no rules)
+    so it can be \input{} inside any table that uses the same five-column layout:
+        Metric  &  BF mean  &  PPO mean  &  Delta%  &  Winner  \\
+    """
+    from src.eval_reporting import COMPARISON_TABLE_ROWS
+
+    _FMT: dict[str, str] = {"total_revenue": ".2f"}
+
+    out = Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    path = out / "results_table.tex"
+
+    lines: list[str] = []
+    for row in COMPARISON_TABLE_ROWS:
+        bf_vals  = by_algo[bf_key].get(row.key,  [])[:n_paired]
+        ppo_vals = by_algo[ppo_key].get(row.key, [])[:n_paired]
+        if not bf_vals or not ppo_vals:
+            continue
+        bf_mean  = float(np.mean(bf_vals))
+        ppo_mean = float(np.mean(ppo_vals))
+
+        fmt    = _FMT.get(row.key, ".4f")
+        bf_str  = format(bf_mean,  fmt)
+        ppo_str = format(ppo_mean, fmt)
+
+        if bf_mean != 0.0:
+            pct  = (ppo_mean - bf_mean) / abs(bf_mean) * 100.0
+            sign = "+" if pct > 0 else ""
+            delta_str = f"${sign}{pct:.2f}$\\%"
+            if row.higher_is_better:
+                winner = "PPO" if pct > 0 else ("Best-Fit" if pct < 0 else "tie")
+            else:
+                winner = "PPO" if pct < 0 else ("Best-Fit" if pct > 0 else "tie")
+        else:
+            delta_str = "---"
+            winner    = "---"
+
+        lines.append(
+            f"{row.label} & {bf_str} & {ppo_str} & {delta_str} & {winner} \\\\"
+        )
+
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(lines) + "\n")
+
+    print(f"LaTeX results table written to: {path}")
+
+
 def main():
     """Main entry point with argument parsing."""
     import pickle
@@ -1402,6 +1459,7 @@ def main():
                 f"{winner:>{col_w[4]}}"
             )
         print(sep)
+        _write_results_table_tex(by_algo, bf_key, ppo_key, out_dir, n_paired)
     elif not ppo_key:
         print("\n(No PPO results - skipping comparison table; run without --no-model)")
 

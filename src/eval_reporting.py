@@ -15,13 +15,10 @@ from typing import Any, Mapping, MutableMapping, Optional
 TRACKED_EVAL_METRIC_KEYS: tuple[str, ...] = (
     "acceptance_ratio",
     "latency_violation_ratio",
-    "avg_risk_integral",
     "avg_sfc_tenancy",
     "avg_vnf_tenancy",
     "avg_substrate_utilization",
     "avg_sec_margin",
-    "total_revenue",
-    "avg_revenue_per_request",
 )
 
 
@@ -46,13 +43,6 @@ EVAL_PLOT_SPECS: tuple[EvalPlotSpec, ...] = (
         title="Episode Acceptance Ratio vs Episode Number",
         ma_color="orange",
         ylim=(0.0, 1.05),
-    ),
-    EvalPlotSpec(
-        key="avg_risk_integral",
-        filename="sfc_risk_training.png",
-        ylabel="Security Cost Heuristic (lower is better)",
-        title="Avg Security Cost Heuristic vs Episode Number",
-        ma_color="purple",
     ),
     EvalPlotSpec(
         key="avg_substrate_utilization",
@@ -84,20 +74,6 @@ EVAL_PLOT_SPECS: tuple[EvalPlotSpec, ...] = (
         title="Avg Security Margin vs Episode Number",
         ma_color="teal",
     ),
-    EvalPlotSpec(
-        key="total_revenue",
-        filename="revenue_training.png",
-        ylabel="Total Revenue (episode sum, higher is better)",
-        title="Total Revenue vs Episode Number",
-        ma_color="seagreen",
-    ),
-    EvalPlotSpec(
-        key="avg_revenue_per_request",
-        filename="avg_revenue_per_request_training.png",
-        ylabel="Avg revenue earned per request (all requests, rejects = 0)",
-        title="Avg Revenue Earned per Request vs Episode Number",
-        ma_color="forestgreen",
-    ),
 )
 
 
@@ -111,20 +87,13 @@ class ComparisonTableRow:
 # PPO vs BestFit summary table (main() in compare.py).
 COMPARISON_TABLE_ROWS: tuple[ComparisonTableRow, ...] = (
     ComparisonTableRow("acceptance_ratio", "Acceptance Ratio", True),
-    ComparisonTableRow("avg_risk_integral", "Avg Security Cost Heuristic", False),
     ComparisonTableRow("avg_sec_margin", "Avg Security Margin", True),
-    ComparisonTableRow("total_revenue", "Total Revenue", True),
-    ComparisonTableRow("avg_revenue_per_request", "Avg Revenue / Request", True),
     ComparisonTableRow("avg_sfc_tenancy", "Avg SFC Tenancy (SFCs/occupied node)", False),
     ComparisonTableRow("avg_vnf_tenancy", "Avg VNF Tenancy (VNFs/occupied node)", False),
 )
 
 
 def get_eval_metric(res: Mapping[str, Any], key: str) -> float:
-    """Extract a scalar from a run_eval result; handles avg_risk_integral fallback."""
-    if key == "avg_risk_integral":
-        v = res.get("avg_risk_integral", res.get("avg_risk_score", 0.0))
-        return float(v) if v is not None else 0.0
     v = res.get(key, 0.0)
     return float(v) if v is not None else 0.0
 

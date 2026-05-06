@@ -10,7 +10,7 @@ The proposed framework makes the following contributions:
 
 \begin{enumerate}
   \item An \textbf{intelligent DRL-based placement agent} (Maskable PPO) that guarantees the feasibility of every accepted placement through hard action masking enforcing resource, bandwidth, latency, security posture, and isolation constraints simultaneously.
-  \item A \textbf{security cost model} that quantifies operational risk as the mean per-node product of incident probability (driven by security posture, load, and incident pressure), chain co-location count, and TTL-proportional exposure, as a deterministic security cost heuristic coupled to the reward signal.
+  \item A \textbf{security posture model} that quantifies per-node incident probability $q_n$ driven by effective security score, load, and incident pressure, providing the substrate risk signal consumed by the GNN feature extractor and the Best-Fit baseline.
   \item A \textbf{GNN feature extractor} (supporting GCN, GAT, and GraphSAGE) with attention-weighted graph aggregation and MLP global context fusion, enabling topology-aware and security posture-aware placement decisions within the DRL policy.
   \item A \textbf{windowed acceptance ratio reward modifier} that provides adaptive, curriculum-style reward scaling to improve training stability of the DRL agent.
   \item A \textbf{fair evaluation framework} that aligns the RNG state across algorithms to ensure unbiased performance comparison on identical request streams.
@@ -20,13 +20,13 @@ The proposed framework makes the following contributions:
 
 The experimental results demonstrate that the intelligent DRL agent (Maskable PPO) successfully learns a security posture aware placement policy that achieves competitive acceptance ratios and risk metrics on a 25-node substrate network. The action masking mechanism provably enforces all hard constraints — including security posture constraints — eliminating the constraint-violation failure mode that plagues penalty-based soft constraint approaches. The GNN feature extractor provides topology-aware and security posture-aware embeddings that enable globally informed placement decisions, a capability that flat MLP policies lack.
 
-The security cost model introduces a principled operational objective beyond simple acceptance ratio maximization. By coupling the deterministic security cost heuristic to the reward signal, the intelligent DRL agent learns to prefer placements that are both feasible and operationally resilient, avoiding nodes with degraded security posture and high co-location counts. The incident pressure decay model captures the temporal dynamics of node security posture in a shared NFV environment.
+The per-VNF shaping rewards introduce principled security objectives beyond simple acceptance ratio maximization. By rewarding security margin and penalising co-location at every VNF placement step, the intelligent DRL agent learns to prefer placements that are both feasible and operationally resilient — favouring nodes with strong security posture and avoiding hot-spots. The incident pressure decay model captures the temporal dynamics of node security posture in a shared NFV environment.
 
 The Best-Fit by Minimum Risk baseline serves as a strong greedy comparator. The key advantage of the intelligent DRL approach lies in its ability to reason about long-term consequences of placement decisions — preserving low-risk, high-security-posture, high-resource nodes for future demanding requests — a capability beyond reach of any myopic greedy strategy.
 
 \subsection{Comparative summary (aligned evaluation)}
 
-Table~\ref{tab:conclusion_compare} summarizes the mean metrics across evaluation episodes for Best-Fit versus Maskable PPO on the same aligned request stream (RNG state matched between algorithms). Acceptance ratio and total revenue differ by less than one percent in favour of Best-Fit, but PPO substantially improves security-oriented outcomes: lower average security cost heuristic and higher average security margin.
+Table~\ref{tab:conclusion_compare} summarizes the mean metrics across evaluation episodes for Best-Fit versus Maskable PPO on the same aligned request stream (RNG state matched between algorithms). Acceptance ratio is competitive between the two algorithms, but PPO substantially improves security-oriented outcomes: higher average security margin and more balanced per-node tenancy.
 
 \begin{table}[!ht]
 \centering

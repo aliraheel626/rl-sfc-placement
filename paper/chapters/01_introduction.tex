@@ -256,10 +256,10 @@ The principal contributions of this thesis are:
   bandwidth, security posture, and isolation requirements are all
   enforced before any action is sampled --- so every chain the agent
   accepts is feasible by construction.
-  \item A \textbf{security cost model}
-  combining load-dependent incident probability, chain co-location
-  (blast radius), and TTL-proportional exposure into a deterministic
-  security cost heuristic $\rho \in [0,1]$.
+  \item A \textbf{security posture model} capturing per-node incident
+  probability driven by effective security score, load, and accumulated
+  incident pressure, exposing this risk signal to the GNN policy and
+  the Best-Fit baseline.
   \item A \textbf{topology-aware GNN feature extractor} supporting
   GCN, GAT, and GraphSAGE variants with attention-weighted aggregation
   and MLP-based global context fusion, endowing the DRL policy with
@@ -273,9 +273,8 @@ The principal contributions of this thesis are:
   risk-minimising best-fit baseline so that both process identical
   request streams.
   \item A \textbf{comprehensive experimental analysis} covering
-  acceptance ratio, security cost heuristic, security margin, substrate
-  utilization, per-node SFC/VNF tenancy, and total and per-request
-  revenue.
+  acceptance ratio, security margin, substrate utilization, and
+  per-node SFC/VNF tenancy distributions.
 \end{enumerate}
 
 \section{Thesis Organization}

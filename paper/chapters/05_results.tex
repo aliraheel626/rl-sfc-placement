@@ -41,17 +41,6 @@ Figure~\ref{fig:ar} illustrates the training acceptance ratio (rolling average o
 \label{fig:ar}
 \end{figure}
 
-\subsection{Security Cost Heuristic During Training}
-
-Figure~\ref{fig:risk} shows the evolution of the average security cost heuristic $\rho_r$ over training episodes. As the agent becomes more adept at minimizing risk-aware placement, the average security cost per accepted SFC decreases.
-
-\begin{figure}[!ht]
-\centering
-\includegraphics[width=0.8\textwidth]{models/sfc_risk_training.png}
-\caption{Average security cost heuristic per accepted SFC during training.}
-\label{fig:risk}
-\end{figure}
-
 \section{Comparative Evaluation}
 
 \subsection{Acceptance Ratio}
@@ -92,17 +81,6 @@ Figure~\ref{fig:rolling} presents the rolling average (window 50) of the accepta
 \label{fig:rolling}
 \end{figure}
 
-\subsection{Risk Performance}
-
-Figure~\ref{fig:risk_compare} shows the rolling average security cost heuristic for both algorithms. The risk penalty in the RL reward function incentivizes the agent to prefer low-risk placements, which may trade some acceptance ratio for reduced operational risk relative to a greedy risk-only baseline.
-
-\begin{figure}[!ht]
-\centering
-\includegraphics[width=0.8\textwidth]{compare/sfc_risk_training.png}
-\caption{Rolling average security cost heuristic (window = 50) for Maskable PPO and Best-Fit over 1000 requests.}
-\label{fig:risk_compare}
-\end{figure}
-
 \subsection{Security Margin}
 
 Figure~\ref{fig:sec_margin} shows the rolling average security margin — the surplus of the placement node's effective security score over the SFC's minimum requirement — across the evaluation. A higher margin indicates that the algorithm consistently selects nodes with stronger security posture than strictly necessary.
@@ -112,17 +90,6 @@ Figure~\ref{fig:sec_margin} shows the rolling average security margin — the su
 \includegraphics[width=0.8\textwidth]{compare/security_score_training.png}
 \caption{Rolling average security margin (window = 50) for Maskable PPO and Best-Fit over 1000 requests.}
 \label{fig:sec_margin}
-\end{figure}
-
-\subsection{Revenue}
-
-Figure~\ref{fig:revenue} presents the rolling average revenue earned per request. A higher per-request revenue indicates more SFCs accepted for longer durations.
-
-\begin{figure}[!ht]
-\centering
-\includegraphics[width=0.8\textwidth]{compare/revenue_training.png}
-\caption{Rolling average revenue per request (window = 50) for Maskable PPO and Best-Fit over 1000 requests.}
-\label{fig:revenue}
 \end{figure}
 
 \subsection{Per-Node Tenancy Distribution}
@@ -158,7 +125,7 @@ Action masking provides three key benefits in this framework. First, it guarante
 
 \subsection{Effect of Security Posture-Aware Reward}
 
-The security posture risk penalty coefficient $\lambda = 4$ creates a trade-off between acceptance ratio and operational risk. A higher $\lambda$ biases the intelligent DRL agent toward fewer, less risky placements that favor nodes with strong security posture; a lower $\lambda$ prioritizes acceptance. The windowed AR modifier provides additional stability: when the agent has recently been accepting many requests (high $\overline{\text{AR}}_w$), the acceptance reward is amplified, encouraging continued good performance; when many rejections have occurred (low $\overline{\text{AR}}_w$), the rejection penalty is amplified, pushing the agent to explore better strategies.
+The per-VNF shaping rewards create a soft preference for nodes with high security margin and low co-location, without a hard trade-off against acceptance ratio. The security margin bonus ($\alpha_s = 0.1$) rewards placing on nodes whose effective security exceeds the request minimum, while the co-location penalty ($\alpha_c = 0.1$, inverse saturation) discourages hot-spotting. The windowed AR modifier provides additional stability: when the agent has recently been accepting many requests (high $\overline{\text{AR}}_w$), the acceptance reward is amplified, encouraging continued good performance; when many rejections have occurred (low $\overline{\text{AR}}_w$), the rejection penalty is amplified, pushing the agent to explore better strategies.
 
 \subsection{GNN vs. MLP Policies}
 
@@ -166,10 +133,10 @@ The GNN-based feature extractor captures topology-dependent and security posture
 
 \subsection{Comparison with Best-Fit}
 
-The Best-Fit by Minimum Risk baseline represents a competitive greedy approach that directly minimizes the same objective component ($\rho_n^{\text{node}}$) as the DRL agent's security posture risk penalty. The key distinction is that the intelligent DRL agent optimizes security posture risk \textit{jointly with} acceptance ratio and long-term resource efficiency, while the baseline myopically minimizes risk at each individual step. In heavily loaded scenarios, the DRL agent may choose slightly riskier placements early in the episode to preserve low-risk, high-security-posture nodes for future requests with stricter constraints, a strategy the greedy baseline cannot exhibit.
+The Best-Fit by Minimum Risk baseline represents a competitive greedy approach that directly minimizes the per-node risk score $\rho_n^{\text{node}}$ at each VNF placement step. The key distinction is that the intelligent DRL agent optimizes security posture \textit{jointly with} acceptance ratio and long-term resource efficiency via the shaping rewards, while the baseline myopically minimizes risk at each individual step. In heavily loaded scenarios, the DRL agent may make suboptimal individual-step choices early in the episode to preserve high-security, high-resource nodes for future requests with stricter constraints — a strategy the greedy baseline cannot exhibit.
 
 \textbf{Tenancy spread.}
-The per-node tenancy distribution (Figures~\ref{fig:tenancy_bar}--\ref{fig:tenancy_cdf}) reveals that PPO concentrates placements on a smaller set of preferred nodes compared to Best-Fit, exhibiting a \textit{hot-spotting} pattern. This is a direct and honest consequence of the reward structure. The security cost heuristic $\rho_r$ is a mean over all placement nodes: $\rho_r \propto \frac{1}{|\Pi_r|}\sum_n q_n \cdot \text{SFC}(n)$. On a high-security node where $q_n \approx 0$, the product $q_n \cdot \text{SFC}(n)$ remains near zero regardless of how large $\text{SFC}(n)$ grows. The PPO policy therefore learns that repeatedly placing SFCs on high-security nodes incurs a negligible risk penalty, making those nodes persistently attractive. Best-Fit, by contrast, selects $\arg\min_n \rho_n^{\text{node}} = q_n \cdot \text{SFC}(n) \cdot T_s/\tau_{\max}$ at each step: as $\text{SFC}(n)$ accumulates on any node, that node's per-node score grows and previously under-used nodes become comparatively more attractive, producing a natural anti-concentration effect. The PPO reward does not encode this per-node SFC-count aversion directly — the mean over nodes smooths out individual hot-spots. In security terms, PPO's hot-spotting on high-security nodes is arguably rational: the affected nodes carry very low $q_n$, so their increased co-location does not substantially raise $\rho_r$. Nevertheless, concentration on a small subset of nodes increases blast radius in the event of a correlated failure, a risk not captured by the current security cost model. An explicit co-location penalty or a per-node SFC-count cap in the reward function would be a straightforward countermeasure.
+The per-node tenancy distribution (Figures~\ref{fig:tenancy_bar}--\ref{fig:tenancy_cdf}) reveals that PPO concentrates placements on a smaller set of preferred nodes compared to Best-Fit, exhibiting a \textit{hot-spotting} pattern. The co-location shaping penalty uses an inverse saturation $1 - 1/(1 + \text{SFC}(n))$ which increases steeply for the first few chains but flattens quickly — a node with $\text{SFC}(n) = 5$ receives only marginally more penalty than one with $\text{SFC}(n) = 3$. On high-security nodes the security margin bonus simultaneously provides a persistent pull. Best-Fit, by contrast, selects $\arg\min_n \rho_n^{\text{node}} = q_n \cdot \text{SFC}(n) \cdot T_s/\tau_{\max}$ at each step: as $\text{SFC}(n)$ accumulates on any node, that node's score grows linearly and previously under-used nodes become comparatively more attractive, producing a natural anti-concentration effect. Concentration on a small subset of nodes increases blast radius in the event of a correlated failure; a stricter per-node SFC hard limit in the reward would be a straightforward countermeasure.
 
 \subsection{Scalability Considerations}
 

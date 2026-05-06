@@ -22,7 +22,6 @@ from src.requests import (
 )
 from src.risk import (
     compute_node_risk_score,
-    compute_placement_risk_score,
     decay_incident_pressure,
     effective_node_security,
     robust_ratio,
@@ -131,8 +130,6 @@ class SFCPlacementEnv(gym.Env):
         self.incident_security_penalty = float(
             risk_cfg.get("incident_security_penalty", 0.60)
         )
-        self.revenue_per_ttl_step = float(risk_cfg.get("revenue_per_ttl_step", 1.0))
-
         # Link latency bounds for latency-aware masking
         self.min_link_latency = self.config["substrate"]["links"]["latency"]["min"]
 
@@ -161,16 +158,10 @@ class SFCPlacementEnv(gym.Env):
         self.episode_sfc_tenancy_samples: list[float] = []
         self.episode_vnf_tenancy_samples: list[float] = []
         self.episode_substrate_utilization_samples: list[float] = []
-        self.episode_risk_scores: list[float] = []
-        self.episode_risk_integrals: list[float] = []
-        self.episode_revenues: list[float] = []
-
         # Global statistics tracking (across all episodes)
         self.total_requests = 0
         self.accepted_requests = 0
         self.total_episodes = 0
-        self.total_risk_integral: float = 0.0
-        self.total_revenue: float = 0.0
         self.node_incident_pressure: dict[int, float] = {}
 
         # Rejection reason tracking
@@ -258,9 +249,6 @@ class SFCPlacementEnv(gym.Env):
         self.episode_sfc_tenancy_samples = []
         self.episode_vnf_tenancy_samples = []
         self.episode_substrate_utilization_samples = []
-        self.episode_risk_scores = []
-        self.episode_risk_integrals = []
-        self.episode_revenues = []
         self.node_incident_pressure = {node_id: 0.0 for node_id in range(self.num_nodes)}
         self.total_episodes += 1
 
@@ -385,15 +373,6 @@ class SFCPlacementEnv(gym.Env):
         # Sample substrate metrics after placement
         self._sample_substrate_metrics()
 
-        # Security cost heuristic is computed for evaluation tracking only (not in reward).
-        risk_integral = self._compute_request_risk(completed_placement)
-        self.episode_risk_scores.append(risk_integral)
-        self.episode_risk_integrals.append(risk_integral)
-        self.total_risk_integral += risk_integral
-        request_revenue = self.revenue_per_ttl_step * (self.current_request.ttl if self.current_request is not None else 1)
-        self.episode_revenues.append(request_revenue)
-        self.total_revenue += request_revenue
-
         # Shaping signal for the last VNF placement
         last_node = completed_placement[-1]
         last_sec = float(self.substrate.node_resources[last_node]["security_score"])
@@ -424,20 +403,12 @@ class SFCPlacementEnv(gym.Env):
         info["placement"] = completed_placement
         info["request_min_security"] = completed_min_security
         info["sfc_complete"] = True  # This SFC was completed
-        info["request_risk_score"] = risk_integral
-        info["request_risk_integral"] = risk_integral
-        info["request_revenue"] = request_revenue
         return observation, reward, terminated, False, info
 
     def _handle_rejection(
         self, reason: str, release_resources: bool = False
     ) -> tuple[np.ndarray, float, bool, bool, dict]:
         """Handle SFC rejection."""
-        risk_integral = 0.0
-        self.episode_risk_scores.append(risk_integral)
-        self.episode_risk_integrals.append(risk_integral)
-        self.episode_revenues.append(0.0)
-
         # Track rejection reason
         self.episode_rejections += 1
         if reason in self.rejection_reasons:
@@ -485,36 +456,7 @@ class SFCPlacementEnv(gym.Env):
         info["success"] = False
         info["rejection_reason"] = reason
         info["sfc_complete"] = True  # This SFC was completed (rejected)
-        info["request_risk_score"] = risk_integral
-        info["request_risk_integral"] = risk_integral
-
         return observation, reward, terminated, False, info
-
-    def _placement_risk_cfg(self) -> dict:
-        """Security cost parameters for compute_placement_risk_score (shared with baselines / compare)."""
-        return {
-            "enabled": self.risk_enabled,
-            "tenancy_ref_floor": self.tenancy_ref_floor,
-            "load_ref_floor": self.load_ref_floor,
-            "incident_steps_cap": self.incident_steps_cap,
-            "incident_base_rate": self.incident_base_rate,
-            "incident_alpha": self.incident_alpha,
-            "incident_beta": self.incident_beta,
-            "incident_security_penalty": self.incident_security_penalty,
-        }
-
-    def _compute_request_risk(self, placement: list[int]) -> float:
-        """Compute deterministic security cost heuristic for one accepted placement."""
-        ttl = self.current_request.ttl if self.current_request is not None else 1
-        return compute_placement_risk_score(
-            self.substrate,
-            placement,
-            ttl,
-            self._placement_risk_cfg(),
-            self.max_security,
-            self.max_ttl,
-            self.node_incident_pressure,
-        )
 
     def _sample_substrate_metrics(self):
         """Sample substrate tenancy and utilization metrics after each request."""
@@ -801,18 +743,6 @@ class SFCPlacementEnv(gym.Env):
             if self.episode_substrate_utilization_samples
             else 0.0
         )
-        episode_avg_risk_score = (
-            sum(self.episode_risk_scores) / len(self.episode_risk_scores)
-            if self.episode_risk_scores
-            else 0.0
-        )
-        episode_total_revenue = sum(self.episode_revenues)
-        episode_avg_risk_integral = (
-            sum(self.episode_risk_integrals) / len(self.episode_risk_integrals)
-            if self.episode_risk_integrals
-            else 0.0
-        )
-
         return {
             "current_vnf_index": self.current_vnf_index,
             "total_vnfs": self.current_request.num_vnfs if self.current_request else 0,
@@ -832,15 +762,10 @@ class SFCPlacementEnv(gym.Env):
             "episode_avg_sfc_tenancy": episode_avg_sfc_tenancy,
             "episode_avg_vnf_tenancy": episode_avg_vnf_tenancy,
             "episode_avg_substrate_util": episode_avg_substrate_util,
-            "episode_avg_risk_score": episode_avg_risk_score,
-            "episode_total_revenue": episode_total_revenue,
-            "episode_avg_risk_integral": episode_avg_risk_integral,
             # Global stats
             "total_requests": self.total_requests,
             "accepted_requests": self.accepted_requests,
             "total_episodes": self.total_episodes,
-            "total_revenue": self.total_revenue,
-            "total_risk_integral": self.total_risk_integral,
             "acceptance_ratio": (
                 self.accepted_requests / self.total_requests
                 if self.total_requests > 0

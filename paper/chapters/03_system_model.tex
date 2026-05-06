@@ -154,7 +154,7 @@ r_T^{\text{acc}} = \left( R_{\text{acc}}
   - \alpha_c \cdot \left(1 - \frac{1}{1 + \text{SFC}^{-}(n_{K_r})}\right)
 \right) \cdot \left(1 + \omega \cdot \overline{\text{AR}}_w\right),
 \end{equation}
-where $R_{\text{acc}} = 1$, $\text{SFC}^{-}(n_{K_r})$ is the chain count on the last placement node \emph{before} the current SFC is registered, $\omega = 0.5$, and $\overline{\text{AR}}_w$ is the acceptance ratio over the last $w = 10$ requests. The security cost heuristic $\rho_r$ is computed for evaluation purposes but is not part of the reward signal.
+where $R_{\text{acc}} = 1$, $\text{SFC}^{-}(n_{K_r})$ is the chain count on the last placement node \emph{before} the current SFC is registered, $\omega = 0.5$, and $\overline{\text{AR}}_w$ is the acceptance ratio over the last $w = 10$ requests.
 
 \textbf{Terminal rejection reward:}
 \begin{equation}
@@ -180,9 +180,9 @@ where $\gamma_p = 0.92$ is the decay factor.
 
 This dynamic security posture model ensures that the DRL agent's placement decisions reflect the real-time security state of the substrate, not merely its static configuration.
 
-\subsection{Security Cost Heuristic}
+\subsection{Per-Node Risk Score}
 
-For an accepted placement $\pi_r$ with TTL $\tau_r$, the security cost heuristic $\rho_r \in [0,1]$ quantifies the expected loss due to incident exposure across all placement nodes. Let $\Pi_r^{\text{dist}}$ denote the set of distinct nodes in $\pi_r$. The per-node base incident probability is:
+The per-node base incident probability $q_n$ drives the security-aware features observed by the GNN policy and the node selection criterion of the Best-Fit baseline:
 
 \begin{equation}
 q_n = q_0 \cdot \left(1 - \frac{s_n^{\text{eff}}}{s_{\max}}\right)^{\alpha} \cdot \left(1 + \beta \cdot \ell_n\right) \cdot \left(1 + p_n\right),
@@ -190,13 +190,12 @@ q_n = q_0 \cdot \left(1 - \frac{s_n^{\text{eff}}}{s_{\max}}\right)^{\alpha} \cdo
 \end{equation}
 where $q_0 = 0.025$ is the base rate, $\alpha = 1.6$ is the security sensitivity exponent, $\beta = 0.7$ is the load amplification factor, $\ell_n$ is the normalized node load (VNF count relative to the 75th-percentile reference), and $p_n$ is the accumulated incident pressure. $q_n$ is clamped to $[0, 1]$.
 
-The exposure window is $T_s = \min(\tau_r, T_{\text{cap}})$ with $T_{\text{cap}} = 12$. The security cost heuristic is a deterministic score:
-
+The per-node risk score used by the Best-Fit baseline accounts for co-location and TTL exposure:
 \begin{equation}
-\rho_r = \min\!\left(\frac{1}{|\Pi_r^{\text{dist}}|} \sum_{n \in \Pi_r^{\text{dist}}} q_n \cdot \text{SFC}(n) \cdot \frac{T_s}{\tau_{\max}},\; 1\right),
-\label{eq:risk}
+\rho_n^{\text{node}} = \min\!\left(q_n \cdot \text{SFC}(n) \cdot \frac{T_s}{\tau_{\max}},\; 1\right),
+\label{eq:node_risk}
 \end{equation}
-where $\text{SFC}(n)$ is the number of active SFC chains sharing node $n$. This formulation captures three key risk drivers: the probability of an incident ($q_n$), the blast radius (number of co-located chains), and the temporal exposure ($T_s / \tau_{\max}$). The per-node risk score used by the Best-Fit baseline (Section~4.5) is the individual-node analog of this mean.
+where $T_s = \min(\tau_r, T_{\text{cap}})$ with $T_{\text{cap}} = 12$ and $\text{SFC}(n)$ is the number of active chains on node $n$.
 
 \section{Optimization Objective}
 

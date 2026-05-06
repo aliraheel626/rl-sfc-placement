@@ -24,7 +24,6 @@ from src.model import create_masked_env, load_model
 from src.baselines import BasePlacement, BestFitPlacement
 from src.risk import (
     apply_incident_view,
-    compute_placement_risk_score,
     decay_incident_pressure,
     restore_incident_view,
 )
@@ -48,7 +47,6 @@ def _build_risk_config(config: dict) -> dict:
         "incident_steps_cap": int(risk.get("incident_steps_cap", 12)),
         "incident_pressure_decay": float(risk.get("incident_pressure_decay", 0.92)),
         "incident_security_penalty": float(risk.get("incident_security_penalty", 0.60)),
-        "revenue_per_ttl_step": float(risk.get("revenue_per_ttl_step", 1.0)),
     }
 
 
@@ -85,14 +83,10 @@ def evaluate_baseline(
     total_latency = 0.0
     latencies = []
     acceptance_samples = []  # 1 if accepted, 0 if rejected (per request)
-    revenue_samples = []  # Per-request revenue (0 if rejected)
     security_margins = []  # Track security margins for each accepted request
     sfc_tenancy_samples = []  # Track SFC tenancy per occupied node over time
     vnf_tenancy_samples = []  # Track VNF tenancy per occupied node over time
     substrate_utilization_samples = []  # Track % of nodes being used over time
-    risk_score_samples = []  # Per-request security cost heuristic
-    total_risk_integral = 0.0
-    total_revenue = 0.0
     node_incident_pressure = {node_id: 0.0 for node_id in range(substrate_copy.num_nodes)}
     node_sfc_placements: dict[int, int] = {}   # cumulative SFC chains per node
     node_vnf_placements: dict[int, int] = {}   # cumulative VNF instances per node
@@ -185,20 +179,6 @@ def evaluate_baseline(
                 node_sfc_placements[node_id] = node_sfc_placements.get(node_id, 0) + 1
             for node_id in placement:
                 node_vnf_placements[node_id] = node_vnf_placements.get(node_id, 0) + 1
-            risk_integral = compute_placement_risk_score(
-                substrate_copy,
-                placement,
-                request.ttl,
-                risk_cfg,
-                max_security,
-                max_ttl,
-                node_incident_pressure,
-            )
-            risk_score_samples.append(risk_integral)
-            total_risk_integral += risk_integral
-            req_revenue = risk_cfg.get("revenue_per_ttl_step", 1.0) * request.ttl
-            total_revenue += req_revenue
-            revenue_samples.append(req_revenue)
 
         # Sample tenancy metrics after each request (regardless of accept/reject)
         sfcs_per_node = substrate_copy.get_sfcs_per_node()
@@ -226,8 +206,6 @@ def evaluate_baseline(
         if placement is None:
             rejected += 1
             acceptance_samples.append(0)
-            revenue_samples.append(0.0)
-            risk_score_samples.append(0.0)
 
     # Compute metrics
     total = accepted + rejected
@@ -253,10 +231,6 @@ def evaluate_baseline(
         if substrate_utilization_samples
         else 0.0
     )
-    avg_risk_score = sum(risk_score_samples) / len(risk_score_samples) if risk_score_samples else 0.0
-    avg_risk_integral = total_risk_integral / total if total > 0 else 0.0
-    avg_revenue_per_request = total_revenue / total if total > 0 else 0.0
-
     # Baselines do not track rejection reason; use 0 for latency violation ratio
     latency_violation_ratio = 0.0
 
@@ -273,18 +247,12 @@ def evaluate_baseline(
         "avg_sfc_tenancy": avg_sfc_tenancy,
         "avg_vnf_tenancy": avg_vnf_tenancy,
         "avg_substrate_utilization": avg_substrate_utilization,
-        "avg_risk_score": avg_risk_score,
-        "avg_risk_integral": avg_risk_integral,
-        "avg_revenue_per_request": avg_revenue_per_request,
-        "total_revenue": total_revenue,
         "latencies": latencies,
         # Per-request samples for rolling average plots
         "acceptance_samples": acceptance_samples,
-        "revenue_samples": revenue_samples,
         "sfc_tenancy_samples": sfc_tenancy_samples,
         "vnf_tenancy_samples": vnf_tenancy_samples,
         "substrate_utilization_samples": substrate_utilization_samples,
-        "risk_score_samples": risk_score_samples,
         "security_margin_samples": security_margins,
         "node_sfc_placements": node_sfc_placements,
         "node_vnf_placements": node_vnf_placements,
@@ -345,14 +313,10 @@ def evaluate_rl_agent(
     total_latency = 0.0
     latencies = []
     acceptance_samples = []  # 1 if accepted, 0 if rejected (per request)
-    revenue_samples = []  # Per-request revenue (0 if rejected)
     security_margins = []  # Track security margins for each accepted request
     sfc_tenancy_samples = []  # Track SFC tenancy per occupied node over time
     vnf_tenancy_samples = []  # Track VNF tenancy per occupied node over time
     substrate_utilization_samples = []  # Track % of nodes being used over time
-    risk_score_samples = []  # Per-request security cost heuristic
-    total_risk_integral = 0.0
-    total_revenue = 0.0
     node_sfc_placements: dict[int, int] = {}   # cumulative SFC chains per node
     node_vnf_placements: dict[int, int] = {}   # cumulative VNF instances per node
 
@@ -415,21 +379,11 @@ def evaluate_rl_agent(
                     node_sfc_placements[node_id] = node_sfc_placements.get(node_id, 0) + 1
                 for node_id in placement:
                     node_vnf_placements[node_id] = node_vnf_placements.get(node_id, 0) + 1
-                # Use risk from env info (computed before tick()); recomputing after step()
-                # would use post-tick substrate state and disagree with training rewards.
-                risk_score = info.get("request_risk_integral", info.get("request_risk_score", 0.0))
-                risk_score_samples.append(risk_score)
-                total_risk_integral += risk_score
-                req_revenue = info.get("request_revenue", 0.0)
-                total_revenue += req_revenue
-                revenue_samples.append(req_revenue)
             else:
                 rejected += 1
                 acceptance_samples.append(0)
-                revenue_samples.append(0.0)
                 if info.get("rejection_reason") == "latency_violation":
                     latency_violations += 1
-                risk_score_samples.append(info.get("request_risk_integral", info.get("request_risk_score", 0.0)))
 
             # Sample tenancy metrics after each request
             sfcs_per_node = env.unwrapped.substrate.get_sfcs_per_node()
@@ -487,10 +441,6 @@ def evaluate_rl_agent(
         if substrate_utilization_samples
         else 0.0
     )
-    avg_risk_score = sum(risk_score_samples) / len(risk_score_samples) if risk_score_samples else 0.0
-    avg_risk_integral = total_risk_integral / total if total > 0 else 0.0
-    avg_revenue_per_request = total_revenue / total if total > 0 else 0.0
-
     return {
         "algorithm": "MaskablePPO",
         "total_requests": total,
@@ -504,18 +454,12 @@ def evaluate_rl_agent(
         "avg_sfc_tenancy": avg_sfc_tenancy,
         "avg_vnf_tenancy": avg_vnf_tenancy,
         "avg_substrate_utilization": avg_substrate_utilization,
-        "avg_risk_score": avg_risk_score,
-        "avg_risk_integral": avg_risk_integral,
-        "avg_revenue_per_request": avg_revenue_per_request,
-        "total_revenue": total_revenue,
         "latencies": latencies,
         # Per-request samples for rolling average plots
         "acceptance_samples": acceptance_samples,
-        "revenue_samples": revenue_samples,
         "sfc_tenancy_samples": sfc_tenancy_samples,
         "vnf_tenancy_samples": vnf_tenancy_samples,
         "substrate_utilization_samples": substrate_utilization_samples,
-        "risk_score_samples": risk_score_samples,
         "security_margin_samples": security_margins,
         "node_sfc_placements": node_sfc_placements,
         "node_vnf_placements": node_vnf_placements,
@@ -629,7 +573,7 @@ def run_eval(
                 f"{name:<20} {result['accepted']:<10} {result['rejected']:<10} "
                 f"{result['acceptance_ratio']:.4f}     {result['avg_latency']:<12.2f} {result.get('avg_sec_margin', 0):<14.4f} "
                 f"{result.get('avg_sfc_tenancy', 0):<14.2f} {result.get('avg_vnf_tenancy', 0):<14.2f} {result.get('avg_substrate_utilization', 0):<14.2%} "
-                f"{result.get('avg_risk_integral', 0):<12.4f} {result.get('avg_time_ms', 0):.3f}"
+                f"{result.get('avg_time_ms', 0):.3f}"
             )
         print("=" * 160)
 
@@ -802,30 +746,13 @@ def plot_rolling_comparison(
         "sfc_ppo_acceptance_ratio.png",
     )
 
-    # 2) Risk integral (rolling)
-    _rolling_chart(
-        "risk_score_samples",
-        "Risk Integral (lower is better)",
-        f"Rolling Avg Risk Integral (window={window_size})",
-        "sfc_risk_training.png",
-    )
-
-    # 3) Avg security margin (rolling)
+    # 2) Avg security margin (rolling)
     _rolling_chart(
         "security_margin_samples",
         "Avg Security Margin (node score - req min)",
         f"Rolling Avg Security Margin (window={window_size})",
         "security_score_training.png",
     )
-
-    # 4) Revenue per request (rolling)
-    _rolling_chart(
-        "revenue_samples",
-        "Revenue per Request",
-        f"Rolling Avg Revenue per Request (window={window_size})",
-        "revenue_training.png",
-    )
-
 
 def plot_summary_bar_chart(
     multi_ep_data: dict,
@@ -1147,7 +1074,6 @@ def run_multi_episode_eval(
                 algo_name: {
                     "acceptance_ratio": [...],
                     "latency_violation_ratio": [...],
-                    "avg_risk_integral": [...],
                     "avg_sfc_tenancy": [...],
                     "avg_vnf_tenancy": [...],
                     "avg_substrate_utilization": [...],
@@ -1238,7 +1164,7 @@ def _write_results_table_tex(
     """
     from src.eval_reporting import COMPARISON_TABLE_ROWS
 
-    _FMT: dict[str, str] = {"total_revenue": ".2f"}
+    _FMT: dict[str, str] = {}
 
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -1399,11 +1325,9 @@ def main():
         for algo, metrics in multi_ep["by_algo"].items():
             util = metrics.get("avg_substrate_utilization", [])
             ar   = metrics.get("acceptance_ratio", [])
-            risk = metrics.get("avg_risk_integral", [])
             print(f"  {algo}:")
             print(f"    substrate_util : {[f'{v:.4f}' for v in util]}")
             print(f"    acceptance_ratio: {[f'{v:.4f}' for v in ar]}")
-            print(f"    avg_risk_integral: {[f'{v:.4f}' for v in risk]}")
 
     # Print average-across-episodes performance difference table (PPO vs BestFit).
     by_algo = multi_ep["by_algo"]

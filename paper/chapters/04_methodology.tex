@@ -193,7 +193,7 @@ where:
   \item $\omega = 0.5$ is the windowed acceptance ratio (AR) modifier weight;
   \item $\overline{\text{AR}}_w$ is the acceptance ratio over the last $w = 10$ requests.
 \end{itemize}
-The AR modifier amplifies the reward when the agent has been accepting frequently, providing curriculum-style positive reinforcement. The security cost heuristic $\rho_r$ (Section~3.5.2) is computed for evaluation tracking but does not enter the reward signal.
+The AR modifier amplifies the reward when the agent has been accepting frequently, providing curriculum-style positive reinforcement.
 
 \subsection{Terminal Rejection Reward}
 
@@ -202,10 +202,6 @@ When a placement fails (either by latency violation or forced rejection due to n
 r_T^{\text{rej}} = R_{\text{rej}} \cdot \left(1 + \omega \cdot (1 - \overline{\text{AR}}_w)\right),
 \end{equation}
 where $R_{\text{rej}} = -1$. The flipped AR modifier $(1 - \overline{\text{AR}}_w)$ amplifies the penalty when the agent has been rejecting frequently, providing stronger corrective signal during poor-performance phases.
-
-\subsection{Revenue Tracking}
-
-Upon acceptance, the environment records the request revenue $R_{\text{ttl}} \cdot \tau_r$ (where $R_{\text{ttl}} = 1.0$ is the revenue per TTL step). Rejected requests contribute zero revenue. This metric is tracked for evaluation but does not contribute to the reward signal.
 
 \section{Best-Fit Baseline}
 
@@ -217,7 +213,7 @@ where the per-node risk score is:
 \begin{equation}
 \rho_n^{\text{node}} = \min\!\left(q_n \cdot \text{SFC}(n) \cdot \frac{T_s}{\tau_{\max}},\; 1\right),
 \end{equation}
-with $q_n$ defined as in Eq.~(\ref{eq:qn}), $\text{SFC}(n)$ the number of active chains on node $n$, $T_s = \min(\tau_r, T_{\text{cap}})$, and $\tau_{\max}$ the maximum TTL. This is the per-node analog of the placement security cost heuristic (Eq.~\ref{eq:risk}). The waste tie-breaker is $w_n^{\text{waste}} = (r_n^{\text{ram}} - d_v^{\text{ram}}) + (r_n^{\text{cpu}} - d_v^{\text{cpu}}) + (r_n^{\text{stor}} - d_v^{\text{stor}})$.
+with $q_n$ defined as in Eq.~(\ref{eq:qn}), $\text{SFC}(n)$ the number of active chains on node $n$, $T_s = \min(\tau_r, T_{\text{cap}})$, and $\tau_{\max}$ the maximum TTL (see also Eq.~\ref{eq:node_risk}). The waste tie-breaker is $w_n^{\text{waste}} = (r_n^{\text{ram}} - d_v^{\text{ram}}) + (r_n^{\text{cpu}} - d_v^{\text{cpu}}) + (r_n^{\text{stor}} - d_v^{\text{stor}})$.
 
 This baseline is a strong comparator: it explicitly minimizes expected loss at each step, matching the primary objective of the DRL agent's security posture-aware risk penalty. It is used to assess whether the DRL agent's learned, intelligent policy provides any advantage over greedy risk minimization — in particular, whether the DRL agent exploits long-horizon reasoning about security posture dynamics that a myopic greedy strategy cannot.
 

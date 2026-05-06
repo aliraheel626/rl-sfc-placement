@@ -937,10 +937,6 @@ class TrainingEvalCallback(BaseCallback):
                         self.logger.record(
                             "custom/eval_acceptance_ratio", ppo["acceptance_ratio"]
                         )
-                        self.logger.record(
-                            "custom/eval_security_cost_heuristic",
-                            ppo.get("avg_security_cost_heuristic", ppo.get("avg_risk_score", 0.0)),
-                        )
 
         if self.n_calls > 0 and self.n_calls % self.plot_freq == 0:
             self._save_plots()

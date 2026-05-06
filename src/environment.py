@@ -119,9 +119,6 @@ class SFCPlacementEnv(gym.Env):
         self.colocation_penalty_weight = float(
             self.config["rewards"].get("colocation_penalty_weight", 0.1)
         )
-        self.colocation_ref_sfcs = float(
-            self.config["rewards"].get("colocation_ref_sfcs", 3.0)
-        )
         risk_cfg = self.config.get("risk", {})
         self.risk_enabled = risk_cfg.get("enabled", False)
         self.tenancy_ref_floor = float(risk_cfg.get("tenancy_ref_floor", 1.0))
@@ -367,7 +364,7 @@ class SFCPlacementEnv(gym.Env):
 
         # Co-location shaping: penalise placing on nodes that already host many SFC chains
         sfc_count = float(self.substrate.get_sfcs_per_node().get(action, 0))
-        reward -= self.colocation_penalty_weight * min(sfc_count / self.colocation_ref_sfcs, 1.0)
+        reward -= self.colocation_penalty_weight * (1.0 - 1.0 / (1.0 + sfc_count))
 
         return observation, reward, False, False, info
 
@@ -402,7 +399,7 @@ class SFCPlacementEnv(gym.Env):
         last_sec = float(self.substrate.node_resources[last_node]["security_score"])
         last_margin = max(last_sec - completed_min_security, 0.0) / self.max_security
         last_sfc_count = float(sfcs_before_register.get(last_node, 0))
-        last_coloc = min(last_sfc_count / self.colocation_ref_sfcs, 1.0)
+        last_coloc = 1.0 - 1.0 / (1.0 + last_sfc_count)
         terminal_shaping = (
             self.security_margin_weight * last_margin
             - self.colocation_penalty_weight * last_coloc

@@ -170,9 +170,9 @@ After placing VNF $v_k$ ($k < K_r$), the agent receives:
 r_t^{\text{step}} = 0.1
   - 0.3 \cdot \min\!\left(\frac{L(n_{k-1}, n_k)}{\ell_r^{\max}},\; 1\right)
   + \alpha_s \cdot \frac{\max\!\left(s_{n_k}^{\text{eff}} - s_r^{\min},\, 0\right)}{s_{\max}}
-  - \alpha_c \cdot \min\!\left(\frac{\text{SFC}(n_k)}{S_{\text{ref}}},\, 1\right).
+  - \alpha_c \cdot \left(1 - \frac{1}{1 + \text{SFC}(n_k)}\right).
 \end{equation}
-The constant $+0.1$ provides a progress bonus for each feasible VNF placement. The latency term penalizes distant placements, encouraging the agent to co-locate consecutive VNFs on nearby nodes to preserve latency budget for later hops. The security margin term ($\alpha_s = 0.1$) rewards placing on nodes whose effective security exceeds the request minimum, directly incentivising high-margin placements. The co-location penalty ($\alpha_c = 0.1$, $S_{\text{ref}} = 3$) discourages stacking SFCs on already-occupied nodes, reducing blast radius.
+The constant $+0.1$ provides a progress bonus for each feasible VNF placement. The latency term penalizes distant placements, encouraging the agent to co-locate consecutive VNFs on nearby nodes to preserve latency budget for later hops. The security margin term ($\alpha_s = 0.1$) rewards placing on nodes whose effective security exceeds the request minimum, directly incentivising high-margin placements. The co-location penalty ($\alpha_c = 0.1$) uses an inverse saturation $1 - 1/(1 + \text{SFC}(n_k))$ that grows quickly for the first few chains and asymptotically approaches 1, discouraging hot-spot nodes without a tunable reference parameter.
 
 \subsection{Terminal Acceptance Reward}
 
@@ -181,14 +181,14 @@ When all $K_r$ VNFs have been placed and the end-to-end latency constraint is sa
 r_T^{\text{acc}} = \left(
   R_{\text{acc}}
   + \alpha_s \cdot \frac{\max\!\left(s_{n_{K_r}}^{\text{eff}} - s_r^{\min},\, 0\right)}{s_{\max}}
-  - \alpha_c \cdot \min\!\left(\frac{\text{SFC}^{-}(n_{K_r})}{S_{\text{ref}}},\, 1\right)
+  - \alpha_c \cdot \left(1 - \frac{1}{1 + \text{SFC}^{-}(n_{K_r})}\right)
 \right) \cdot \left(1 + \omega \cdot \overline{\text{AR}}_w\right),
 \end{equation}
 where:
 \begin{itemize}
   \item $R_{\text{acc}} = 1$ is the base acceptance reward;
   \item $\alpha_s = 0.1$ is the security margin shaping weight (same as intermediate steps);
-  \item $\alpha_c = 0.1$ is the co-location shaping weight, $S_{\text{ref}} = 3$;
+  \item $\alpha_c = 0.1$ is the co-location shaping weight;
   \item $\text{SFC}^{-}(n_{K_r})$ is the chain count on the last placement node \emph{before} the current SFC is registered;
   \item $\omega = 0.5$ is the windowed acceptance ratio (AR) modifier weight;
   \item $\overline{\text{AR}}_w$ is the acceptance ratio over the last $w = 10$ requests.

@@ -100,9 +100,8 @@ rewards:
   acceptance_ratio_reward_weight: 0.5    # scaling factor for the multiplicative modifier
   acceptance_ratio_flip_rejection: true  # use flipped multiplier (1-AR) on rejections
   # Per-VNF shaping rewards (applied at every VNF placement step)
-  security_margin_weight: 0.1    # reward for (s_eff - s_min) / s_max at each placed node
-  colocation_penalty_weight: 0.1 # penalty for SFC co-location at each placed node
-  colocation_ref_sfcs: 3.0       # normalization reference: SFC count that maps to full penalty
+  security_margin_weight: 0.1    # reward for (s_eff - s_min) / substrate.resources.security_score.max at each placed node
+  colocation_penalty_weight: 0.1 # penalty for SFC co-location at each placed node; uses 1 - 1/(1 + sfc_count) saturation
 
 # Risk + Incident realism (full replacement model)
 risk:

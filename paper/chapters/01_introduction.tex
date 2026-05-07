@@ -124,6 +124,16 @@ interaction~\cite{pendleton_survey_2017}. Abdelrazek et al. specialize
 this perspective to 5G/6G, proposing a life-cycle model of network
 function security state driven by attack-surface exposure, known
 vulnerabilities, and applied controls~\cite{abdelrazek_measuring_2025}.
+Industry tooling operationalizes this idea through composite scoring
+systems: Microsoft Secure Score, for instance, continuously evaluates
+an organization's posture across identities, endpoints, applications,
+and data against NIST and CIS benchmarks, expressing the result as a
+normalized scalar that rises or falls as controls are applied or
+removed~\cite{arvatosystems2025securescore}. This thesis adopts the
+same abstraction at the node level: each substrate node carries a
+discrete security score $s_n \in [1, 5]$ that summarizes its current
+posture, and SFC requests declare a minimum acceptable score
+$s_r^{\min}$ that every placement node must satisfy.
 A placement policy that is ignorant of posture may satisfy every
 static constraint while still concentrating risk on overloaded,
 recently-compromised, or vulnerability-laden nodes --- with

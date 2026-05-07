@@ -45,7 +45,7 @@ Figure~\ref{fig:ar} illustrates the training acceptance ratio (rolling average o
 
 \subsection{Acceptance Ratio}
 
-Table~\ref{tab:results} presents the comparative evaluation of the Maskable PPO agent against the Best-Fit baseline over 1000 SFC requests. The PPO agent achieves a competitive acceptance ratio, demonstrating that the learned policy is capable of efficiently allocating resources across the substrate network. The Best-Fit baseline, which greedily minimizes node-level risk at each step, provides a strong comparison point.
+Table~\ref{tab:results} presents the comparative evaluation of the Maskable PPO agent against the Best-Fit baseline over 1000 SFC requests. The PPO agent achieves a competitive acceptance ratio, demonstrating that the learned policy is capable of efficiently allocating resources across the substrate network. The Best-Fit baseline, which greedily maximizes security margin at each step, provides a strong comparison point.
 
 \begin{table}[!ht]
 \centering
@@ -83,7 +83,7 @@ Figure~\ref{fig:rolling} presents the rolling average (window 50) of the accepta
 
 \subsection{Security Margin}
 
-Figure~\ref{fig:sec_margin} shows the rolling average security margin — the surplus of the placement node's effective security score over the SFC's minimum requirement — across the evaluation. A higher margin indicates that the algorithm consistently selects nodes with stronger security posture than strictly necessary.
+Figure~\ref{fig:sec_margin} shows the rolling average security margin — the surplus of the placement node's security score over the SFC's minimum requirement — across the evaluation. A higher margin indicates that the algorithm consistently selects nodes with stronger security posture than strictly necessary.
 
 \begin{figure}[!ht]
 \centering

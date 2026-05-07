@@ -103,31 +103,6 @@ rewards:
   security_margin_weight: 0.1    # reward for (s_eff - s_min) / substrate.resources.security_score.max at each placed node
   colocation_penalty_weight: 0.1 # penalty for SFC co-location at each placed node; uses 1 - 1/(1 + sfc_count) saturation
 
-# Risk + Incident realism (full replacement model)
-risk:
-  enabled: true
-
-  # Robust normalization floors (scale-aware and topology-agnostic)
-  tenancy_ref_floor: 1.0
-  load_ref_floor: 1.0
-
-  # Stochastic incident process
-  incident_base_rate: 0.025 # Base per-node, per-exposure-step incident probability
-  incident_alpha: 1.6 # Sensitivity to inverse effective security
-  incident_beta: 0.7 # Amplification from node load
-  incident_steps_cap: 12 # Max simulated exposure steps per request (min(TTL, cap))
-
-  # Incident pressure state (temporary node degradation, decays each request tick)
-  incident_pressure_gain: 0.20
-  incident_pressure_decay: 0.92
-  incident_downtime_steps: 2 # Request ticks a node is unavailable after an incident
-  incident_security_penalty: 0.00 # Effective security multiplier: (1 - penalty * pressure)
-
-  # Revenue model: revenue per accepted SFC = revenue_per_ttl_step × TTL
-  # Incident cost = lost revenue: realized_incidents × revenue_per_ttl_step × request_ttl
-  revenue_per_ttl_step: 1.0
-  incident_cost_reward_scale: 0.05
-
 # Evaluation Configuration
 evaluation:
   num_requests: 1000

@@ -20,12 +20,10 @@ from src.requests import (
     SFCRequest,
     load_config,
 )
-from src.risk import (
-    compute_node_risk_score,
-    decay_incident_pressure,
-    effective_node_security,
-    robust_ratio,
-)
+def robust_ratio(value: float, reference: float) -> float:
+    """Bounded ratio value / (value + ref), in [0, 1]."""
+    safe_ref = max(reference, 1e-6)
+    return float(min(max(value, 0.0) / (max(value, 0.0) + safe_ref), 1.0))
 
 
 class SFCPlacementEnv(gym.Env):
@@ -37,10 +35,9 @@ class SFCPlacementEnv(gym.Env):
     latency constraint is validated.
 
     Observation Space (Dict):
-        - node_features: (max_nodes, 20) - [RAM, CPU, Storage, Security, AvgBW, DistToPrev,
+        - node_features: (max_nodes, 15) - [RAM, CPU, Storage, Security, AvgBW, DistToPrev,
           RAMGlobalShare, CPUGlobalShare, StorageGlobalShare, VNFGlobalShare, SFCTenancy,
-          FitRAM, FitCPU, FitStorage, IncidentPressure, LoadNorm, PBase, ExpectedIncidents,
-          NodeRiskScore (=PBase), ExpectedLostRevenue]
+          FitRAM, FitCPU, FitStorage, LoadNorm]
         - global_context: (15,) - [VNF_RAM, VNF_CPU, VNF_Storage, SFC_Sec, SFC_Lat, SFC_BW,
           VNF_Progress, HardIsolation, LatencyProgress, TTL,
           RemainingVNFs, RemainingRAM, RemainingCPU, RemainingStorage, WindowedAR]
@@ -118,18 +115,6 @@ class SFCPlacementEnv(gym.Env):
         self.colocation_penalty_weight = float(
             self.config["rewards"].get("colocation_penalty_weight", 0.1)
         )
-        risk_cfg = self.config.get("risk", {})
-        self.risk_enabled = risk_cfg.get("enabled", False)
-        self.tenancy_ref_floor = float(risk_cfg.get("tenancy_ref_floor", 1.0))
-        self.load_ref_floor = float(risk_cfg.get("load_ref_floor", 1.0))
-        self.incident_base_rate = float(risk_cfg.get("incident_base_rate", 0.025))
-        self.incident_alpha = float(risk_cfg.get("incident_alpha", 1.6))
-        self.incident_beta = float(risk_cfg.get("incident_beta", 0.7))
-        self.incident_steps_cap = int(risk_cfg.get("incident_steps_cap", 12))
-        self.incident_pressure_decay = float(risk_cfg.get("incident_pressure_decay", 0.92))
-        self.incident_security_penalty = float(
-            risk_cfg.get("incident_security_penalty", 0.60)
-        )
         # Link latency bounds for latency-aware masking
         self.min_link_latency = self.config["substrate"]["links"]["latency"]["min"]
 
@@ -162,8 +147,6 @@ class SFCPlacementEnv(gym.Env):
         self.total_requests = 0
         self.accepted_requests = 0
         self.total_episodes = 0
-        self.node_incident_pressure: dict[int, float] = {}
-
         # Rejection reason tracking
         self.rejection_reasons = {
             "latency_violation": 0,  # Final check after all VNFs placed
@@ -184,7 +167,7 @@ class SFCPlacementEnv(gym.Env):
         self.observation_space = spaces.Dict(
             {
                 "node_features": spaces.Box(
-                    0.0, 1.0, (self.max_nodes, 20), dtype=np.float32
+                    0.0, 1.0, (self.max_nodes, 15), dtype=np.float32
                 ),
                 "global_context": spaces.Box(0.0, 1.0, (15,), dtype=np.float32),
                 "placement_mask": spaces.Box(
@@ -249,7 +232,6 @@ class SFCPlacementEnv(gym.Env):
         self.episode_sfc_tenancy_samples = []
         self.episode_vnf_tenancy_samples = []
         self.episode_substrate_utilization_samples = []
-        self.node_incident_pressure = {node_id: 0.0 for node_id in range(self.num_nodes)}
         self.total_episodes += 1
 
         # Generate first SFC request for this episode
@@ -265,9 +247,6 @@ class SFCPlacementEnv(gym.Env):
 
         # Advance time and release expired placements (TTL is per request)
         self.substrate.tick()
-        decay_incident_pressure(
-            self.node_incident_pressure, self.incident_pressure_decay
-        )
 
         # Generate new SFC request
         self.current_request = self.request_generator.generate_request()
@@ -489,7 +468,7 @@ class SFCPlacementEnv(gym.Env):
         N = self.num_nodes
         M = self.max_nodes
 
-        # 1. Node Feature Matrix: (num_nodes, 20) → padded to (max_nodes, 20)
+        # 1. Node Feature Matrix: (num_nodes, 15) → padded to (max_nodes, 15)
         # a. Basic Resources: (num_nodes, 4) [RAM, CPU, Storage, Security]
         base_resources = self.substrate.get_all_node_resources()
 
@@ -563,69 +542,27 @@ class SFCPlacementEnv(gym.Env):
         else:
             fit_ram = fit_cpu = fit_storage = np.zeros((N, 1), dtype=np.float32)
 
-        # f. Incident features: (num_nodes, 4)
-        #    [IncidentPressure, LoadNorm, PBase, ExpectedIncidents]
-        #    These are the direct drivers of p_base — giving the agent the same
-        #    signals the risk formula and baselines use, closing the obs asymmetry.
+        # f. Load norm: (num_nodes, 1) — VNF count relative to 75th-percentile reference
         load_reference = max(
-            self.load_ref_floor,
+            1.0,
             float(np.percentile(list(vnfs_per_node.values()), 75)) if vnfs_per_node else 0.0,
         )
-        exposure_steps_obs = int(max(1, min(self.incident_steps_cap, self.current_request.ttl)))
-        incident_pressure_arr = np.array(
-            [self.node_incident_pressure.get(i, 0.0) for i in range(N)],
-            dtype=np.float32,
-        ).reshape(-1, 1)
         load_norm_arr = np.array(
             [robust_ratio(float(vnfs_per_node.get(i, 0)), load_reference) for i in range(N)],
             dtype=np.float32,
         ).reshape(-1, 1)
-        # p_base computed using effective (incident-degraded) security norms from base_resources col 3
-        # (overwritten below); compute here using the same effective_node_security call.
-        p_base_arr = np.zeros(N, dtype=np.float32)
-        for i in range(N):
-            _, sec_norm = effective_node_security(
-                self.substrate, i, self.max_security,
-                self.node_incident_pressure, self.incident_security_penalty,
-            )
-            p_i = self.incident_base_rate * (1.0 - sec_norm) ** self.incident_alpha
-            p_i *= 1.0 + self.incident_beta * float(load_norm_arr[i, 0])
-            p_i *= 1.0 + self.node_incident_pressure.get(i, 0.0)
-            p_base_arr[i] = min(max(p_i, 0.0), 1.0)
-            # Reuse the security norm computed here to overwrite col 3.
-            base_resources[i, 3] = sec_norm
-        p_base_col = p_base_arr.reshape(-1, 1)
-        # ExpectedIncidents per node normalized by steps_cap so it stays in [0, 1].
-        expected_inc_arr = np.clip(
-            p_base_arr * exposure_steps_obs / max(self.incident_steps_cap, 1),
-            0.0, 1.0,
-        ).reshape(-1, 1)
 
-        # g. Node risk score: (num_nodes, 1) [NodeRiskScore = PBase]
-        #    p_base is the primary risk signal — sfcs × TTL scaling is already
-        #    captured by other features, so the agent just needs raw p_base here.
-        node_risk_arr = p_base_col  # same as index 16, explicit risk slot
-
-        # h. Expected loss proxy per node: (num_nodes, 1)
-        #    Blast-radius-weighted risk: 1 - 1/(1 + q_n × SFC(n))
-        sfc_counts_arr = np.array(
-            [float(sfcs_per_node.get(i, 0)) for i in range(N)], dtype=np.float32
-        )
-        elr_raw = p_base_arr * sfc_counts_arr
-        elr_arr = (1.0 - 1.0 / (1.0 + elr_raw)).reshape(-1, 1).astype(np.float32)
-
-        # Combine real node features (num_nodes, 20)
+        # Combine real node features (num_nodes, 15)
         real_node_features = np.concatenate(
             [base_resources, connectivity, distances,
              ram_global_share, cpu_global_share, storage_global_share,
              vnf_global_share, sfc_tenancy,
              fit_ram, fit_cpu, fit_storage,
-             incident_pressure_arr, load_norm_arr, p_base_col, expected_inc_arr,
-             node_risk_arr, elr_arr], axis=1
+             load_norm_arr], axis=1
         )
 
-        # Pad to (max_nodes, 20)
-        node_features = np.zeros((M, 20), dtype=np.float32)
+        # Pad to (max_nodes, 15)
+        node_features = np.zeros((M, 15), dtype=np.float32)
         node_features[:N] = np.clip(real_node_features, 0.0, 1.0)
 
         # 2. Global context: (15,)
@@ -786,14 +723,7 @@ class SFCPlacementEnv(gym.Env):
             action, current_vnf, self.current_request.min_security_score
         ):
             return False
-        eff_sec, _ = effective_node_security(
-            self.substrate,
-            action,
-            self.max_security,
-            self.node_incident_pressure,
-            self.incident_security_penalty,
-        )
-        if eff_sec < self.current_request.min_security_score:
+        if self.substrate.node_resources[action]["security_score"] < self.current_request.min_security_score:
             return False
 
         # Check hard isolation constraints
@@ -846,17 +776,6 @@ class SFCPlacementEnv(gym.Env):
 
         # 1. Vectorized Resource Feasibility Check (only real nodes)
         feasible_mask = self.substrate.get_feasible_nodes(current_vnf, min_security)
-        feasible_indices = np.where(feasible_mask)[0]
-        for node_id in feasible_indices:
-            eff_sec, _ = effective_node_security(
-                self.substrate,
-                node_id,
-                self.max_security,
-                self.node_incident_pressure,
-                self.incident_security_penalty,
-            )
-            if eff_sec < min_security:
-                feasible_mask[node_id] = False
 
         # 2. Exclude hard-isolated nodes (nodes reserved by other SFCs)
         hard_isolated_mask = self.substrate.get_hard_isolated_nodes_mask()

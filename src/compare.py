@@ -22,11 +22,6 @@ from src.substrate import SubstrateNetwork
 from src.requests import RequestGenerator, load_config
 from src.model import create_masked_env, load_model
 from src.baselines import BasePlacement, BestFitPlacement
-from src.risk import (
-    apply_incident_view,
-    decay_incident_pressure,
-    restore_incident_view,
-)
 from src.eval_reporting import (
     COMPARISON_TABLE_ROWS,
     append_eval_result_to_by_algo,
@@ -34,30 +29,11 @@ from src.eval_reporting import (
 )
 
 
-def _build_risk_config(config: dict) -> dict:
-    """Build risk configuration with defaults."""
-    risk = config.get("risk", {})
-    return {
-        "enabled": bool(risk.get("enabled", False)),
-        "tenancy_ref_floor": float(risk.get("tenancy_ref_floor", 1.0)),
-        "load_ref_floor": float(risk.get("load_ref_floor", 1.0)),
-        "incident_base_rate": float(risk.get("incident_base_rate", 0.025)),
-        "incident_alpha": float(risk.get("incident_alpha", 1.6)),
-        "incident_beta": float(risk.get("incident_beta", 0.7)),
-        "incident_steps_cap": int(risk.get("incident_steps_cap", 12)),
-        "incident_pressure_decay": float(risk.get("incident_pressure_decay", 0.92)),
-        "incident_security_penalty": float(risk.get("incident_security_penalty", 0.60)),
-    }
-
-
 def evaluate_baseline(
     substrate: SubstrateNetwork,
     request_generator: RequestGenerator,
     algorithm: BasePlacement,
     num_requests: int,
-    risk_cfg: dict,
-    max_security: float,
-    max_ttl: int,
     verbose: bool = False,
 ) -> dict:
     """
@@ -87,7 +63,6 @@ def evaluate_baseline(
     sfc_tenancy_samples = []  # Track SFC tenancy per occupied node over time
     vnf_tenancy_samples = []  # Track VNF tenancy per occupied node over time
     substrate_utilization_samples = []  # Track % of nodes being used over time
-    node_incident_pressure = {node_id: 0.0 for node_id in range(substrate_copy.num_nodes)}
     node_sfc_placements: dict[int, int] = {}   # cumulative SFC chains per node
     node_vnf_placements: dict[int, int] = {}   # cumulative VNF instances per node
 
@@ -100,43 +75,11 @@ def evaluate_baseline(
     for _ in iterator:
         # Advance time first (release expired placements from previous steps)
         substrate_copy.tick()
-        decay_incident_pressure(
-            node_incident_pressure,
-            risk_cfg["incident_pressure_decay"],
-        )
 
         # Generate a new request
         request = request_generator.generate_request()
 
-        # Try to place
-        (
-            original_resource_matrix,
-            original_security,
-            original_ram,
-            original_cpu,
-            original_storage,
-        ) = apply_incident_view(
-            substrate_copy,
-            node_incident_pressure,
-            risk_cfg,
-            max_security,
-        )
-        placement = algorithm.place(
-            substrate_copy,
-            request,
-            risk_cfg=risk_cfg,
-            node_incident_pressure=node_incident_pressure,
-            max_security=max_security,
-            max_ttl=max_ttl,
-        )
-        restore_incident_view(
-            substrate_copy,
-            original_resource_matrix,
-            original_security,
-            original_ram,
-            original_cpu,
-            original_storage,
-        )
+        placement = algorithm.place(substrate_copy, request)
 
         if placement is not None:
             # Successful placement
@@ -506,14 +449,10 @@ def run_eval(
         substrate = SubstrateNetwork(config["substrate"])
     if request_generator is None:
         request_generator = RequestGenerator(config["sfc"])
-    risk_cfg = _build_risk_config(config)
-    max_security = config["substrate"]["resources"]["security_score"]["max"]
-    max_ttl = int(config["sfc"]["ttl"]["max"])
-
     results = {}
     baselines = [BestFitPlacement()]
 
-    # Snapshot RNG state so every algorithm sees the same request/incident stream.
+    # Snapshot RNG state so every algorithm sees the same request stream.
     initial_rng_state = random.getstate()
     initial_np_rng_state = np.random.get_state()
 
@@ -529,9 +468,6 @@ def run_eval(
             request_generator,
             algorithm,
             num_requests=num_requests,
-            risk_cfg=risk_cfg,
-            max_security=max_security,
-            max_ttl=max_ttl,
             verbose=verbose,
         )
         results[result["algorithm"]] = result

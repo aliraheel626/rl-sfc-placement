@@ -74,33 +74,28 @@ The environment exposes a \texttt{Dict} observation with four components. All va
 
 \subsection{Node Feature Matrix}
 
-The node feature matrix $\mathbf{F} \in \mathbb{R}^{N_{\max} \times 20}$ provides a rich per-node characterization of the substrate. For each real node $n \in \{0, \ldots, N-1\}$ the 20 features are organized into six groups, summarized in Table~\ref{tab:node_features}.
+The node feature matrix $\mathbf{F} \in \mathbb{R}^{N_{\max} \times 15}$ provides a rich per-node characterization of the substrate. For each real node $n \in \{0, \ldots, N-1\}$ the 15 features are organized into five groups, summarized in Table~\ref{tab:node_features}.
 
 \begin{table}[!ht]
 \centering
-\caption{Node Feature Groups ($\mathbf{F} \in \mathbb{R}^{N_{\max} \times 20}$)}
+\caption{Node Feature Groups ($\mathbf{F} \in \mathbb{R}^{N_{\max} \times 15}$)}
 \label{tab:node_features}
 \begin{tabularx}{\textwidth}{c l X}
 \hline
 \textbf{Indices} & \textbf{Group} & \textbf{Features} \\ \hline
-0--3  & Base resources      & Residual RAM, CPU, Storage (fraction of initial capacity); Effective security score $s_n^{\text{eff}} / s_{\max}$ \\
+0--3  & Base resources      & Residual RAM, CPU, Storage (fraction of initial capacity); Security score $s_n / s_{\max}$ \\
 4     & Connectivity        & Average residual bandwidth to neighbors, normalized by $b_{\max}$ \\
 5     & Distance            & Shortest-path latency from the previous placement node, normalized by $\ell_{\max}$; zero for the first VNF \\
 6--8  & Global resource shares & $\text{used}_n^{r} / \sum_j \text{used}_j^{r}$ for $r \in \{\text{RAM, CPU, Storage}\}$: the fraction of all consumed resources sitting on this node \\
 9     & VNF global share    & $\text{VNF}(n) / \sum_j \text{VNF}(j)$: fraction of all VNF instances hosted by this node \\
 10    & SFC tenancy ratio   & $\text{SFC}(n) / \max(\text{VNF}(n), 1)$: chain diversity per instance, a blast-radius proxy \\
 11--13 & VNF fit ratios     & $d_v^{r} / \tilde{r}_n^{r}$ for $r \in \{\text{RAM, CPU, Storage}\}$: how much of the node's remaining headroom the current VNF would consume \\
-14    & Incident pressure   & Accumulated pressure $p_n$ \\
-15    & Load norm           & $\text{VNF}(n) / \max(Q_{75}^{\text{VNF}}, 1)$: VNF count relative to the 75th-percentile reference \\
-16    & Base incident prob.\ $q_n$ & As defined in Eq.~(\ref{eq:qn}): the same signal the risk formula and baselines use \\
-17    & Expected incidents  & $q_n \cdot T_s / T_{\text{cap}}$, clipped to $[0, 1]$ \\
-18    & Node risk score     & Equals $q_n$ (feature 16); an explicit risk slot \\
-19    & Expected loss proxy   & Inverse-normalized blast-radius signal: $1 - 1/(1 + q_n \cdot \text{SFC}(n))$ \\
+14    & Load norm           & $\text{VNF}(n) / \max(Q_{75}^{\text{VNF}}, 1)$: VNF count relative to the 75th-percentile reference \\
 \hline
 \end{tabularx}
 \end{table}
 
-\textbf{Design rationale.} Features 0--5 capture the \emph{local} resource and topology state visible to a myopic heuristic. Features 6--10 add \emph{global} context: resource concentration, instance density, and blast-radius signals that help the agent detect ``hot-spot'' nodes — nodes that are operationally important because they host a disproportionate share of the workload. Features 11--13 bridge the current VNF demand to each candidate node, directly informing how tight a fit each placement would be. Features 14--19 expose the \emph{risk-driving} quantities — incident pressure, load, $q_n$, expected incidents, and the blast-radius-weighted loss proxy — that the security cost model and baselines use internally, closing the observational asymmetry between the RL agent and the reward/risk formulas.
+\textbf{Design rationale.} Features 0--5 capture the \emph{local} resource and topology state visible to a myopic heuristic. Features 6--10 add \emph{global} context: resource concentration, instance density, and blast-radius signals that help the agent detect hot-spot nodes. Features 11--13 bridge the current VNF demand to each candidate node, directly informing how tight a fit each placement would be. Feature 14 provides a relative load signal, helping the agent distinguish lightly and heavily loaded nodes.
 
 Padded nodes (indices $N$ through $N_{\max}-1$) are zeroed and excluded from GNN message passing via the node mask.
 
@@ -149,7 +144,7 @@ Each SFC request requires $K_r$ consecutive actions (one per VNF). Upon completi
 
 The \texttt{action\_masks()} method of \texttt{SFCPlacementEnv} computes the binary feasibility mask at each step by:
 \begin{enumerate}
-  \item \textbf{Resource feasibility check:} A vectorized scan over all node resource matrices identifies nodes with $\tilde{\mathbf{r}}_n \geq \mathbf{d}_{v_k}$ and $s_n^{\text{eff}} \geq s_r^{\min}$.
+  \item \textbf{Resource feasibility check:} A vectorized scan over all node resource matrices identifies nodes with $\tilde{\mathbf{r}}_n \geq \mathbf{d}_{v_k}$ and $s_n \geq s_r^{\min}$.
   \item \textbf{Hard isolation check:} Hard-isolated nodes and (if $\delta_r = 1$) occupied nodes are excluded.
   \item \textbf{Bandwidth and latency budget check:} For each resource-feasible node, bandwidth $B(n_{k-1}, n) \geq b_r^{\min}$ and hop latency $L(n_{k-1}, n) \leq \ell_{\text{budget}}$ must hold, where the latency budget is:
   \begin{equation}
@@ -169,7 +164,7 @@ After placing VNF $v_k$ ($k < K_r$), the agent receives:
 \begin{equation}
 r_t^{\text{step}} = 0.1
   - 0.3 \cdot \min\!\left(\frac{L(n_{k-1}, n_k)}{\ell_r^{\max}},\; 1\right)
-  + \alpha_s \cdot \frac{\max\!\left(s_{n_k}^{\text{eff}} - s_r^{\min},\, 0\right)}{s_{\max}}
+  + \alpha_s \cdot \frac{\max\!\left(s_{n_k} - s_r^{\min},\, 0\right)}{s_{\max}}
   - \alpha_c \cdot \left(1 - \frac{1}{1 + \text{SFC}(n_k)}\right).
 \end{equation}
 The constant $+0.1$ provides a progress bonus for each feasible VNF placement. The latency term penalizes distant placements, encouraging the agent to co-locate consecutive VNFs on nearby nodes to preserve latency budget for later hops. The security margin term ($\alpha_s = 0.1$) rewards placing on nodes whose effective security exceeds the request minimum, directly incentivising high-margin placements. The co-location penalty ($\alpha_c = 0.1$) uses an inverse saturation $1 - 1/(1 + \text{SFC}(n_k))$ that grows quickly for the first few chains and asymptotically approaches 1, discouraging hot-spot nodes without a tunable reference parameter.
@@ -180,7 +175,7 @@ When all $K_r$ VNFs have been placed and the end-to-end latency constraint is sa
 \begin{equation}
 r_T^{\text{acc}} = \left(
   R_{\text{acc}}
-  + \alpha_s \cdot \frac{\max\!\left(s_{n_{K_r}}^{\text{eff}} - s_r^{\min},\, 0\right)}{s_{\max}}
+  + \alpha_s \cdot \frac{\max\!\left(s_{n_{K_r}} - s_r^{\min},\, 0\right)}{s_{\max}}
   - \alpha_c \cdot \left(1 - \frac{1}{1 + \text{SFC}^{-}(n_{K_r})}\right)
 \right) \cdot \left(1 + \omega \cdot \overline{\text{AR}}_w\right),
 \end{equation}
@@ -205,17 +200,13 @@ where $R_{\text{rej}} = -1$. The flipped AR modifier $(1 - \overline{\text{AR}}_
 
 \section{Best-Fit Baseline}
 
-To assess the value of intelligent DRL-based security posture awareness over a greedy approach, a \textbf{Best-Fit by Minimum Risk} (\texttt{BestFitPlacement}) heuristic is implemented. For each VNF in the chain, it applies the same feasibility checks as the environment (including \texttt{apply\_incident\_view} for consistent constraint semantics), then selects the valid node with minimum per-node risk score, tie-breaking by resource waste (then node index):
+To assess the value of intelligent DRL-based placement over a greedy approach, a \textbf{Best-Fit by Maximum Security Margin} (\texttt{BestFitPlacement}) heuristic is implemented. For each VNF in the chain, it applies the same feasibility checks as the environment, then selects the valid node with the highest security margin above the request minimum, tie-breaking by minimum SFC co-location count, then minimum resource waste (then node index):
 \begin{equation}
-n^* = \argmin_{n \in \mathcal{V}_t^{\text{valid}}} \left(\rho_n^{\text{node}},\; w_n^{\text{waste}},\; n\right),
+n^* = \argmax_{n \in \mathcal{V}_t^{\text{valid}}} \left(s_n - s_r^{\min}\right), \quad \text{tie-break: } \argmin \left(\text{SFC}(n),\; w_n^{\text{waste}},\; n\right),
 \end{equation}
-where the per-node risk score is:
-\begin{equation}
-\rho_n^{\text{node}} = \min\!\left(q_n \cdot \text{SFC}(n) \cdot \frac{T_s}{\tau_{\max}},\; 1\right),
-\end{equation}
-with $q_n$ defined as in Eq.~(\ref{eq:qn}), $\text{SFC}(n)$ the number of active chains on node $n$, $T_s = \min(\tau_r, T_{\text{cap}})$, and $\tau_{\max}$ the maximum TTL (see also Eq.~\ref{eq:node_risk}). The waste tie-breaker is $w_n^{\text{waste}} = (r_n^{\text{ram}} - d_v^{\text{ram}}) + (r_n^{\text{cpu}} - d_v^{\text{cpu}}) + (r_n^{\text{stor}} - d_v^{\text{stor}})$.
+where $s_n$ is the static security score of node $n$ and $w_n^{\text{waste}} = (r_n^{\text{ram}} - d_v^{\text{ram}}) + (r_n^{\text{cpu}} - d_v^{\text{cpu}}) + (r_n^{\text{stor}} - d_v^{\text{stor}})$.
 
-This baseline is a strong comparator: it explicitly minimizes expected loss at each step, matching the primary objective of the DRL agent's security posture-aware risk penalty. It is used to assess whether the DRL agent's learned, intelligent policy provides any advantage over greedy risk minimization — in particular, whether the DRL agent exploits long-horizon reasoning about security posture dynamics that a myopic greedy strategy cannot.
+This baseline directly optimizes the same per-VNF criterion that the DRL agent's shaping reward encourages, making it a strong greedy comparator. It is used to assess whether the DRL agent's learned policy provides any advantage over greedy security-margin maximization — in particular, whether the DRL agent exploits long-horizon reasoning about resource and tenancy dynamics that a myopic greedy strategy cannot.
 
 \section{Training Procedure}
 
@@ -251,4 +242,4 @@ This baseline is a strong comparator: it explicitly minimizes expected loss at e
 \end{algorithmic}
 \end{algorithm}
 
-During training, a \texttt{TrainingEvalCallback} periodically (every $f_{\text{eval}} = 20{,}000$ steps) calls the full evaluation pipeline on the training substrate to measure the agent's current acceptance ratio, risk metrics, and substrate utilization. The best model checkpoint (by acceptance ratio) is saved as \texttt{sfc\_ppo\_best.zip}.
+During training, a \texttt{TrainingEvalCallback} periodically (every $f_{\text{eval}} = 20{,}000$ steps) calls the full evaluation pipeline on the training substrate to measure the agent's current acceptance ratio, security margin, and substrate utilization. The best model checkpoint (by acceptance ratio) is saved as \texttt{sfc\_ppo\_best.zip}.

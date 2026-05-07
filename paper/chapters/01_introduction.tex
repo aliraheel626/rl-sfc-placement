@@ -228,11 +228,10 @@ The objectives of this thesis follow directly from these gaps:
   for security-posture-aware SFC placement} that learns adaptive
   placement policies from the request stream while treating security
   requirements as first-class constraints.
-  \item Develop a \textbf{security cost model}
-  that quantifies operational risk as a function of per-node incident
-  probability (driven by posture, load, and accumulated incident
-  pressure), chain co-location, and time exposure, and use it both
-  as a reward signal and as an evaluation metric.
+  \item Design a \textbf{security-aware reward shaping} scheme that
+  applies a per-VNF security margin bonus and co-location penalty at
+  every placement step, steering the DRL policy toward high-security,
+  low-blast-radius placements without a separate risk model.
   \item Guarantee \textbf{hard-constraint feasibility} through action
   masking, so that every chain the agent accepts satisfies resource,
   latency, bandwidth, security posture, and isolation requirements by
@@ -241,7 +240,7 @@ The objectives of this thesis follow directly from these gaps:
   into the policy so that placement decisions reflect substrate
   topology and the structural role of each node.
   \item Perform a \textbf{fair comparative evaluation} against a
-  risk-minimising best-fit baseline, aligning the random-number
+  Best-Fit by Maximum Security Margin baseline, aligning the random-number
   stream across algorithms so that both see identical request
   sequences.
 \end{enumerate}
@@ -256,10 +255,11 @@ The principal contributions of this thesis are:
   bandwidth, security posture, and isolation requirements are all
   enforced before any action is sampled --- so every chain the agent
   accepts is feasible by construction.
-  \item A \textbf{security posture model} capturing per-node incident
-  probability driven by effective security score, load, and accumulated
-  incident pressure, exposing this risk signal to the GNN policy and
-  the Best-Fit baseline.
+  \item A \textbf{security-aware reward shaping} scheme applying a
+  per-VNF security margin bonus ($\alpha_s$) and co-location penalty
+  via inverse saturation ($\alpha_c$) at every placement step,
+  steering the DRL policy toward high-security, low-blast-radius
+  placements without a separate risk model.
   \item A \textbf{topology-aware GNN feature extractor} supporting
   GCN, GAT, and GraphSAGE variants with attention-weighted aggregation
   and MLP-based global context fusion, endowing the DRL policy with
@@ -270,7 +270,7 @@ The principal contributions of this thesis are:
   stability.
   \item A \textbf{fair comparative evaluation framework} that aligns
   the random-number generator state of the DRL agent and the
-  risk-minimising best-fit baseline so that both process identical
+  Best-Fit by Maximum Security Margin baseline so that both process identical
   request streams.
   \item A \textbf{comprehensive experimental analysis} covering
   acceptance ratio, security margin, substrate utilization, and
@@ -285,7 +285,7 @@ security-aware placement, DRL-based placement, and classical heuristic
 and optimization-based approaches, and situates the proposed framework
 within this landscape. Chapter~3 formalizes the system model,
 introduces the Markov Decision Process formulation, and defines the
-security posture risk model. Chapter~4 presents the proposed
+security-aware reward shaping. Chapter~4 presents the proposed
 methodology in detail, including the Maskable PPO agent, the GNN
 feature extractor, the reward design, the action-masking
 implementation, and the best-fit baseline. Chapter~5 describes the

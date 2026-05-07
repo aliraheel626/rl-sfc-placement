@@ -77,9 +77,9 @@ A placement $\pi_r = (n_1, n_2, \ldots, n_{K_r})$ assigns VNF $v_k$ to substrate
 
 \textbf{Security constraints:} For each node $n_k$ in the placement:
 \begin{equation}
-s_{n_k}^{\text{eff}}(t) \geq s_r^{\min},
+s_{n_k} \geq s_r^{\min},
 \end{equation}
-where $s_{n_k}^{\text{eff}}(t)$ is the \textit{effective security} of node $n_k$ at time $t$ (which may be reduced by incident pressure; see Section~3.5).
+where $s_{n_k}$ is the static security score of node $n_k$.
 
 \textbf{Bandwidth constraints:} For each consecutive pair $(n_k, n_{k+1})$:
 \begin{equation}
@@ -106,7 +106,7 @@ The SFC placement problem under online request arrivals is formalized as a finit
 The state $\mathbf{s}_t \in \mathcal{S}$ at time step $t$ encodes all information relevant to the current placement decision. It comprises:
 
 \begin{enumerate}
-  \item \textbf{Node feature matrix} $\mathbf{F} \in \mathbb{R}^{N \times 20}$: for each substrate node, a normalized vector comprising: (i)~base resources [RAM, CPU, storage, effective security score, average neighbor bandwidth, distance to previous placement node]; (ii)~global resource shares [RAM global share, CPU global share, storage global share] indicating each node's fraction of total consumed resources; (iii)~tenancy features [VNF global share, SFC tenancy ratio]; (iv)~VNF fit ratios [fit RAM, fit CPU, fit storage] measuring how much of each node's remaining capacity the current VNF would consume; (v)~incident features [incident pressure, load norm, base incident probability $p_{\text{base}}$, expected incidents]; (vi)~risk signals [node risk score ($= p_{\text{base}}$), expected lost revenue].
+  \item \textbf{Node feature matrix} $\mathbf{F} \in \mathbb{R}^{N \times 15}$: for each substrate node, a normalized vector comprising: (i)~base resources [RAM, CPU, storage, security score, average neighbor bandwidth, distance to previous placement node]; (ii)~global resource shares [RAM global share, CPU global share, storage global share] indicating each node's fraction of total consumed resources; (iii)~tenancy features [VNF global share, SFC tenancy ratio]; (iv)~VNF fit ratios [fit RAM, fit CPU, fit storage] measuring how much of each node's remaining capacity the current VNF would consume; (v)~load norm [VNF count relative to the 75th-percentile reference].
   \item \textbf{Global context vector} $\mathbf{g} \in \mathbb{R}^{15}$: encoding current VNF demands (3), SFC constraints (3), VNF progress index (1), hard isolation flag (1), latency budget consumed (1), TTL (1), remaining VNF count and aggregate demands (4), and windowed acceptance ratio (1).
   \item \textbf{Placement mask} $\mathbf{m}^{P} \in \{0,1\}^{N}$: indicating which nodes are already used in the current partial placement.
   \item \textbf{Node mask} $\mathbf{m}^{N} \in \{0,1\}^{N}$: indicating real (non-padded) nodes.
@@ -131,7 +131,7 @@ Upon action $a_t = n_k$ (placing VNF $v_k$ on node $n_k$):
   \item Latency $L(n_{k-1}, n_k)$ is added to the accumulated latency $\hat{\ell}$.
   \item The VNF index advances: $k \leftarrow k+1$.
   \item If $k = K_r$: if $\hat{\ell} \leq \ell_r^{\max}$, acceptance is triggered; otherwise, all partial resources are released and rejection is triggered.
-  \item Upon SFC completion (accepted or rejected): substrate TTL is advanced via \texttt{tick()}, incident pressure decays, and the next SFC request is generated.
+  \item Upon SFC completion (accepted or rejected): substrate TTL is advanced via \texttt{tick()} and the next SFC request is generated.
 \end{enumerate}
 
 \subsection{Reward Function}
@@ -142,7 +142,7 @@ The reward signal is designed to encourage high acceptance ratios while shaping 
 \begin{equation}
 r_t^{\text{step}} = 0.1
   - 0.3 \cdot \min\!\left(\frac{L(n_{k-1}, n_k)}{\ell_r^{\max}}, 1\right)
-  + \alpha_s \cdot \frac{\max\!\left(s_{n_k}^{\text{eff}} - s_r^{\min},\, 0\right)}{s_{\max}}
+  + \alpha_s \cdot \frac{\max\!\left(s_{n_k} - s_r^{\min},\, 0\right)}{s_{\max}}
   - \alpha_c \cdot \left(1 - \frac{1}{1 + \text{SFC}(n_k)}\right).
 \end{equation}
 The 0.1 progress bonus rewards feasible VNF placements; the latency term encourages locality. The security margin term ($\alpha_s = 0.1$) rewards placing on nodes whose effective security exceeds the request minimum, directly incentivising high-margin placements. The co-location penalty ($\alpha_c = 0.1$) uses an inverse saturation $1 - 1/(1 + \text{SFC}(n_k))$ that grows quickly for the first few chains and asymptotically approaches 1, discouraging hot-spot nodes without requiring a tunable reference parameter.
@@ -150,7 +150,7 @@ The 0.1 progress bonus rewards feasible VNF placements; the latency term encoura
 \textbf{Terminal acceptance reward:}
 \begin{equation}
 r_T^{\text{acc}} = \left( R_{\text{acc}}
-  + \alpha_s \cdot \frac{\max\!\left(s_{n_{K_r}}^{\text{eff}} - s_r^{\min},\, 0\right)}{s_{\max}}
+  + \alpha_s \cdot \frac{\max\!\left(s_{n_{K_r}} - s_r^{\min},\, 0\right)}{s_{\max}}
   - \alpha_c \cdot \left(1 - \frac{1}{1 + \text{SFC}^{-}(n_{K_r})}\right)
 \right) \cdot \left(1 + \omega \cdot \overline{\text{AR}}_w\right),
 \end{equation}
@@ -161,41 +161,6 @@ where $R_{\text{acc}} = 1$, $\text{SFC}^{-}(n_{K_r})$ is the chain count on the 
 r_T^{\text{rej}} = R_{\text{rej}} \cdot \left(1 + \omega \cdot (1 - \overline{\text{AR}}_w)\right),
 \end{equation}
 where $R_{\text{rej}} = -1$ is the base rejection penalty. The flipped AR modifier increases the penalty magnitude when the agent has been frequently rejecting (low AR), providing stronger training signal to correct poor behavior.
-
-\section{Security Posture and Risk Model}
-
-\subsection{Security Posture Model}
-
-The \textit{security posture} of a substrate node captures its current vulnerability and resilience state, combining its static security score with the accumulated effect of past security incidents. Formally, the \textit{effective security} of node $n$ at time $t$ is reduced by accumulated incident pressure $p_n(t)$:
-\begin{equation}
-s_n^{\text{eff}}(t) = s_n \cdot \left(1 - \eta \cdot p_n(t)\right),
-\end{equation}
-where $\eta \in [0,1]$ is the security penalty coefficient.
-
-Incident pressure models the temporal degradation of a node's security posture and recovers geometrically as the node is remediated:
-\begin{equation}
-p_n(t+1) = \gamma_p \cdot p_n(t),
-\end{equation}
-where $\gamma_p = 0.92$ is the decay factor.
-
-This dynamic security posture model ensures that the DRL agent's placement decisions reflect the real-time security state of the substrate, not merely its static configuration.
-
-\subsection{Per-Node Risk Score}
-
-The per-node base incident probability $q_n$ drives the security-aware features observed by the GNN policy and the node selection criterion of the Best-Fit baseline:
-
-\begin{equation}
-q_n = q_0 \cdot \left(1 - \frac{s_n^{\text{eff}}}{s_{\max}}\right)^{\alpha} \cdot \left(1 + \beta \cdot \ell_n\right) \cdot \left(1 + p_n\right),
-\label{eq:qn}
-\end{equation}
-where $q_0 = 0.025$ is the base rate, $\alpha = 1.6$ is the security sensitivity exponent, $\beta = 0.7$ is the load amplification factor, $\ell_n$ is the normalized node load (VNF count relative to the 75th-percentile reference), and $p_n$ is the accumulated incident pressure. $q_n$ is clamped to $[0, 1]$.
-
-The per-node risk score used by the Best-Fit baseline accounts for co-location and TTL exposure:
-\begin{equation}
-\rho_n^{\text{node}} = \min\!\left(q_n \cdot \text{SFC}(n) \cdot \frac{T_s}{\tau_{\max}},\; 1\right),
-\label{eq:node_risk}
-\end{equation}
-where $T_s = \min(\tau_r, T_{\text{cap}})$ with $T_{\text{cap}} = 12$ and $\text{SFC}(n)$ is the number of active chains on node $n$.
 
 \section{Optimization Objective}
 

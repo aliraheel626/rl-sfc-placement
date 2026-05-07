@@ -204,13 +204,13 @@ where $R_{\text{rej}} = -1$. The flipped AR modifier $(1 - \overline{\text{AR}}_
 
 \section{Best-Fit Baseline}
 
-To assess the value of intelligent DRL-based placement over a greedy approach, a \textbf{Best-Fit by Maximum Security Margin} (\texttt{BestFitPlacement}) heuristic is implemented. For each VNF in the chain, it applies the same feasibility checks as the environment, then selects the valid node with the highest security margin above the request minimum, tie-breaking by minimum SFC co-location count, then minimum resource waste (then node index):
+To assess the value of intelligent DRL-based placement over a greedy approach, a \textbf{Best-Fit by Minimum Co-location} (\texttt{BestFitPlacement}) heuristic is implemented. For each VNF in the chain, it applies the same feasibility checks as the environment, then selects the valid node with the fewest active SFC chains, tie-breaking by maximum security margin above the request minimum, then minimum resource waste (then node index):
 \begin{equation}
-n^* = \argmax_{n \in \mathcal{V}_t^{\text{valid}}} \left(s_n - s_r^{\min}\right), \quad \text{tie-break: } \argmin \left(\text{SFC}(n),\; w_n^{\text{waste}},\; n\right),
+n^* = \argmin_{n \in \mathcal{V}_t^{\text{valid}}} \text{SFC}(n), \quad \text{tie-break: } \argmax\!\left(s_n - s_r^{\min}\right), \text{ then } \argmin\!\left(w_n^{\text{waste}},\; n\right),
 \end{equation}
 where $s_n$ is the static security score of node $n$ and $w_n^{\text{waste}} = (r_n^{\text{ram}} - d_v^{\text{ram}}) + (r_n^{\text{cpu}} - d_v^{\text{cpu}}) + (r_n^{\text{stor}} - d_v^{\text{stor}})$.
 
-This baseline directly optimizes the same per-VNF criterion that the DRL agent's shaping reward encourages, making it a strong greedy comparator. It is used to assess whether the DRL agent's learned policy provides any advantage over greedy security-margin maximization — in particular, whether the DRL agent exploits long-horizon reasoning about resource and tenancy dynamics that a myopic greedy strategy cannot.
+This baseline directly optimizes both per-VNF objectives that the DRL agent's shaping reward encourages --- co-location spread as the primary criterion and security margin as the secondary --- making it a fair greedy comparator. It is used to assess whether the DRL agent's learned policy provides any advantage beyond greedy myopic optimization of these same criteria, in particular through long-horizon reasoning about resource and tenancy dynamics.
 
 \section{Training Procedure}
 

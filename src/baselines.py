@@ -57,9 +57,9 @@ class BasePlacement(ABC):
 
 class BestFitPlacement(BasePlacement):
     """
-    Best-fit by maximum security margin: for each VNF, select the valid node with
-    the highest security score above the request minimum. Tie-break by minimum SFC
-    co-location count, then minimum resource waste, then node index.
+    Best-fit by minimum co-location: for each VNF, select the valid node with
+    the fewest active SFC chains. Tie-break by maximum security margin above
+    the request minimum, then minimum resource waste, then node index.
     """
 
     def place(
@@ -85,11 +85,11 @@ class BestFitPlacement(BasePlacement):
                 return None
 
             def key(n: int):
-                sec_margin = -(substrate.node_resources[n]["security_score"] - request.min_security_score)
                 coloc = sfcs_per_node.get(n, 0)
+                sec_margin = -(substrate.node_resources[n]["security_score"] - request.min_security_score)
                 res = substrate.get_node_resources(n)
                 waste = (res["ram"] - vnf.ram) + (res["cpu"] - vnf.cpu) + (res["storage"] - vnf.storage)
-                return (sec_margin, coloc, waste, n)
+                return (coloc, sec_margin, waste, n)
 
             best_node = min(valid_nodes, key=key)
             placement.append(best_node)

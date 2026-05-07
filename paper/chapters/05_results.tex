@@ -45,7 +45,7 @@ Figure~\ref{fig:ar} illustrates the training acceptance ratio (rolling average o
 
 \subsection{Acceptance Ratio}
 
-Table~\ref{tab:results} presents the comparative evaluation of the Maskable PPO agent against the Best-Fit baseline over 1000 SFC requests. The PPO agent achieves a competitive acceptance ratio, demonstrating that the learned policy is capable of efficiently allocating resources across the substrate network. The Best-Fit baseline, which greedily maximizes security margin at each step, provides a strong comparison point.
+Table~\ref{tab:results} presents the comparative evaluation of the Maskable PPO agent against the Best-Fit baseline over 1000 SFC requests. The PPO agent achieves a competitive acceptance ratio, demonstrating that the learned policy is capable of efficiently allocating resources across the substrate network. The Best-Fit baseline, which greedily minimizes co-location and then maximizes security margin at each step, provides a strong comparison point.
 
 \begin{table}[!ht]
 \centering

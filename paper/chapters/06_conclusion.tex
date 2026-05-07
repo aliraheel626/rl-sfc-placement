@@ -22,7 +22,7 @@ The experimental results demonstrate that the intelligent DRL agent (Maskable PP
 
 The per-VNF shaping rewards introduce principled security objectives beyond simple acceptance ratio maximization. By rewarding security margin and penalising co-location at every VNF placement step, the intelligent DRL agent learns to prefer placements that are both feasible and operationally resilient — favouring nodes with strong security posture and avoiding hot-spots. The inverse saturation co-location penalty grows quickly for the first few chains per node and asymptotes toward 1, discouraging concentration without a tunable reference parameter.
 
-The Best-Fit by Maximum Security Margin baseline serves as a strong greedy comparator. The key advantage of the intelligent DRL approach lies in its ability to reason about long-term consequences of placement decisions — preserving high-security-posture, high-resource nodes for future demanding requests — a capability beyond reach of any myopic greedy strategy.
+The Best-Fit by Minimum Co-location baseline serves as a strong greedy comparator. The key advantage of the intelligent DRL approach lies in its ability to reason about long-term consequences of placement decisions — preserving high-security-posture, high-resource nodes for future demanding requests — a capability beyond reach of any myopic greedy strategy.
 
 \subsection{Comparative summary (aligned evaluation)}
 

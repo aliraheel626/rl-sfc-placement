@@ -64,10 +64,10 @@ Entropy coefficient $c_e$ & 0.01 & Entropy bonus \\
 Episode length $T$ & 300 & Requests per episode \\
 AR window $w$ & 10 & Windowed acceptance ratio size \\
 AR weight $\omega$ & 0.5 & AR modifier weight \\
-Step security weight $\alpha_s$ & 0.1 & Intermediate security margin bonus \\
-Step co-location weight $\alpha_c$ & 0.1 & Intermediate co-location penalty \\
-Terminal security weight $\alpha_s^T$ & 0.3 & Terminal security margin bonus \\
-Terminal co-location weight $\alpha_c^T$ & 0.3 & Terminal co-location penalty \\
+Step security weight $\alpha_s$ & 0.3 & Intermediate security margin bonus \\
+Step co-location weight $\alpha_c$ & 0.5 & Intermediate co-location penalty (primary) \\
+Terminal security weight $\alpha_s^T$ & 0.5 & Terminal security margin bonus \\
+Terminal co-location weight $\alpha_c^T$ & 1.0 & Terminal co-location penalty (primary) \\
 \hline
 \end{tabularx}
 \end{table}
@@ -171,7 +171,7 @@ r_t^{\text{step}} = 0.1
   + \alpha_s \cdot \frac{\max\!\left(s_{n_k} - s_r^{\min},\, 0\right)}{s_{\max}}
   - \alpha_c \cdot \left(1 - \frac{1}{1 + \text{SFC}(n_k)}\right).
 \end{equation}
-The constant $+0.1$ provides a progress bonus for each feasible VNF placement. The latency term penalizes distant placements, encouraging the agent to co-locate consecutive VNFs on nearby nodes to preserve latency budget for later hops. The security margin term ($\alpha_s = 0.1$) rewards placing on nodes whose effective security exceeds the request minimum, directly incentivising high-margin placements. The co-location penalty ($\alpha_c = 0.1$) uses an inverse saturation $1 - 1/(1 + \text{SFC}(n_k))$ that grows quickly for the first few chains and asymptotically approaches 1, discouraging hot-spot nodes without a tunable reference parameter.
+The constant $+0.1$ provides a progress bonus for each feasible VNF placement. The latency term penalizes distant placements, encouraging the agent to co-locate consecutive VNFs on nearby nodes to preserve latency budget for later hops. The co-location penalty ($\alpha_c = 0.5$, primary) uses an inverse saturation $1 - 1/(1 + \text{SFC}(n_k))$ that at two or more active chains already exceeds the $+0.1$ progress bonus, strongly discouraging hot-spot placement. The security margin term ($\alpha_s = 0.3$, secondary) rewards placing on nodes whose security score exceeds the request minimum; $\alpha_c > \alpha_s$ reflects the priority of co-location spread over security margin improvement.
 
 \subsection{Terminal Acceptance Reward}
 
@@ -186,13 +186,13 @@ r_T^{\text{acc}} = \left(
 where:
 \begin{itemize}
   \item $R_{\text{acc}} = 1$ is the base acceptance reward;
-  \item $\alpha_s^T = 0.3$ is the terminal security margin weight, larger than the intermediate $\alpha_s = 0.1$ to provide a stronger end-of-SFC quality signal;
-  \item $\alpha_c^T = 0.3$ is the terminal co-location weight, larger than the intermediate $\alpha_c = 0.1$ for the same reason;
+  \item $\alpha_s^T = 0.5$ is the terminal security margin weight (approximately 50\% of $R_{\text{acc}}$);
+  \item $\alpha_c^T = 1.0$ is the terminal co-location weight (up to $\approx\!83\%$ of $R_{\text{acc}}$ at high co-location); set larger than $\alpha_s^T$ to reflect the priority of co-location spread;
   \item $\text{SFC}^{-}(n_{K_r})$ is the chain count on the last placement node \emph{before} the current SFC is registered;
   \item $\omega = 0.5$ is the windowed acceptance ratio (AR) modifier weight;
   \item $\overline{\text{AR}}_w$ is the acceptance ratio over the last $w = 10$ requests.
 \end{itemize}
-The AR modifier amplifies the reward when the agent has been accepting frequently, providing curriculum-style positive reinforcement. The separate terminal weights $\alpha_s^T > \alpha_s$ and $\alpha_c^T > \alpha_c$ ensure the end-of-SFC reward carries a proportionally stronger security and co-location signal relative to $R_{\text{acc}} = 1$ than each individual intermediate step does relative to its progress bonus of $0.1$.
+The AR modifier amplifies the reward when the agent has been accepting frequently, providing curriculum-style positive reinforcement. The terminal weights are deliberately larger than the intermediate weights ($\alpha_s^T = 0.5 > \alpha_s = 0.3$; $\alpha_c^T = 1.0 > \alpha_c = 0.5$) so that the end-of-SFC signal carries proportionally stronger security and co-location pressure relative to $R_{\text{acc}} = 1$ than each intermediate step does relative to its $+0.1$ progress bonus.
 
 \subsection{Terminal Rejection Reward}
 

@@ -572,6 +572,25 @@ class SubstrateNetwork:
 
         return sfcs_count
 
+    def get_ttl_weighted_sfcs_per_node(self, max_ttl: float) -> dict[int, float]:
+        """
+        TTL-weighted co-location score per node.
+
+        Each active SFC on a node contributes its remaining_ttl / max_ttl rather
+        than a flat count of 1, so nearly-expired SFCs barely penalise the node
+        while long-lived tenants penalise it proportionally to their remaining life.
+
+        Returns:
+            Dictionary mapping node_id -> sum(remaining_ttl / max_ttl) for SFCs on that node
+        """
+        scores: dict[int, float] = {node: 0.0 for node in self.graph.nodes()}
+        norm = max(max_ttl, 1.0)
+        for info in self.active_placements.values():
+            weight = info["remaining_ttl"] / norm
+            for node in set(info["placement"]):
+                scores[node] += weight
+        return scores
+
     def get_vnfs_per_node(self) -> dict[int, int]:
         """
         Get the count of VNFs placed on each substrate node.

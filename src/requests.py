@@ -77,6 +77,7 @@ class SFCRequest:
     ttl: int
     request_id: int = 0
     hard_isolation: bool = False
+    is_burst: bool = False
 
     @property
     def num_vnfs(self) -> int:
@@ -111,7 +112,35 @@ class RequestGenerator:
             self.ttl_range = (ttl_cfg["min"], ttl_cfg["max"])
         self.hard_isolation_probability = config.get("hard_isolation_probability", 0.0)
 
+        # Seasonal traffic configuration (sinusoidal demand wave)
+        burst_cfg = config.get("traffic_burst", {})
+        self.burst_enabled = bool(burst_cfg.get("enabled", False))
+        self.burst_warmup = int(burst_cfg.get("warmup_requests", 50))
+        self.burst_period = int(burst_cfg.get("period", 100))
+        self.burst_peak_demand_scale = float(burst_cfg.get("peak_demand_scale", 2.0))
+        self.burst_peak_constraint_scale = float(burst_cfg.get("peak_constraint_scale", 1.3))
+
         self.next_request_id = 0
+
+    def _seasonal_wave(self) -> tuple[float, float, bool]:
+        """
+        Return (demand_scale, constraint_scale, is_peak) for the current request.
+
+        Uses a raised-cosine wave: scale = 1 + (peak-1) * 0.5 * (1 - cos(2π·pos/period))
+        This gives exactly 1.0 at cycle start/end and peak_scale at the cycle midpoint,
+        with a smooth sinusoidal ramp between them.  is_peak is True in the upper half
+        of the wave (wave amplitude > 0.5).
+        """
+        if not self.burst_enabled:
+            return 1.0, 1.0, False
+        n = self.next_request_id
+        if n < self.burst_warmup:
+            return 1.0, 1.0, False
+        phase = 2.0 * math.pi * (n - self.burst_warmup) / self.burst_period
+        wave = 0.5 * (1.0 - math.cos(phase))          # 0.0 at trough, 1.0 at peak
+        d_scale = 1.0 + (self.burst_peak_demand_scale - 1.0) * wave
+        c_scale = 1.0 + (self.burst_peak_constraint_scale - 1.0) * wave
+        return d_scale, c_scale, wave > 0.5
 
     def generate_request(self) -> SFCRequest:
         """Generate a new random SFC request."""
@@ -161,6 +190,20 @@ class RequestGenerator:
         # Generate hard isolation requirement
         hard_isolation = random.random() < self.hard_isolation_probability
 
+        # Apply seasonal wave scaling: continuous sinusoidal demand + constraint modulation
+        d_scale, c_scale, in_burst = self._seasonal_wave()
+        if d_scale > 1.0 + 1e-6:
+            vnf_max_ram = self.vnf_resources["ram"]["max"]
+            vnf_max_cpu = self.vnf_resources["cpu"]["max"]
+            vnf_max_storage = self.vnf_resources["storage"]["max"]
+            for vnf in vnfs:
+                vnf.ram = min(vnf.ram * d_scale, vnf_max_ram)
+                vnf.cpu = min(vnf.cpu * d_scale, vnf_max_cpu)
+                vnf.storage = min(vnf.storage * d_scale, vnf_max_storage)
+            min_security = min(min_security * c_scale, self.constraints["security_score"]["max"])
+            max_latency = max(max_latency / c_scale, self.constraints["max_latency"]["min"])
+            min_bandwidth = min(min_bandwidth * c_scale, self.constraints["min_bandwidth"]["max"])
+
         request = SFCRequest(
             vnfs=vnfs,
             min_security_score=min_security,
@@ -169,6 +212,7 @@ class RequestGenerator:
             ttl=ttl,
             request_id=self.next_request_id,
             hard_isolation=hard_isolation,
+            is_burst=in_burst,
         )
 
         self.next_request_id += 1

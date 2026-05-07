@@ -6,7 +6,6 @@ where an agent must place VNFs onto substrate nodes while respecting
 resource, security, bandwidth, and latency constraints.
 """
 
-import random
 from collections import deque
 from typing import Optional
 
@@ -77,27 +76,9 @@ class SFCPlacementEnv(gym.Env):
         if substrate is not None and request_generator is not None:
             self.substrate = substrate
             self.request_generator = request_generator
-            self.randomize_topology = False
-            self.randomize_request_generator = False
-            self._request_gen_rng_state = None
-            self._request_gen_np_rng_state = None
         else:
             self.substrate = SubstrateNetwork(self.config["substrate"])
             self.request_generator = RequestGenerator(self.config["sfc"])
-            self.randomize_topology = self.config.get("training", {}).get(
-                "randomize_topology", False
-            )
-            self.randomize_request_generator = self.config.get("training", {}).get(
-                "randomize_request_generator", False
-            )
-            self._request_gen_rng_state = None
-            self._request_gen_np_rng_state = None
-            if self.randomize_topology:
-                print("INFO: Topology randomization enabled (new graph per episode).")
-            if not self.randomize_request_generator:
-                print(
-                    "INFO: Same request sequence per episode (randomize_request_generator=false)."
-                )
 
         # Reward configuration
         self.acceptance_reward = self.config["rewards"]["acceptance"]
@@ -226,25 +207,10 @@ class SFCPlacementEnv(gym.Env):
         """
         super().reset(seed=seed)
 
-        # Reset substrate network to full capacity for new episode
-        if self.randomize_topology:
-            self.substrate.regenerate_topology()
-            self.num_nodes = self.substrate.num_nodes
-        else:
-            self.substrate.reset()
-
-        # Same request sequence every episode when randomize_request_generator is False
-        if not self.randomize_request_generator:
-            if self._request_gen_rng_state is None:
-                self._request_gen_rng_state = random.getstate()
-                self._request_gen_np_rng_state = np.random.get_state()
-            else:
-                random.setstate(self._request_gen_rng_state)
-                np.random.set_state(self._request_gen_np_rng_state)
-        self.request_generator.reset()
+        # Substrate state, request generator, and windowed AR carry over across episodes.
+        # Resources are released only via TTL-based tick() in _start_new_request().
 
         # Reset episode-level counters
-        self.recent_outcomes.clear()
         self.episode_requests = 0
         self.episode_accepted = 0
         self.episode_latency_violations = 0
@@ -353,12 +319,16 @@ class SFCPlacementEnv(gym.Env):
         reward += self.security_margin_weight * sec_margin
         self.episode_sec_margin_samples.append(sec_margin * sec_range)
 
-        # Co-location shaping: penalise placing on nodes that already host many SFC chains
-        sfc_count = float(self.substrate.get_sfcs_per_node().get(action, 0))
-        reward -= self.colocation_penalty_weight * (1.0 - 1.0 / (1.0 + sfc_count))
+        # Co-location penalty: TTL-weighted — existing SFCs weighted by remaining_ttl/T_max,
+        # then scaled by the new SFC's TTL so long-lived placements on busy nodes cost more.
+        ttl_sfcs = self.substrate.get_ttl_weighted_sfcs_per_node(self.max_ttl)
+        new_ttl_norm = min(self.current_request.ttl / self.max_ttl, 1.0)
+        ttl_coloc = ttl_sfcs.get(action, 0.0) * new_ttl_norm
+        reward -= self.colocation_penalty_weight * (1.0 - 1.0 / (1.0 + ttl_coloc))
 
         # Spread bonus: extra reward for choosing a node with no existing SFC chains
-        if sfc_count == 0:
+        raw_sfc_count = self.substrate.get_sfcs_per_node().get(action, 0)
+        if raw_sfc_count == 0:
             reward += self.spread_bonus_weight
 
         return observation, reward, False, False, info
@@ -372,6 +342,7 @@ class SFCPlacementEnv(gym.Env):
         # Snapshot SFC counts BEFORE registration so the last-VNF shaping sees
         # the co-location count that existed when the placement decision was made.
         sfcs_before_register = self.substrate.get_sfcs_per_node()
+        ttl_sfcs_before_register = self.substrate.get_ttl_weighted_sfcs_per_node(self.max_ttl)
 
         self.substrate.register_placement(self.current_request, self.current_placement)
         self.accepted_requests += 1
@@ -387,7 +358,9 @@ class SFCPlacementEnv(gym.Env):
         last_margin = max(last_sec - completed_min_security, 0.0) / last_sec_range
         self.episode_sec_margin_samples.append(last_margin * last_sec_range)
         last_sfc_count = float(sfcs_before_register.get(last_node, 0))
-        last_coloc = 1.0 - 1.0 / (1.0 + last_sfc_count)
+        completed_ttl_norm = min(self.current_request.ttl / self.max_ttl, 1.0)
+        last_ttl_coloc = ttl_sfcs_before_register.get(last_node, 0.0) * completed_ttl_norm
+        last_coloc = 1.0 - 1.0 / (1.0 + last_ttl_coloc)
         last_spread = 1.0 if last_sfc_count == 0 else 0.0
         terminal_shaping = (
             self.terminal_security_margin_weight * last_margin
@@ -421,10 +394,10 @@ class SFCPlacementEnv(gym.Env):
         )
         reward = (self.acceptance_reward + terminal_shaping) * multiplier
 
-        # Check if episode is complete
-        terminated = self.episode_requests >= self.max_requests_per_episode
+        # Episode boundary is an artificial time limit — substrate continues, so truncated not terminated
+        truncated = self.episode_requests >= self.max_requests_per_episode
 
-        if not terminated:
+        if not truncated:
             # Move to next request within the same episode (calls substrate.tick())
             self._start_new_request()
 
@@ -434,7 +407,7 @@ class SFCPlacementEnv(gym.Env):
         info["placement"] = completed_placement
         info["request_min_security"] = completed_min_security
         info["sfc_complete"] = True  # This SFC was completed
-        return observation, reward, terminated, False, info
+        return observation, reward, False, truncated, info
 
     def _handle_rejection(
         self, reason: str, release_resources: bool = False
@@ -475,10 +448,10 @@ class SFCPlacementEnv(gym.Env):
                 1.0 + self.ar_reward_weight * windowed_ar
             )
 
-        # Check if episode is complete
-        terminated = self.episode_requests >= self.max_requests_per_episode
+        # Episode boundary is an artificial time limit — substrate continues, so truncated not terminated
+        truncated = self.episode_requests >= self.max_requests_per_episode
 
-        if not terminated:
+        if not truncated:
             # Move to next request within the same episode
             self._start_new_request()
 
@@ -487,7 +460,7 @@ class SFCPlacementEnv(gym.Env):
         info["success"] = False
         info["rejection_reason"] = reason
         info["sfc_complete"] = True  # This SFC was completed (rejected)
-        return observation, reward, terminated, False, info
+        return observation, reward, False, truncated, info
 
     def _sample_substrate_metrics(self):
         """Sample substrate tenancy and utilization metrics after each request."""
@@ -761,6 +734,7 @@ class SFCPlacementEnv(gym.Env):
             "current_vnf_index": self.current_vnf_index,
             "total_vnfs": self.current_request.num_vnfs if self.current_request else 0,
             "current_placement": self.current_placement.copy(),
+            "is_burst": self.current_request.is_burst if self.current_request else False,
             # Episode-level stats
             "episode_requests": self.episode_requests,
             "episode_accepted": self.episode_accepted,

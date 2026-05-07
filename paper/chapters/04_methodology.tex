@@ -64,6 +64,8 @@ Entropy coefficient $c_e$ & 0.01 & Entropy bonus \\
 Episode length $T$ & 300 & Requests per episode \\
 AR window $w$ & 10 & Windowed acceptance ratio size \\
 AR weight $\omega$ & 0.5 & AR modifier weight \\
+Co-location multiplier weight $\omega_c$ & 0.3 & Penalises high avg SFC tenancy in $\mu_t$ \\
+Security multiplier weight $\omega_s$ & 0.15 & Rewards high avg security margin in $\mu_t$ \\
 Base acceptance reward $R_{\text{acc}}$ & 0.7 & Reduced to lower acceptance dominance \\
 Step security weight $\alpha_s$ & 0.3 & Intermediate security margin bonus \\
 Step co-location weight $\alpha_c$ & 0.5 & Intermediate co-location penalty (primary) \\
@@ -108,11 +110,11 @@ Padded nodes (indices $N$ through $N_{\max}-1$) are zeroed and excluded from GNN
 
 \subsection{Global Context Vector}
 
-The global context vector $\mathbf{g} \in \mathbb{R}^{15}$ encodes the current SFC request and placement progress:
+The global context vector $\mathbf{g} \in \mathbb{R}^{17}$ encodes the current SFC request, placement progress, and episode-level quality signals:
 
 \begin{table}[!ht]
 \centering
-\caption{Global Context Vector ($\mathbf{g} \in \mathbb{R}^{15}$)}
+\caption{Global Context Vector ($\mathbf{g} \in \mathbb{R}^{17}$)}
 \label{tab:global_context}
 \begin{tabularx}{\textwidth}{c X}
 \hline
@@ -128,11 +130,13 @@ The global context vector $\mathbf{g} \in \mathbb{R}^{15}$ encodes the current S
 10    & Remaining VNF count / $K_{\max}$ \\
 11--13 & Aggregate remaining VNF demands (RAM, CPU, Storage), each normalized by $K_{\max} \cdot d_{\max}^{r}$ \\
 14    & Windowed acceptance ratio $\overline{\text{AR}}_w$ over the last $w = 10$ requests \\
+15    & Episode running-average SFC tenancy / 5.0 --- enables mid-episode adaptation toward lower co-location \\
+16    & Episode running-average security margin / $(s_{\max} - 1)$ --- enables mid-episode adaptation toward higher security \\
 \hline
 \end{tabularx}
 \end{table}
 
-The global context is processed by a two-layer MLP within the GNN feature extractor and fused with the graph-level substrate embedding before being passed to the actor-critic heads.
+The global context is processed by a two-layer MLP within the GNN feature extractor and fused with the graph-level substrate embedding before being passed to the actor-critic heads. Features 15 and 16 mirror the role of the windowed AR (feature 14) for the two secondary objectives: they give the agent a real-time view of how well it is managing co-location spread and security quality across the current episode, enabling adaptive mid-episode planning rather than reacting purely to per-SFC rewards.
 
 \subsection{Placement Mask and Node Mask}
 
@@ -186,19 +190,24 @@ r_T^{\text{acc}} = \left(
   + \alpha_s^T \cdot \frac{\max\!\left(s_{n_{K_r}} - s_r^{\min},\, 0\right)}{s_{\max} - s_r^{\min}}
   - \alpha_c^T \cdot \left(1 - \frac{1}{1 + \text{SFC}^{-}(n_{K_r})}\right)
   + \alpha_{\text{sp}}^T \cdot \mathbf{1}\!\left[\text{SFC}^{-}(n_{K_r}) = 0\right]
-\right) \cdot \left(1 + \omega \cdot \overline{\text{AR}}_w\right),
+\right) \cdot \mu_t,
 \end{equation}
-where:
+where the multiplier $\mu_t$ extends the windowed AR modifier with episode-level co-location and security signals:
+\begin{equation}
+\mu_t = \max\!\left(1 + \omega \cdot \overline{\text{AR}}_w - \omega_c \cdot \bar{\rho}_t + \omega_s \cdot \bar{\sigma}_t,\; 0.1\right),
+\end{equation}
+and:
 \begin{itemize}
   \item $R_{\text{acc}} = 0.7$ is the base acceptance reward, reduced from 1.0 to lower the dominance of the acceptance signal relative to the quality shaping terms;
   \item $\alpha_s^T = 0.5$ is the terminal security margin weight;
   \item $\alpha_c^T = 1.0$ is the terminal co-location weight (primary; up to $\approx\!83\%$ of $R_{\text{acc}}$ at high co-location);
   \item $\alpha_{\text{sp}}^T = 0.3$ is the terminal spread bonus weight for placing the last VNF on a fresh node;
   \item $\text{SFC}^{-}(n_{K_r})$ is the chain count on the last placement node \emph{before} the current SFC is registered;
-  \item $\omega = 0.5$ is the windowed acceptance ratio (AR) modifier weight;
-  \item $\overline{\text{AR}}_w$ is the acceptance ratio over the last $w = 10$ requests.
+  \item $\omega = 0.5$ is the windowed AR modifier weight; $\overline{\text{AR}}_w$ is the acceptance ratio over the last $w = 10$ requests;
+  \item $\omega_c = 0.3$; $\bar{\rho}_t$ is the episode running-average SFC tenancy normalised to $[0,1]$ (high co-location reduces the per-SFC reward);
+  \item $\omega_s = 0.15$; $\bar{\sigma}_t$ is the episode running-average security margin normalised to $[0,1]$ (high security margin amplifies the reward).
 \end{itemize}
-The AR modifier amplifies the reward when the agent has been accepting frequently, providing curriculum-style positive reinforcement. The terminal weights are larger than the intermediate weights ($\alpha_s^T > \alpha_s$; $\alpha_c^T > \alpha_c$) to provide a stronger end-of-SFC quality signal.
+The AR modifier amplifies the reward when the agent has been accepting frequently. $\mu_t$ additionally penalises episodes of high co-location (analogous to how a low AR increases the rejection penalty) and rewards episodes of high security margin, giving the agent an episode-level quality signal that reinforces both secondary objectives simultaneously. The terminal weights are larger than the intermediate weights ($\alpha_s^T > \alpha_s$; $\alpha_c^T > \alpha_c$) to provide a stronger end-of-SFC quality signal.
 
 \subsection{Terminal Rejection Reward}
 

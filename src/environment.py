@@ -38,9 +38,10 @@ class SFCPlacementEnv(gym.Env):
         - node_features: (max_nodes, 15) - [RAM, CPU, Storage, Security, AvgBW, DistToPrev,
           RAMGlobalShare, CPUGlobalShare, StorageGlobalShare, VNFGlobalShare, SFCTenancy,
           FitRAM, FitCPU, FitStorage, LoadNorm]
-        - global_context: (15,) - [VNF_RAM, VNF_CPU, VNF_Storage, SFC_Sec, SFC_Lat, SFC_BW,
+        - global_context: (17,) - [VNF_RAM, VNF_CPU, VNF_Storage, SFC_Sec, SFC_Lat, SFC_BW,
           VNF_Progress, HardIsolation, LatencyProgress, TTL,
-          RemainingVNFs, RemainingRAM, RemainingCPU, RemainingStorage, WindowedAR]
+          RemainingVNFs, RemainingRAM, RemainingCPU, RemainingStorage, WindowedAR,
+          EpAvgSFCTenancy, EpAvgSecMargin]
         - placement_mask: (max_nodes,) - which nodes are used in current SFC
         - node_mask: (max_nodes,) - 1.0 for real nodes, 0.0 for padding
 
@@ -115,6 +116,12 @@ class SFCPlacementEnv(gym.Env):
         self.colocation_penalty_weight = float(
             self.config["rewards"].get("colocation_penalty_weight", 0.1)
         )
+        self.colocation_reward_weight = float(
+            self.config["rewards"].get("colocation_reward_weight", 0.3)
+        )
+        self.sec_margin_reward_weight = float(
+            self.config["rewards"].get("sec_margin_reward_weight", 0.15)
+        )
         self.spread_bonus_weight = float(
             self.config["rewards"].get("spread_bonus_weight", 0.3)
         )
@@ -182,7 +189,7 @@ class SFCPlacementEnv(gym.Env):
                 "node_features": spaces.Box(
                     0.0, 1.0, (self.max_nodes, 15), dtype=np.float32
                 ),
-                "global_context": spaces.Box(0.0, 1.0, (15,), dtype=np.float32),
+                "global_context": spaces.Box(0.0, 1.0, (17,), dtype=np.float32),
                 "placement_mask": spaces.Box(
                     0.0, 1.0, (self.max_nodes,), dtype=np.float32
                 ),
@@ -390,9 +397,29 @@ class SFCPlacementEnv(gym.Env):
 
         self.recent_outcomes.append(1.0)
         windowed_ar = sum(self.recent_outcomes) / len(self.recent_outcomes)
-        reward = (self.acceptance_reward + terminal_shaping) * (
-            1.0 + self.ar_reward_weight * windowed_ar
+
+        # Episode running averages for the multiplier (computed before this SFC's metrics)
+        avg_sfc_tenancy_norm = min(
+            (sum(self.episode_sfc_tenancy_samples) / len(self.episode_sfc_tenancy_samples)) / 5.0
+            if self.episode_sfc_tenancy_samples else 0.0,
+            1.0,
         )
+        max_possible_margin = max(self.max_security - 1.0, 1.0)
+        avg_sec_margin_norm = min(
+            (sum(self.episode_sec_margin_samples) / len(self.episode_sec_margin_samples))
+            / max_possible_margin
+            if self.episode_sec_margin_samples else 0.0,
+            1.0,
+        )
+
+        multiplier = max(
+            1.0
+            + self.ar_reward_weight * windowed_ar
+            - self.colocation_reward_weight * avg_sfc_tenancy_norm
+            + self.sec_margin_reward_weight * avg_sec_margin_norm,
+            0.1,  # floor to keep reward positive
+        )
+        reward = (self.acceptance_reward + terminal_shaping) * multiplier
 
         # Check if episode is complete
         terminated = self.episode_requests >= self.max_requests_per_episode
@@ -641,6 +668,23 @@ class SFCPlacementEnv(gym.Env):
             else 0.0
         )
 
+        # Episode running-average SFC tenancy: normalised to [0,1] via /5.0
+        ep_avg_sfc_tenancy_norm = min(
+            (sum(self.episode_sfc_tenancy_samples) / len(self.episode_sfc_tenancy_samples))
+            / 5.0
+            if self.episode_sfc_tenancy_samples else 0.0,
+            1.0,
+        )
+
+        # Episode running-average security margin: normalised by max possible margin
+        max_possible_margin = max(self.max_security - 1.0, 1.0)
+        ep_avg_sec_margin_norm = min(
+            (sum(self.episode_sec_margin_samples) / len(self.episode_sec_margin_samples))
+            / max_possible_margin
+            if self.episode_sec_margin_samples else 0.0,
+            1.0,
+        )
+
         global_context = np.array(
             vnf_obs  # [0-2] current VNF demands
             + [
@@ -656,6 +700,8 @@ class SFCPlacementEnv(gym.Env):
                 remaining_cpu_norm,                                           # [12]
                 remaining_storage_norm,                                       # [13]
                 windowed_ar,                                                  # [14]
+                ep_avg_sfc_tenancy_norm,                                      # [15]
+                ep_avg_sec_margin_norm,                                       # [16]
             ],
             dtype=np.float32,
         )

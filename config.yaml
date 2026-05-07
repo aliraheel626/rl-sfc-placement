@@ -97,8 +97,10 @@ rewards:
   rejection: -1
   # Windowed acceptance ratio (AR) reward modifier
   acceptance_ratio_window: 10            # number of recent requests to consider
-  acceptance_ratio_reward_weight: 0.5    # scaling factor for the multiplicative modifier
+  acceptance_ratio_reward_weight: 0.5    # ω_AR — scaling factor for the AR multiplicative modifier
   acceptance_ratio_flip_rejection: true  # use flipped multiplier (1-AR) on rejections
+  colocation_reward_weight: 0.3          # ω_c — subtracts from multiplier when avg SFC tenancy is high (bad)
+  sec_margin_reward_weight: 0.15         # ω_s — adds to multiplier when avg security margin is high (good)
   # Per-VNF shaping rewards (applied at every intermediate VNF placement step)
   security_margin_weight: 0.3            # α_s — reward for (s_n - s_min) / (s_max - s_min) at each intermediate step
   colocation_penalty_weight: 0.5         # α_c — penalty via 1 - 1/(1 + sfc_count) at each intermediate step (primary)

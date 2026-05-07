@@ -21,7 +21,7 @@ from tqdm import tqdm
 from src.substrate import SubstrateNetwork
 from src.requests import RequestGenerator, load_config
 from src.model import create_masked_env, load_model
-from src.baselines import BasePlacement, BestFitPlacement
+from src.baselines import BasePlacement, BestFitPlacement, FirstFitPlacement, ViterbiPlacement
 from src.eval_reporting import (
     COMPARISON_TABLE_ROWS,
     append_eval_result_to_by_algo,
@@ -450,7 +450,7 @@ def run_eval(
     if request_generator is None:
         request_generator = RequestGenerator(config["sfc"])
     results = {}
-    baselines = [BestFitPlacement()]
+    baselines = [BestFitPlacement(), FirstFitPlacement()]
 
     # Snapshot RNG state so every algorithm sees the same request stream.
     initial_rng_state = random.getstate()

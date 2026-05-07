@@ -125,6 +125,7 @@ class SFCPlacementEnv(gym.Env):
             if max_requests_per_episode is not None
             else training_config.get("max_requests_per_episode", 100)
         )
+        self.reset_substrate_on_episode = training_config.get("reset_substrate_on_episode", False)
 
         # Environment state
         self.current_request: Optional[SFCRequest] = None
@@ -212,8 +213,11 @@ class SFCPlacementEnv(gym.Env):
         """
         super().reset(seed=seed)
 
-        # Substrate state, request generator, and windowed AR carry over across episodes.
-        # Resources are released only via TTL-based tick() in _start_new_request().
+        if self.reset_substrate_on_episode:
+            self.substrate.reset()
+            self.request_generator.reset()
+            self.recent_outcomes.clear()
+        # Otherwise substrate state and windowed AR carry over; resources released via TTL tick().
 
         # Reset episode-level counters
         self.episode_requests = 0

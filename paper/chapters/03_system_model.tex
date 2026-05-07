@@ -142,19 +142,21 @@ The reward signal is designed to encourage high acceptance ratios while shaping 
 \begin{equation}
 r_t^{\text{step}} = 0.1
   - 0.3 \cdot \min\!\left(\frac{L(n_{k-1}, n_k)}{\ell_r^{\max}}, 1\right)
-  + \alpha_s \cdot \frac{\max\!\left(s_{n_k} - s_r^{\min},\, 0\right)}{s_{\max}}
-  - \alpha_c \cdot \left(1 - \frac{1}{1 + \text{SFC}(n_k)}\right).
+  + \alpha_s \cdot \frac{\max\!\left(s_{n_k} - s_r^{\min},\, 0\right)}{s_{\max} - s_r^{\min}}
+  - \alpha_c \cdot \left(1 - \frac{1}{1 + \text{SFC}(n_k)}\right)
+  + \alpha_{\text{sp}} \cdot \mathbf{1}\!\left[\text{SFC}(n_k) = 0\right].
 \end{equation}
-The 0.1 progress bonus rewards feasible VNF placements; the latency term encourages locality. The security margin term ($\alpha_s = 0.1$) rewards placing on nodes whose security score exceeds the request minimum, directly incentivising high-margin placements. The co-location penalty ($\alpha_c = 0.1$) uses an inverse saturation $1 - 1/(1 + \text{SFC}(n_k))$ that grows quickly for the first few chains and asymptotically approaches 1, discouraging hot-spot nodes without requiring a tunable reference parameter. With $\alpha_c = 0.5 > \alpha_s = 0.3$, co-location spread is the primary per-step objective; larger terminal weights $\alpha_c^T = 1.0$ and $\alpha_s^T = 0.5$ provide a stronger quality signal at SFC completion.
+The 0.1 progress bonus rewards feasible VNF placements; the latency term encourages locality. The security margin term normalises by the available range above the request minimum $s_r^{\min}$, giving a true $[0,1]$ signal regardless of the request's security requirement. The co-location penalty ($\alpha_c = 0.5$, primary) uses an inverse saturation $1 - 1/(1 + \text{SFC}(n_k))$, discouraging hot-spot nodes. The spread bonus ($\alpha_{\text{sp}} = 0.3$) provides an additional direct incentive for choosing a node with no existing SFC chains, creating a sharp gradient toward unoccupied nodes.
 
 \textbf{Terminal acceptance reward:}
 \begin{equation}
 r_T^{\text{acc}} = \left( R_{\text{acc}}
-  + \alpha_s^T \cdot \frac{\max\!\left(s_{n_{K_r}} - s_r^{\min},\, 0\right)}{s_{\max}}
+  + \alpha_s^T \cdot \frac{\max\!\left(s_{n_{K_r}} - s_r^{\min},\, 0\right)}{s_{\max} - s_r^{\min}}
   - \alpha_c^T \cdot \left(1 - \frac{1}{1 + \text{SFC}^{-}(n_{K_r})}\right)
+  + \alpha_{\text{sp}}^T \cdot \mathbf{1}\!\left[\text{SFC}^{-}(n_{K_r}) = 0\right]
 \right) \cdot \left(1 + \omega \cdot \overline{\text{AR}}_w\right),
 \end{equation}
-where $R_{\text{acc}} = 1$, $\alpha_s^T = 0.5$ and $\alpha_c^T = 1.0$ are the terminal shaping weights (larger than the intermediate $\alpha_s = 0.3$, $\alpha_c = 0.5$ to provide a stronger end-of-SFC quality signal; $\alpha_c^T > \alpha_s^T$ reflects the priority of co-location spread), $\text{SFC}^{-}(n_{K_r})$ is the chain count on the last placement node \emph{before} the current SFC is registered, $\omega = 0.5$, and $\overline{\text{AR}}_w$ is the acceptance ratio over the last $w = 10$ requests.
+where $R_{\text{acc}} = 0.7$, $\alpha_s^T = 0.5$, $\alpha_c^T = 1.0$, $\alpha_{\text{sp}}^T = 0.3$ are the terminal shaping weights, $\text{SFC}^{-}(n_{K_r})$ is the chain count on the last placement node \emph{before} the current SFC is registered, $\omega = 0.5$, and $\overline{\text{AR}}_w$ is the acceptance ratio over the last $w = 10$ requests. $R_{\text{acc}}$ is set to 0.7 (rather than 1.0) to reduce the dominance of the acceptance signal relative to the quality shaping terms.
 
 \textbf{Terminal rejection reward:}
 \begin{equation}

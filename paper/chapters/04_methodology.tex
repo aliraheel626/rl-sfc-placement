@@ -52,7 +52,7 @@ Table~\ref{tab:training} summarizes the training hyperparameters.
 \begin{tabularx}{\textwidth}{X X X}
 \hline
 \textbf{Hyperparameter} & \textbf{Value} & \textbf{Description} \\ \hline
-Total timesteps & 100,000 & Total environment steps \\
+Total timesteps & 500,000 & Total environment steps \\
 $n_{\text{steps}}$ & 4,096 & Steps per rollout collection \\
 Batch size & 512 & Mini-batch size for updates \\
 $n_{\text{epochs}}$ & 10 & Update epochs per rollout \\
@@ -64,10 +64,13 @@ Entropy coefficient $c_e$ & 0.01 & Entropy bonus \\
 Episode length $T$ & 300 & Requests per episode \\
 AR window $w$ & 10 & Windowed acceptance ratio size \\
 AR weight $\omega$ & 0.5 & AR modifier weight \\
+Base acceptance reward $R_{\text{acc}}$ & 0.7 & Reduced to lower acceptance dominance \\
 Step security weight $\alpha_s$ & 0.3 & Intermediate security margin bonus \\
 Step co-location weight $\alpha_c$ & 0.5 & Intermediate co-location penalty (primary) \\
+Step spread bonus $\alpha_{\text{sp}}$ & 0.3 & Bonus for placing on a zero-SFC node \\
 Terminal security weight $\alpha_s^T$ & 0.5 & Terminal security margin bonus \\
 Terminal co-location weight $\alpha_c^T$ & 1.0 & Terminal co-location penalty (primary) \\
+Terminal spread bonus $\alpha_{\text{sp}}^T$ & 0.3 & Terminal bonus for last VNF on fresh node \\
 \hline
 \end{tabularx}
 \end{table}
@@ -168,10 +171,11 @@ After placing VNF $v_k$ ($k < K_r$), the agent receives:
 \begin{equation}
 r_t^{\text{step}} = 0.1
   - 0.3 \cdot \min\!\left(\frac{L(n_{k-1}, n_k)}{\ell_r^{\max}},\; 1\right)
-  + \alpha_s \cdot \frac{\max\!\left(s_{n_k} - s_r^{\min},\, 0\right)}{s_{\max}}
-  - \alpha_c \cdot \left(1 - \frac{1}{1 + \text{SFC}(n_k)}\right).
+  + \alpha_s \cdot \frac{\max\!\left(s_{n_k} - s_r^{\min},\, 0\right)}{s_{\max} - s_r^{\min}}
+  - \alpha_c \cdot \left(1 - \frac{1}{1 + \text{SFC}(n_k)}\right)
+  + \alpha_{\text{sp}} \cdot \mathbf{1}\!\left[\text{SFC}(n_k) = 0\right].
 \end{equation}
-The constant $+0.1$ provides a progress bonus for each feasible VNF placement. The latency term penalizes distant placements, encouraging the agent to co-locate consecutive VNFs on nearby nodes to preserve latency budget for later hops. The co-location penalty ($\alpha_c = 0.5$, primary) uses an inverse saturation $1 - 1/(1 + \text{SFC}(n_k))$ that at two or more active chains already exceeds the $+0.1$ progress bonus, strongly discouraging hot-spot placement. The security margin term ($\alpha_s = 0.3$, secondary) rewards placing on nodes whose security score exceeds the request minimum; $\alpha_c > \alpha_s$ reflects the priority of co-location spread over security margin improvement.
+The constant $+0.1$ provides a progress bonus for each feasible VNF placement. The latency term penalizes distant placements. The security margin is normalised by the available range above $s_r^{\min}$ (i.e.\ $s_{\max} - s_r^{\min}$) rather than $s_{\max}$ alone, giving a true $[0,1]$ signal that does not shrink when $s_r^{\min}$ is high. The co-location penalty ($\alpha_c = 0.5$, primary) uses inverse saturation. The spread bonus ($\alpha_{\text{sp}} = 0.3$) provides a direct additional incentive for placing on a node with zero existing SFCs, creating a sharp positive gradient toward unoccupied nodes beyond what the continuous co-location penalty alone provides.
 
 \subsection{Terminal Acceptance Reward}
 
@@ -179,20 +183,22 @@ When all $K_r$ VNFs have been placed and the end-to-end latency constraint is sa
 \begin{equation}
 r_T^{\text{acc}} = \left(
   R_{\text{acc}}
-  + \alpha_s^T \cdot \frac{\max\!\left(s_{n_{K_r}} - s_r^{\min},\, 0\right)}{s_{\max}}
+  + \alpha_s^T \cdot \frac{\max\!\left(s_{n_{K_r}} - s_r^{\min},\, 0\right)}{s_{\max} - s_r^{\min}}
   - \alpha_c^T \cdot \left(1 - \frac{1}{1 + \text{SFC}^{-}(n_{K_r})}\right)
+  + \alpha_{\text{sp}}^T \cdot \mathbf{1}\!\left[\text{SFC}^{-}(n_{K_r}) = 0\right]
 \right) \cdot \left(1 + \omega \cdot \overline{\text{AR}}_w\right),
 \end{equation}
 where:
 \begin{itemize}
-  \item $R_{\text{acc}} = 1$ is the base acceptance reward;
-  \item $\alpha_s^T = 0.5$ is the terminal security margin weight (approximately 50\% of $R_{\text{acc}}$);
-  \item $\alpha_c^T = 1.0$ is the terminal co-location weight (up to $\approx\!83\%$ of $R_{\text{acc}}$ at high co-location); set larger than $\alpha_s^T$ to reflect the priority of co-location spread;
+  \item $R_{\text{acc}} = 0.7$ is the base acceptance reward, reduced from 1.0 to lower the dominance of the acceptance signal relative to the quality shaping terms;
+  \item $\alpha_s^T = 0.5$ is the terminal security margin weight;
+  \item $\alpha_c^T = 1.0$ is the terminal co-location weight (primary; up to $\approx\!83\%$ of $R_{\text{acc}}$ at high co-location);
+  \item $\alpha_{\text{sp}}^T = 0.3$ is the terminal spread bonus weight for placing the last VNF on a fresh node;
   \item $\text{SFC}^{-}(n_{K_r})$ is the chain count on the last placement node \emph{before} the current SFC is registered;
   \item $\omega = 0.5$ is the windowed acceptance ratio (AR) modifier weight;
   \item $\overline{\text{AR}}_w$ is the acceptance ratio over the last $w = 10$ requests.
 \end{itemize}
-The AR modifier amplifies the reward when the agent has been accepting frequently, providing curriculum-style positive reinforcement. The terminal weights are deliberately larger than the intermediate weights ($\alpha_s^T = 0.5 > \alpha_s = 0.3$; $\alpha_c^T = 1.0 > \alpha_c = 0.5$) so that the end-of-SFC signal carries proportionally stronger security and co-location pressure relative to $R_{\text{acc}} = 1$ than each intermediate step does relative to its $+0.1$ progress bonus.
+The AR modifier amplifies the reward when the agent has been accepting frequently, providing curriculum-style positive reinforcement. The terminal weights are larger than the intermediate weights ($\alpha_s^T > \alpha_s$; $\alpha_c^T > \alpha_c$) to provide a stronger end-of-SFC quality signal.
 
 \subsection{Terminal Rejection Reward}
 

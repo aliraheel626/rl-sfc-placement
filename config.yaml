@@ -75,7 +75,7 @@ sfc:
 
 # Training Configuration (PPO tuning for create_maskable_ppo)
 training:
-  total_timesteps: 200000
+  total_timesteps: 100000
   # Learning rate: constant 1e-4, or linear decay from 3e-4 (set use_linear_lr_schedule: true)
   learning_rate: 0.0001 # 1e-4 (final value when using schedule)
   use_linear_lr_schedule: false
@@ -93,18 +93,20 @@ training:
 
 # Reward Configuration
 rewards:
-  acceptance: 1
+  acceptance: 0.7
   rejection: -1
   # Windowed acceptance ratio (AR) reward modifier
   acceptance_ratio_window: 10            # number of recent requests to consider
   acceptance_ratio_reward_weight: 0.5    # scaling factor for the multiplicative modifier
   acceptance_ratio_flip_rejection: true  # use flipped multiplier (1-AR) on rejections
   # Per-VNF shaping rewards (applied at every intermediate VNF placement step)
-  security_margin_weight: 0.3         # α_s — reward for (s_n - s_min) / s_max at each intermediate step
-  colocation_penalty_weight: 0.5      # α_c — penalty via 1 - 1/(1 + sfc_count) at each intermediate step (primary)
+  security_margin_weight: 0.3            # α_s — reward for (s_n - s_min) / (s_max - s_min) at each intermediate step
+  colocation_penalty_weight: 0.5         # α_c — penalty via 1 - 1/(1 + sfc_count) at each intermediate step (primary)
+  spread_bonus_weight: 0.3              # α_spread — bonus for placing on a node with 0 existing SFCs (direct spread incentive)
   # Terminal shaping weights (applied once at SFC acceptance, on top of the base acceptance reward)
-  terminal_security_margin_weight: 0.5   # α_s_T — terminal security margin bonus (~50% of R_acc)
-  terminal_colocation_penalty_weight: 1.0 # α_c_T — terminal co-location penalty (up to ~83% of R_acc; primary)
+  terminal_security_margin_weight: 0.5   # α_s_T — terminal security margin bonus
+  terminal_colocation_penalty_weight: 1.0 # α_c_T — terminal co-location penalty (primary)
+  terminal_spread_bonus_weight: 0.3     # α_spread_T — terminal spread bonus for last VNF on fresh node
 
 # Evaluation Configuration
 evaluation:

@@ -115,11 +115,17 @@ class SFCPlacementEnv(gym.Env):
         self.colocation_penalty_weight = float(
             self.config["rewards"].get("colocation_penalty_weight", 0.1)
         )
+        self.spread_bonus_weight = float(
+            self.config["rewards"].get("spread_bonus_weight", 0.3)
+        )
         self.terminal_security_margin_weight = float(
-            self.config["rewards"].get("terminal_security_margin_weight", 0.3)
+            self.config["rewards"].get("terminal_security_margin_weight", 0.5)
         )
         self.terminal_colocation_penalty_weight = float(
-            self.config["rewards"].get("terminal_colocation_penalty_weight", 0.3)
+            self.config["rewards"].get("terminal_colocation_penalty_weight", 1.0)
+        )
+        self.terminal_spread_bonus_weight = float(
+            self.config["rewards"].get("terminal_spread_bonus_weight", 0.3)
         )
         # Link latency bounds for latency-aware masking
         self.min_link_latency = self.config["substrate"]["links"]["latency"]["min"]
@@ -149,6 +155,7 @@ class SFCPlacementEnv(gym.Env):
         self.episode_sfc_tenancy_samples: list[float] = []
         self.episode_vnf_tenancy_samples: list[float] = []
         self.episode_substrate_utilization_samples: list[float] = []
+        self.episode_sec_margin_samples: list[float] = []
         # Global statistics tracking (across all episodes)
         self.total_requests = 0
         self.accepted_requests = 0
@@ -238,6 +245,7 @@ class SFCPlacementEnv(gym.Env):
         self.episode_sfc_tenancy_samples = []
         self.episode_vnf_tenancy_samples = []
         self.episode_substrate_utilization_samples = []
+        self.episode_sec_margin_samples = []
         self.total_episodes += 1
 
         # Generate first SFC request for this episode
@@ -330,14 +338,21 @@ class SFCPlacementEnv(gym.Env):
             norm_latency = min(hop_latency / self.current_request.max_latency, 1.0)
             reward -= 0.3 * norm_latency
 
-        # Security margin shaping: reward placing on nodes with security well above the request minimum
+        # Security margin shaping: normalised by available range above s_min → [0, 1]
         node_sec = float(self.substrate.node_resources[action]["security_score"])
-        sec_margin = max(node_sec - self.current_request.min_security_score, 0.0) / self.max_security
+        s_min = self.current_request.min_security_score
+        sec_range = max(self.max_security - s_min, 1.0)
+        sec_margin = max(node_sec - s_min, 0.0) / sec_range
         reward += self.security_margin_weight * sec_margin
+        self.episode_sec_margin_samples.append(sec_margin * sec_range)
 
         # Co-location shaping: penalise placing on nodes that already host many SFC chains
         sfc_count = float(self.substrate.get_sfcs_per_node().get(action, 0))
         reward -= self.colocation_penalty_weight * (1.0 - 1.0 / (1.0 + sfc_count))
+
+        # Spread bonus: extra reward for choosing a node with no existing SFC chains
+        if sfc_count == 0:
+            reward += self.spread_bonus_weight
 
         return observation, reward, False, False, info
 
@@ -361,12 +376,16 @@ class SFCPlacementEnv(gym.Env):
         # Shaping signal for the last VNF placement
         last_node = completed_placement[-1]
         last_sec = float(self.substrate.node_resources[last_node]["security_score"])
-        last_margin = max(last_sec - completed_min_security, 0.0) / self.max_security
+        last_sec_range = max(self.max_security - completed_min_security, 1.0)
+        last_margin = max(last_sec - completed_min_security, 0.0) / last_sec_range
+        self.episode_sec_margin_samples.append(last_margin * last_sec_range)
         last_sfc_count = float(sfcs_before_register.get(last_node, 0))
         last_coloc = 1.0 - 1.0 / (1.0 + last_sfc_count)
+        last_spread = 1.0 if last_sfc_count == 0 else 0.0
         terminal_shaping = (
             self.terminal_security_margin_weight * last_margin
             - self.terminal_colocation_penalty_weight * last_coloc
+            + self.terminal_spread_bonus_weight * last_spread
         )
 
         self.recent_outcomes.append(1.0)
@@ -686,6 +705,12 @@ class SFCPlacementEnv(gym.Env):
             if self.episode_substrate_utilization_samples
             else 0.0
         )
+        episode_avg_sec_margin = (
+            sum(self.episode_sec_margin_samples)
+            / len(self.episode_sec_margin_samples)
+            if self.episode_sec_margin_samples
+            else 0.0
+        )
         return {
             "current_vnf_index": self.current_vnf_index,
             "total_vnfs": self.current_request.num_vnfs if self.current_request else 0,
@@ -705,6 +730,7 @@ class SFCPlacementEnv(gym.Env):
             "episode_avg_sfc_tenancy": episode_avg_sfc_tenancy,
             "episode_avg_vnf_tenancy": episode_avg_vnf_tenancy,
             "episode_avg_substrate_util": episode_avg_substrate_util,
+            "episode_avg_sec_margin": episode_avg_sec_margin,
             # Global stats
             "total_requests": self.total_requests,
             "accepted_requests": self.accepted_requests,

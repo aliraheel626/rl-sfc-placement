@@ -460,28 +460,29 @@ class AcceptanceRatioCallback(BaseCallback):
 
 class BestModelCallback(BaseCallback):
     """
-    Callback to save the best model based on episode acceptance ratio.
+    Save the best model based on mean episode reward.
+
+    The reward function already encodes all placement objectives (acceptance,
+    co-location penalty, security margin bonus), so the highest-reward checkpoint
+    is the best model by definition — no separate composite metric needed.
+    Episode reward is injected by SB3's Monitor wrapper as info["episode"]["r"].
     """
 
     def __init__(self, save_path: str, check_freq: int = 1000, verbose: int = 0):
         super().__init__(verbose)
         self.save_path = save_path
-        # Derive the last checkpoint path from the best model path
         self.last_checkpoint_path = save_path.replace("_best.zip", "_last.zip")
         if self.last_checkpoint_path == save_path:
-            # Fallback if the pattern doesn't match
             self.last_checkpoint_path = save_path.replace(".zip", "_last.zip")
         self.check_freq = check_freq
-        self.best_ratio = 0.0
-        self.recent_ratios = []  # Track recent episode ratios
+        self.best_mean_reward = -float("inf")
+        self.recent_rewards: list[float] = []
 
     def _on_step(self) -> bool:
-        """Called after each step."""
         infos = self.locals.get("infos", [])
         dones = self.locals.get("dones", [])
 
         for i, info in enumerate(infos):
-            # Only check at episode end
             if isinstance(dones, (list, tuple)) or (
                 hasattr(dones, "__getitem__") and hasattr(dones, "__len__")
             ):
@@ -489,32 +490,27 @@ class BestModelCallback(BaseCallback):
             else:
                 done_i = dones if i == 0 else False
             if done_i:
-                if "episode_acceptance_ratio" in info:
-                    self.recent_ratios.append(info["episode_acceptance_ratio"])
+                ep = info.get("episode")
+                if ep is not None and "r" in ep:
+                    self.recent_rewards.append(float(ep["r"]))
 
-        # Check for best model every check_freq steps
-        if self.n_calls % self.check_freq == 0 and self.recent_ratios:
-            # Use average of recent episodes as the metric
-            avg_ratio = sum(self.recent_ratios) / len(self.recent_ratios)
+        if self.n_calls % self.check_freq == 0 and self.recent_rewards:
+            mean_reward = sum(self.recent_rewards) / len(self.recent_rewards)
 
-            # Always save the latest checkpoint
             self.model.save(self.last_checkpoint_path)
             if self.verbose > 0:
                 print(
-                    f"Checkpoint saved to {self.last_checkpoint_path} at step {self.num_timesteps} (Avg Ratio: {avg_ratio:.4f})"
+                    f"Checkpoint saved at step {self.num_timesteps} | "
+                    f"mean episode reward={mean_reward:.2f} (over {len(self.recent_rewards)} episodes)"
                 )
 
-            if avg_ratio > self.best_ratio:
-                self.best_ratio = avg_ratio
+            if mean_reward > self.best_mean_reward:
+                self.best_mean_reward = mean_reward
                 self.model.save(self.save_path)
-
                 if self.verbose > 0:
-                    print(
-                        f"New best model saved! Avg Ratio: {avg_ratio:.4f} (over {len(self.recent_ratios)} episodes)"
-                    )
+                    print(f"New best model! mean reward={mean_reward:.2f}")
 
-            # Clear recent ratios for next check period
-            self.recent_ratios = []
+            self.recent_rewards = []
 
         return True
 

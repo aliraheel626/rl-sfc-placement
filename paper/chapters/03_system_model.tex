@@ -145,16 +145,16 @@ r_t^{\text{step}} = 0.1
   + \alpha_s \cdot \frac{\max\!\left(s_{n_k} - s_r^{\min},\, 0\right)}{s_{\max}}
   - \alpha_c \cdot \left(1 - \frac{1}{1 + \text{SFC}(n_k)}\right).
 \end{equation}
-The 0.1 progress bonus rewards feasible VNF placements; the latency term encourages locality. The security margin term ($\alpha_s = 0.1$) rewards placing on nodes whose effective security exceeds the request minimum, directly incentivising high-margin placements. The co-location penalty ($\alpha_c = 0.1$) uses an inverse saturation $1 - 1/(1 + \text{SFC}(n_k))$ that grows quickly for the first few chains and asymptotically approaches 1, discouraging hot-spot nodes without requiring a tunable reference parameter.
+The 0.1 progress bonus rewards feasible VNF placements; the latency term encourages locality. The security margin term ($\alpha_s = 0.1$) rewards placing on nodes whose security score exceeds the request minimum, directly incentivising high-margin placements. The co-location penalty ($\alpha_c = 0.1$) uses an inverse saturation $1 - 1/(1 + \text{SFC}(n_k))$ that grows quickly for the first few chains and asymptotically approaches 1, discouraging hot-spot nodes without requiring a tunable reference parameter. The intermediate weights are kept small relative to the progress bonus; larger terminal weights $\alpha_s^T$ and $\alpha_c^T$ provide a stronger quality signal at SFC completion.
 
 \textbf{Terminal acceptance reward:}
 \begin{equation}
 r_T^{\text{acc}} = \left( R_{\text{acc}}
-  + \alpha_s \cdot \frac{\max\!\left(s_{n_{K_r}} - s_r^{\min},\, 0\right)}{s_{\max}}
-  - \alpha_c \cdot \left(1 - \frac{1}{1 + \text{SFC}^{-}(n_{K_r})}\right)
+  + \alpha_s^T \cdot \frac{\max\!\left(s_{n_{K_r}} - s_r^{\min},\, 0\right)}{s_{\max}}
+  - \alpha_c^T \cdot \left(1 - \frac{1}{1 + \text{SFC}^{-}(n_{K_r})}\right)
 \right) \cdot \left(1 + \omega \cdot \overline{\text{AR}}_w\right),
 \end{equation}
-where $R_{\text{acc}} = 1$, $\text{SFC}^{-}(n_{K_r})$ is the chain count on the last placement node \emph{before} the current SFC is registered, $\omega = 0.5$, and $\overline{\text{AR}}_w$ is the acceptance ratio over the last $w = 10$ requests.
+where $R_{\text{acc}} = 1$, $\alpha_s^T = 0.3$ and $\alpha_c^T = 0.3$ are the terminal shaping weights (larger than the intermediate $\alpha_s = \alpha_c = 0.1$ to provide a stronger end-of-SFC quality signal), $\text{SFC}^{-}(n_{K_r})$ is the chain count on the last placement node \emph{before} the current SFC is registered, $\omega = 0.5$, and $\overline{\text{AR}}_w$ is the acceptance ratio over the last $w = 10$ requests.
 
 \textbf{Terminal rejection reward:}
 \begin{equation}

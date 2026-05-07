@@ -115,6 +115,12 @@ class SFCPlacementEnv(gym.Env):
         self.colocation_penalty_weight = float(
             self.config["rewards"].get("colocation_penalty_weight", 0.1)
         )
+        self.terminal_security_margin_weight = float(
+            self.config["rewards"].get("terminal_security_margin_weight", 0.3)
+        )
+        self.terminal_colocation_penalty_weight = float(
+            self.config["rewards"].get("terminal_colocation_penalty_weight", 0.3)
+        )
         # Link latency bounds for latency-aware masking
         self.min_link_latency = self.config["substrate"]["links"]["latency"]["min"]
 
@@ -359,8 +365,8 @@ class SFCPlacementEnv(gym.Env):
         last_sfc_count = float(sfcs_before_register.get(last_node, 0))
         last_coloc = 1.0 - 1.0 / (1.0 + last_sfc_count)
         terminal_shaping = (
-            self.security_margin_weight * last_margin
-            - self.colocation_penalty_weight * last_coloc
+            self.terminal_security_margin_weight * last_margin
+            - self.terminal_colocation_penalty_weight * last_coloc
         )
 
         self.recent_outcomes.append(1.0)

@@ -99,9 +99,12 @@ rewards:
   acceptance_ratio_window: 10            # number of recent requests to consider
   acceptance_ratio_reward_weight: 0.5    # scaling factor for the multiplicative modifier
   acceptance_ratio_flip_rejection: true  # use flipped multiplier (1-AR) on rejections
-  # Per-VNF shaping rewards (applied at every VNF placement step)
-  security_margin_weight: 0.1    # reward for (s_eff - s_min) / substrate.resources.security_score.max at each placed node
-  colocation_penalty_weight: 0.1 # penalty for SFC co-location at each placed node; uses 1 - 1/(1 + sfc_count) saturation
+  # Per-VNF shaping rewards (applied at every intermediate VNF placement step)
+  security_margin_weight: 0.1         # α_s — reward for (s_n - s_min) / s_max at each intermediate step
+  colocation_penalty_weight: 0.1      # α_c — penalty via 1 - 1/(1 + sfc_count) at each intermediate step
+  # Terminal shaping weights (applied once at SFC acceptance, on top of the base acceptance reward)
+  terminal_security_margin_weight: 0.3   # α_s_T — larger terminal signal for last-VNF security margin
+  terminal_colocation_penalty_weight: 0.3 # α_c_T — larger terminal signal for last-VNF co-location
 
 # Evaluation Configuration
 evaluation:

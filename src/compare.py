@@ -1143,8 +1143,8 @@ def _write_results_table_tex(
     Write COMPARISON_TABLE_ROWS as a LaTeX table body to <output_dir>/results_table.tex.
 
     The file contains only the data rows (no tabular environment, no header, no rules)
-    so it can be \input{} inside any table that uses the same five-column layout:
-        Metric  &  BF mean  &  PPO mean  &  Delta%  &  Winner  \\
+    so it can be \input{} inside any table that uses the same four-column layout:
+        Metric  &  BF mean  &  PPO mean  &  Delta%  \\
     """
     from src.eval_reporting import COMPARISON_TABLE_ROWS
 
@@ -1171,16 +1171,11 @@ def _write_results_table_tex(
             pct  = (ppo_mean - bf_mean) / abs(bf_mean) * 100.0
             sign = "+" if pct > 0 else ""
             delta_str = f"${sign}{pct:.2f}$\\%"
-            if row.higher_is_better:
-                winner = "PPO" if pct > 0 else ("Best-Fit" if pct < 0 else "tie")
-            else:
-                winner = "PPO" if pct < 0 else ("Best-Fit" if pct > 0 else "tie")
         else:
             delta_str = "---"
-            winner    = "---"
 
         lines.append(
-            f"{row.label} & {bf_str} & {ppo_str} & {delta_str} & {winner} \\\\"
+            f"{row.label} & {bf_str} & {ppo_str} & {delta_str} \\\\"
         )
 
     with open(path, "w", encoding="utf-8") as fh:
@@ -1322,14 +1317,13 @@ def main():
     ppo_key = next((k for k in by_algo if "PPO" in k or "Maskable" in k), None)
 
     if bf_key and ppo_key:
-        col_w = [32, 14, 14, 12, 10]
+        col_w = [32, 14, 14, 12]
         sep = "-" * sum(col_w)
         header = (
             f"{'Metric':<{col_w[0]}}"
             f"{'BestFit mean':>{col_w[1]}}"
             f"{'PPO mean':>{col_w[2]}}"
             f"{'D%':>{col_w[3]}}"
-            f"{'Winner':>{col_w[4]}}"
         )
         print(f"\n{'PPO vs BestFit - average across episodes':^{sum(col_w)}}")
         print(sep)
@@ -1351,22 +1345,12 @@ def main():
                 continue
             bf_mean  = float(np.mean(bf_vals))
             ppo_mean = float(np.mean(ppo_vals))
-            if bf_mean != 0:
-                pct = (ppo_mean - bf_mean) / abs(bf_mean) * 100
-            else:
-                pct = float("nan")
-            if np.isnan(pct):
-                winner = "-"
-            elif row.higher_is_better:
-                winner = "PPO" if pct > 0 else ("BestFit" if pct < 0 else "tie")
-            else:
-                winner = "PPO" if pct < 0 else ("BestFit" if pct > 0 else "tie")
+            pct = (ppo_mean - bf_mean) / abs(bf_mean) * 100 if bf_mean != 0 else float("nan")
             print(
                 f"{row.label:<{col_w[0]}}"
                 f"{bf_mean:>{col_w[1]}.4f}"
                 f"{ppo_mean:>{col_w[2]}.4f}"
                 f"{pct:>{col_w[3]}.2f}%"
-                f"{winner:>{col_w[4]}}"
             )
         print(sep)
         _write_results_table_tex(by_algo, bf_key, ppo_key, out_dir, n_paired)

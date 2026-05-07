@@ -98,6 +98,7 @@ training:
   max_requests_per_episode: 300
   randomize_topology: false
   randomize_request_generator: true
+  reset_substrate_on_episode: false  # true = full substrate + generator reset each episode (episodic); false = TTL-only rolling substrate
 
 # Reward Configuration
 rewards:

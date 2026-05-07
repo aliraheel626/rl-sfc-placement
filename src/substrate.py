@@ -57,6 +57,11 @@ class SubstrateNetwork:
         # Track active placements for TTL management
         self.active_placements: dict[int, dict] = {}  # request_id -> placement info
 
+        # Inverted index: node_id -> set of request_ids currently on that node (O(1) lookup)
+        self.node_to_sfcs: dict[int, set[int]] = {}
+        # Inverted index: node_id -> total VNF count currently on that node
+        self.node_to_vnf_count: dict[int, int] = {}
+
         # Track nodes that are hard-isolated (cannot be shared with other SFCs)
         # Maps node_id -> request_id of the SFC that isolated it
         self.hard_isolated_nodes: dict[int, int] = {}
@@ -120,6 +125,17 @@ class SubstrateNetwork:
                 res["security_score"],
             ]
 
+        # Precomputed original resource matrix for vectorized normalization
+        # Columns: [RAM, CPU, Storage] — original capacities, never changes after topology gen
+        self.original_resource_matrix = np.array(
+            [[self.original_resources[n]["ram"],
+              self.original_resources[n]["cpu"],
+              self.original_resources[n]["storage"]]
+             for n in range(self.num_nodes)],
+            dtype=np.float32,
+        )
+        self._max_security_score = float(self.resource_config["security_score"]["max"])
+
         # Initialize link attributes
         for u, v in self.graph.edges():
             bandwidth = random.uniform(
@@ -145,6 +161,11 @@ class SubstrateNetwork:
             self.bandwidth_matrix[v, u] = bw
 
         self._precompute_latencies()
+
+        # Precompute degree array for get_nodes_connectivity (degrees never change)
+        self._degree_array = np.maximum(
+            np.array([d for _, d in self.graph.degree()], dtype=np.float32), 1.0
+        )
 
         # Bump topology version so GNN edge cache knows to refresh
         self.topology_version += 1
@@ -217,6 +238,8 @@ class SubstrateNetwork:
             self.bandwidth_matrix[v, u] = bw
 
         self.active_placements.clear()
+        self.node_to_sfcs.clear()
+        self.node_to_vnf_count.clear()
         self.hard_isolated_nodes.clear()
 
     def get_node_resources(self, node_id: int) -> dict:
@@ -230,18 +253,10 @@ class SubstrateNetwork:
         Returns:
             Array of shape (num_nodes, 4) with [RAM, CPU, Storage, Security]
         """
-        resources = np.zeros((self.num_nodes, 4))
-        for node in range(self.num_nodes):
-            res = self.node_resources[node]
-            # Normalize by original capacity
-            orig = self.original_resources[node]
-            resources[node] = [
-                res["ram"] / orig["ram"],
-                res["cpu"] / orig["cpu"],
-                res["storage"] / orig["storage"],
-                res["security_score"] / self.resource_config["security_score"]["max"],
-            ]
-        return resources
+        result = np.empty((self.num_nodes, 4), dtype=np.float32)
+        result[:, :3] = self.resource_matrix[:self.num_nodes, :3] / self.original_resource_matrix
+        result[:, 3] = self.resource_matrix[:self.num_nodes, 3] / self._max_security_score
+        return result
 
     def get_nodes_connectivity(self) -> np.ndarray:
         """
@@ -250,24 +265,8 @@ class SubstrateNetwork:
         Returns:
             Array of shape (num_nodes, 1) normalized [0, 1]
         """
-        # Sum of bandwidth for each node's edges
         total_bw_per_node = np.sum(self.bandwidth_matrix, axis=1)
-
-        # Count non-zero entries (neighbors)
-        # Note: bandwidth_matrix will have 0s where no edge exists
-        # BUT it might also have 0s if bandwidth is fully used.
-        # We need the neighbor count (degree), which doesn't change.
-        # It's better to store the degree vector or use the adjacency matrix from graph.
-
-        # Using networkx graph degree is cleaner and static per episode
-        degrees = np.array(
-            [val for (node, val) in self.graph.degree()], dtype=np.float32
-        )
-
-        # Avoid division by zero
-        degrees = np.maximum(degrees, 1.0)
-
-        avg_bw = total_bw_per_node / degrees
+        avg_bw = total_bw_per_node / self._degree_array
 
         # Normalize
         max_bw = self.link_config["bandwidth"]["max"]
@@ -364,14 +363,10 @@ class SubstrateNetwork:
         if src_node == dst_node:
             return 0.0
 
-        # Use precomputed latency if available
-        if (
-            hasattr(self, "path_latencies")
-            and (src_node, dst_node) in self.path_latencies
-        ):
-            return self.path_latencies[(src_node, dst_node)]
+        if hasattr(self, "latency_matrix"):
+            return float(self.latency_matrix[src_node, dst_node])
 
-        # Fallback for safety (though precompute should cover everything)
+        # Fallback (should never be reached after _precompute_latencies)
         try:
             path = nx.shortest_path(self.graph, src_node, dst_node)
         except nx.NetworkXNoPath:
@@ -512,6 +507,14 @@ class SubstrateNetwork:
             "remaining_ttl": request.ttl,
         }
 
+        # Update inverted indices
+        for node_id in set(placement):
+            if node_id not in self.node_to_sfcs:
+                self.node_to_sfcs[node_id] = set()
+            self.node_to_sfcs[node_id].add(request.request_id)
+        for node_id in placement:
+            self.node_to_vnf_count[node_id] = self.node_to_vnf_count.get(node_id, 0) + 1
+
         # If this SFC has hard isolation, mark all its nodes as isolated
         if request.hard_isolation:
             for node_id in placement:
@@ -549,6 +552,19 @@ class SubstrateNetwork:
                         if self.hard_isolated_nodes.get(node_id) == request_id:
                             del self.hard_isolated_nodes[node_id]
 
+                # Remove from inverted indices
+                for node_id in set(placement):
+                    if node_id in self.node_to_sfcs:
+                        self.node_to_sfcs[node_id].discard(request_id)
+                        if not self.node_to_sfcs[node_id]:
+                            del self.node_to_sfcs[node_id]
+                for node_id in placement:
+                    cnt = self.node_to_vnf_count.get(node_id, 0) - 1
+                    if cnt <= 0:
+                        self.node_to_vnf_count.pop(node_id, None)
+                    else:
+                        self.node_to_vnf_count[node_id] = cnt
+
                 expired.append(request_id)
                 del self.active_placements[request_id]
 
@@ -563,14 +579,10 @@ class SubstrateNetwork:
         Returns:
             Dictionary mapping node_id -> number of SFCs using that node
         """
-        sfcs_count = {node: 0 for node in self.graph.nodes()}
-
-        for info in self.active_placements.values():
-            placed_nodes = set(info["placement"])  # Unique nodes used by this SFC
-            for node in placed_nodes:
-                sfcs_count[node] += 1
-
-        return sfcs_count
+        result = {node: 0 for node in self.graph.nodes()}
+        for node_id, sfcs in self.node_to_sfcs.items():
+            result[node_id] = len(sfcs)
+        return result
 
     def get_ttl_weighted_sfcs_per_node(self, max_ttl: float) -> dict[int, float]:
         """
@@ -591,6 +603,10 @@ class SubstrateNetwork:
                 scores[node] += weight
         return scores
 
+    def get_sfcs_on_node(self, node_id: int) -> set[int]:
+        """Return the set of request_ids whose placements include node_id."""
+        return set(self.node_to_sfcs.get(node_id, set()))
+
     def get_vnfs_per_node(self) -> dict[int, int]:
         """
         Get the count of VNFs placed on each substrate node.
@@ -598,13 +614,26 @@ class SubstrateNetwork:
         Returns:
             Dictionary mapping node_id -> number of VNFs on that node
         """
-        vnfs_count = {node: 0 for node in self.graph.nodes()}
+        result = {node: 0 for node in self.graph.nodes()}
+        for node_id, count in self.node_to_vnf_count.items():
+            result[node_id] = count
+        return result
 
-        for info in self.active_placements.values():
-            for node in info["placement"]:  # Each VNF placement counts
-                vnfs_count[node] += 1
+    def get_vnf_counts_array(self) -> np.ndarray:
+        """Return VNF counts per node as a float32 array of shape (num_nodes,)."""
+        arr = np.zeros(self.num_nodes, dtype=np.float32)
+        for node_id, count in self.node_to_vnf_count.items():
+            if node_id < self.num_nodes:
+                arr[node_id] = count
+        return arr
 
-        return vnfs_count
+    def get_sfc_counts_array(self) -> np.ndarray:
+        """Return SFC counts per node as a float32 array of shape (num_nodes,)."""
+        arr = np.zeros(self.num_nodes, dtype=np.float32)
+        for node_id, sfcs in self.node_to_sfcs.items():
+            if node_id < self.num_nodes:
+                arr[node_id] = len(sfcs)
+        return arr
 
     def is_node_hard_isolated(self, node_id: int) -> bool:
         """
@@ -640,10 +669,7 @@ class SubstrateNetwork:
         Returns:
             True if at least one SFC is using this node
         """
-        for info in self.active_placements.values():
-            if node_id in info["placement"]:
-                return True
-        return False
+        return node_id in self.node_to_sfcs and bool(self.node_to_sfcs[node_id])
 
     def get_nodes_with_sfcs_mask(self) -> np.ndarray:
         """
@@ -653,7 +679,7 @@ class SubstrateNetwork:
             np.ndarray: Shape (num_nodes,) boolean vector where True means occupied
         """
         mask = np.zeros(self.num_nodes, dtype=bool)
-        for info in self.active_placements.values():
-            for node_id in info["placement"]:
+        for node_id in self.node_to_sfcs:
+            if self.node_to_sfcs[node_id]:
                 mask[node_id] = True
         return mask

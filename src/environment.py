@@ -94,14 +94,14 @@ class SFCPlacementEnv(gym.Env):
         self.security_margin_weight = float(
             self.config["rewards"].get("security_margin_weight", 0.1)
         )
-        self.colocation_penalty_weight = float(
-            self.config["rewards"].get("colocation_penalty_weight", 0.1)
-        )
         self.colocation_reward_weight = float(
             self.config["rewards"].get("colocation_reward_weight", 0.3)
         )
         self.sec_margin_reward_weight = float(
             self.config["rewards"].get("sec_margin_reward_weight", 0.15)
+        )
+        self.latency_penalty_weight = float(
+            self.config["rewards"].get("latency_penalty_weight", 0.3)
         )
         self.spread_bonus_weight = float(
             self.config["rewards"].get("spread_bonus_weight", 0.3)
@@ -109,11 +109,11 @@ class SFCPlacementEnv(gym.Env):
         self.terminal_security_margin_weight = float(
             self.config["rewards"].get("terminal_security_margin_weight", 0.5)
         )
-        self.terminal_colocation_penalty_weight = float(
-            self.config["rewards"].get("terminal_colocation_penalty_weight", 1.0)
-        )
         self.terminal_spread_bonus_weight = float(
             self.config["rewards"].get("terminal_spread_bonus_weight", 0.3)
+        )
+        self.terminal_exposure_weight = float(
+            self.config["rewards"].get("terminal_exposure_weight", 0.5)
         )
         # Link latency bounds for latency-aware masking
         self.min_link_latency = self.config["substrate"]["links"]["latency"]["min"]
@@ -132,6 +132,7 @@ class SFCPlacementEnv(gym.Env):
         self.current_placement: list[int] = []
         self.current_latency: float = 0.0  # Accumulated latency for current SFC
         self.episode_step: int = 0
+        self.already_exposed_sfcs: set[int] = set()  # SFC IDs co-located with current chain so far
 
         # Episode-level statistics (reset each episode)
         self.episode_requests = 0
@@ -139,11 +140,15 @@ class SFCPlacementEnv(gym.Env):
         self.episode_latency_violations = 0
         self.episode_rejections = 0
 
-        # Episode-level substrate metrics (sampled per request, reset each episode)
-        self.episode_sfc_tenancy_samples: list[float] = []
-        self.episode_vnf_tenancy_samples: list[float] = []
-        self.episode_substrate_utilization_samples: list[float] = []
-        self.episode_sec_margin_samples: list[float] = []
+        # Episode-level substrate metrics — maintained as running (count, sum) for O(1) mean
+        self.episode_sfc_tenancy_n: int = 0
+        self.episode_sfc_tenancy_sum: float = 0.0
+        self.episode_vnf_tenancy_n: int = 0
+        self.episode_vnf_tenancy_sum: float = 0.0
+        self.episode_substrate_util_n: int = 0
+        self.episode_substrate_util_sum: float = 0.0
+        self.episode_sec_margin_n: int = 0
+        self.episode_sec_margin_sum: float = 0.0
         # Global statistics tracking (across all episodes)
         self.total_requests = 0
         self.accepted_requests = 0
@@ -215,10 +220,14 @@ class SFCPlacementEnv(gym.Env):
         self.episode_accepted = 0
         self.episode_latency_violations = 0
         self.episode_rejections = 0
-        self.episode_sfc_tenancy_samples = []
-        self.episode_vnf_tenancy_samples = []
-        self.episode_substrate_utilization_samples = []
-        self.episode_sec_margin_samples = []
+        self.episode_sfc_tenancy_n = 0
+        self.episode_sfc_tenancy_sum = 0.0
+        self.episode_vnf_tenancy_n = 0
+        self.episode_vnf_tenancy_sum = 0.0
+        self.episode_substrate_util_n = 0
+        self.episode_substrate_util_sum = 0.0
+        self.episode_sec_margin_n = 0
+        self.episode_sec_margin_sum = 0.0
         self.total_episodes += 1
 
         # Generate first SFC request for this episode
@@ -241,6 +250,7 @@ class SFCPlacementEnv(gym.Env):
         self.current_placement = []
         self.current_latency = 0.0
         self.episode_step = 0
+        self.already_exposed_sfcs = set()
 
         self.episode_requests += 1
         self.total_requests += 1
@@ -304,12 +314,12 @@ class SFCPlacementEnv(gym.Env):
         reward = 0.1  # progress bonus for each feasible VNF placement
 
         # Latency penalty: encourage locality / co-location
-        if len(self.current_placement) > 1:
+        if self.latency_penalty_weight > 0.0 and len(self.current_placement) > 1:
             prev_node = self.current_placement[-2]
             curr_node = self.current_placement[-1]
             hop_latency = self.substrate.get_path_latency(prev_node, curr_node)
             norm_latency = min(hop_latency / self.current_request.max_latency, 1.0)
-            reward -= 0.3 * norm_latency
+            reward -= self.latency_penalty_weight * norm_latency
 
         # Security margin shaping: normalised by available range above s_min → [0, 1]
         node_sec = float(self.substrate.node_resources[action]["security_score"])
@@ -317,19 +327,25 @@ class SFCPlacementEnv(gym.Env):
         sec_range = max(self.max_security - s_min, 1.0)
         sec_margin = max(node_sec - s_min, 0.0) / sec_range
         reward += self.security_margin_weight * sec_margin
-        self.episode_sec_margin_samples.append(sec_margin * sec_range)
+        self.episode_sec_margin_n += 1
+        self.episode_sec_margin_sum += sec_margin * sec_range
 
-        # Co-location penalty: TTL-weighted — existing SFCs weighted by remaining_ttl/T_max,
-        # then scaled by the new SFC's TTL so long-lived placements on busy nodes cost more.
-        ttl_sfcs = self.substrate.get_ttl_weighted_sfcs_per_node(self.max_ttl)
+        # Graduated spread bonus — deduplication aware.
+        # Only NEW SFCs (not yet seen by this chain) count against the bonus, so
+        # re-visiting a node with already-known co-tenants is rewarded the same as
+        # a fresh node, directly discouraging the "always seek new nodes" behaviour.
+        sfcs_on_action_node = self.substrate.get_sfcs_on_node(action)
+        new_sfcs = sfcs_on_action_node - self.already_exposed_sfcs
         new_ttl_norm = min(self.current_request.ttl / self.max_ttl, 1.0)
-        ttl_coloc = ttl_sfcs.get(action, 0.0) * new_ttl_norm
-        reward -= self.colocation_penalty_weight * (1.0 - 1.0 / (1.0 + ttl_coloc))
+        norm = max(self.max_ttl, 1.0)
+        new_ttl_coloc = sum(
+            self.substrate.active_placements[req_id]["remaining_ttl"] / norm
+            for req_id in new_sfcs
+        ) * new_ttl_norm
+        reward += self.spread_bonus_weight * (1.0 / (1.0 + new_ttl_coloc))
 
-        # Spread bonus: extra reward for choosing a node with no existing SFC chains
-        raw_sfc_count = self.substrate.get_sfcs_per_node().get(action, 0)
-        if raw_sfc_count == 0:
-            reward += self.spread_bonus_weight
+        # Update exposure set after reward is computed for this VNF
+        self.already_exposed_sfcs |= sfcs_on_action_node
 
         return observation, reward, False, False, info
 
@@ -339,11 +355,6 @@ class SFCPlacementEnv(gym.Env):
         completed_placement = self.current_placement.copy()
         completed_min_security = self.current_request.min_security_score
 
-        # Snapshot SFC counts BEFORE registration so the last-VNF shaping sees
-        # the co-location count that existed when the placement decision was made.
-        sfcs_before_register = self.substrate.get_sfcs_per_node()
-        ttl_sfcs_before_register = self.substrate.get_ttl_weighted_sfcs_per_node(self.max_ttl)
-
         self.substrate.register_placement(self.current_request, self.current_placement)
         self.accepted_requests += 1
         self.episode_accepted += 1
@@ -351,21 +362,33 @@ class SFCPlacementEnv(gym.Env):
         # Sample substrate metrics after placement
         self._sample_substrate_metrics()
 
-        # Shaping signal for the last VNF placement
+        # Shaping signal for the last VNF placement.
+        # already_exposed_sfcs reflects VNFs 1..K_r-1; compute new exposure at last node only.
         last_node = completed_placement[-1]
         last_sec = float(self.substrate.node_resources[last_node]["security_score"])
         last_sec_range = max(self.max_security - completed_min_security, 1.0)
         last_margin = max(last_sec - completed_min_security, 0.0) / last_sec_range
-        self.episode_sec_margin_samples.append(last_margin * last_sec_range)
-        last_sfc_count = float(sfcs_before_register.get(last_node, 0))
+        self.episode_sec_margin_n += 1
+        self.episode_sec_margin_sum += last_margin * last_sec_range
+        sfcs_on_last_node = self.substrate.get_sfcs_on_node(last_node)
+        new_sfcs_last = sfcs_on_last_node - self.already_exposed_sfcs
         completed_ttl_norm = min(self.current_request.ttl / self.max_ttl, 1.0)
-        last_ttl_coloc = ttl_sfcs_before_register.get(last_node, 0.0) * completed_ttl_norm
-        last_coloc = 1.0 - 1.0 / (1.0 + last_ttl_coloc)
-        last_spread = 1.0 if last_sfc_count == 0 else 0.0
+        norm = max(self.max_ttl, 1.0)
+        last_ttl_coloc = sum(
+            self.substrate.active_placements[req_id]["remaining_ttl"] / norm
+            for req_id in new_sfcs_last
+        ) * completed_ttl_norm
+        # Graduated terminal spread bonus — same dedup logic as intermediate steps.
+        last_spread_graduated = 1.0 / (1.0 + last_ttl_coloc)
+
+        # Terminal exposure penalty: total distinct SFCs the full chain was exposed to.
+        total_distinct_exposed = len(self.already_exposed_sfcs | sfcs_on_last_node)
+        exposure_penalty = 1.0 - 1.0 / (1.0 + total_distinct_exposed)
+
         terminal_shaping = (
             self.terminal_security_margin_weight * last_margin
-            - self.terminal_colocation_penalty_weight * last_coloc
-            + self.terminal_spread_bonus_weight * last_spread
+            + self.terminal_spread_bonus_weight * last_spread_graduated
+            - self.terminal_exposure_weight * exposure_penalty
         )
 
         self.recent_outcomes.append(1.0)
@@ -373,15 +396,14 @@ class SFCPlacementEnv(gym.Env):
 
         # Episode running averages for the multiplier (computed before this SFC's metrics)
         avg_sfc_tenancy_norm = min(
-            (sum(self.episode_sfc_tenancy_samples) / len(self.episode_sfc_tenancy_samples)) / 5.0
-            if self.episode_sfc_tenancy_samples else 0.0,
+            (self.episode_sfc_tenancy_sum / self.episode_sfc_tenancy_n) / 5.0
+            if self.episode_sfc_tenancy_n > 0 else 0.0,
             1.0,
         )
         max_possible_margin = max(self.max_security - 1.0, 1.0)
         avg_sec_margin_norm = min(
-            (sum(self.episode_sec_margin_samples) / len(self.episode_sec_margin_samples))
-            / max_possible_margin
-            if self.episode_sec_margin_samples else 0.0,
+            (self.episode_sec_margin_sum / self.episode_sec_margin_n) / max_possible_margin
+            if self.episode_sec_margin_n > 0 else 0.0,
             1.0,
         )
 
@@ -464,29 +486,23 @@ class SFCPlacementEnv(gym.Env):
 
     def _sample_substrate_metrics(self):
         """Sample substrate tenancy and utilization metrics after each request."""
-        sfcs_per_node = self.substrate.get_sfcs_per_node()
-        vnfs_per_node = self.substrate.get_vnfs_per_node()
+        sfc_counts = self.substrate.get_sfc_counts_array()
+        vnf_counts = self.substrate.get_vnf_counts_array()
 
-        # Calculate average tenancy only on occupied nodes (nodes with count > 0)
-        occupied_sfc_nodes = [v for v in sfcs_per_node.values() if v > 0]
-        occupied_vnf_nodes = [v for v in vnfs_per_node.values() if v > 0]
+        occupied_sfc = sfc_counts[sfc_counts > 0]
+        occupied_vnf = vnf_counts[vnf_counts > 0]
 
-        if occupied_sfc_nodes:
-            self.episode_sfc_tenancy_samples.append(
-                sum(occupied_sfc_nodes) / len(occupied_sfc_nodes)
-            )
-        if occupied_vnf_nodes:
-            self.episode_vnf_tenancy_samples.append(
-                sum(occupied_vnf_nodes) / len(occupied_vnf_nodes)
-            )
+        if len(occupied_sfc) > 0:
+            self.episode_sfc_tenancy_n += 1
+            self.episode_sfc_tenancy_sum += float(occupied_sfc.mean())
+        if len(occupied_vnf) > 0:
+            self.episode_vnf_tenancy_n += 1
+            self.episode_vnf_tenancy_sum += float(occupied_vnf.mean())
 
-        # Substrate utilization: % of nodes being used
-        if sfcs_per_node:
-            nodes_in_use = len(occupied_sfc_nodes)
-            total_nodes = len(sfcs_per_node)
-            self.episode_substrate_utilization_samples.append(
-                nodes_in_use / total_nodes
-            )
+        N = self.substrate.num_nodes
+        if N > 0:
+            self.episode_substrate_util_n += 1
+            self.episode_substrate_util_sum += float(len(occupied_sfc)) / N
 
     def _get_observation(self) -> dict[str, np.ndarray]:
         """Construct the Dict observation with max_nodes padding."""
@@ -513,69 +529,38 @@ class SFCPlacementEnv(gym.Env):
 
         # d. Global resource shares + tenancy: (num_nodes, 5)
         #    [RAMGlobalShare, CPUGlobalShare, StorageGlobalShare, VNFGlobalShare, SFCTenancy]
-        # Resource global shares: used_i / Σ_j used_j  ("what fraction of all consumed
-        #   RAM/CPU/Storage is on this node?") — orthogonal to the local remaining-fraction
-        #   features which answer "how much capacity is left on this node."
-        # VNFGlobalShare: vnfs_i / Σ_j vnfs_j — instance-count concentration.
-        # SFCTenancy:     sfcs_i / max(vnfs_i, 1) — chain diversity / blast-radius proxy.
-        vnfs_per_node = self.substrate.get_vnfs_per_node()
-        sfcs_per_node = self.substrate.get_sfcs_per_node()
+        vnf_counts = self.substrate.get_vnf_counts_array()   # shape (N,), O(occupied nodes)
+        sfc_counts = self.substrate.get_sfc_counts_array()   # shape (N,), O(occupied nodes)
 
-        used_ram = np.array(
-            [self.substrate.original_resources[i]["ram"] - self.substrate.node_resources[i]["ram"]
-             for i in range(N)], dtype=np.float32,
-        )
-        used_cpu = np.array(
-            [self.substrate.original_resources[i]["cpu"] - self.substrate.node_resources[i]["cpu"]
-             for i in range(N)], dtype=np.float32,
-        )
-        used_storage = np.array(
-            [self.substrate.original_resources[i]["storage"] - self.substrate.node_resources[i]["storage"]
-             for i in range(N)], dtype=np.float32,
-        )
-        ram_global_share = (used_ram / max(used_ram.sum(), 1e-6)).reshape(-1, 1)
-        cpu_global_share = (used_cpu / max(used_cpu.sum(), 1e-6)).reshape(-1, 1)
-        storage_global_share = (used_storage / max(used_storage.sum(), 1e-6)).reshape(-1, 1)
+        # used = original - current (vectorized, no Python loops)
+        used_resources = self.substrate.original_resource_matrix - self.substrate.resource_matrix[:N, :3]
+        used_ram = used_resources[:, 0]
+        used_cpu = used_resources[:, 1]
+        used_storage = used_resources[:, 2]
+        ram_global_share = (used_ram / max(float(used_ram.sum()), 1e-6)).reshape(-1, 1)
+        cpu_global_share = (used_cpu / max(float(used_cpu.sum()), 1e-6)).reshape(-1, 1)
+        storage_global_share = (used_storage / max(float(used_storage.sum()), 1e-6)).reshape(-1, 1)
 
-        total_vnfs = max(sum(vnfs_per_node.values()), 1)
-        vnf_global_share = np.array(
-            [vnfs_per_node.get(i, 0) / total_vnfs for i in range(N)],
-            dtype=np.float32,
-        ).reshape(-1, 1)
-        sfc_tenancy = np.array(
-            [sfcs_per_node.get(i, 0) / max(vnfs_per_node.get(i, 0), 1) for i in range(N)],
-            dtype=np.float32,
-        ).reshape(-1, 1)
+        total_vnfs = max(float(vnf_counts.sum()), 1.0)
+        vnf_global_share = (vnf_counts / total_vnfs).reshape(-1, 1)
+        sfc_tenancy = (sfc_counts / np.maximum(vnf_counts, 1.0)).reshape(-1, 1)
 
         # e. VNF fit ratios: (num_nodes, 3) [FitRAM, FitCPU, FitStorage]
-        # vnf_demand / remaining_capacity — how much of the node's remaining
-        # headroom this VNF would consume. Near 0 = barely dents it, 1 = fills it.
         if self.current_vnf_index < self.current_request.num_vnfs:
             cur_vnf = self.current_request.vnfs[self.current_vnf_index]
-            fit_ram = np.array(
-                [cur_vnf.ram / max(self.substrate.node_resources[i]["ram"], 1e-6)
-                 for i in range(N)], dtype=np.float32,
-            ).reshape(-1, 1)
-            fit_cpu = np.array(
-                [cur_vnf.cpu / max(self.substrate.node_resources[i]["cpu"], 1e-6)
-                 for i in range(N)], dtype=np.float32,
-            ).reshape(-1, 1)
-            fit_storage = np.array(
-                [cur_vnf.storage / max(self.substrate.node_resources[i]["storage"], 1e-6)
-                 for i in range(N)], dtype=np.float32,
-            ).reshape(-1, 1)
+            safe_curr = np.maximum(self.substrate.resource_matrix[:N, :3], 1e-6)
+            fit = np.array([cur_vnf.ram, cur_vnf.cpu, cur_vnf.storage], dtype=np.float32) / safe_curr
+            fit_ram = fit[:, 0:1]
+            fit_cpu = fit[:, 1:2]
+            fit_storage = fit[:, 2:3]
         else:
             fit_ram = fit_cpu = fit_storage = np.zeros((N, 1), dtype=np.float32)
 
         # f. Load norm: (num_nodes, 1) — VNF count relative to 75th-percentile reference
-        load_reference = max(
-            1.0,
-            float(np.percentile(list(vnfs_per_node.values()), 75)) if vnfs_per_node else 0.0,
-        )
-        load_norm_arr = np.array(
-            [robust_ratio(float(vnfs_per_node.get(i, 0)), load_reference) for i in range(N)],
-            dtype=np.float32,
-        ).reshape(-1, 1)
+        # np.percentile is slow for tiny arrays; direct sort index is O(N log N) with no overhead
+        p75_idx = max(int(0.75 * N) - 1, 0)
+        load_reference = max(1.0, float(np.sort(vnf_counts)[p75_idx]))
+        load_norm_arr = (np.maximum(vnf_counts, 0.0) / (np.maximum(vnf_counts, 0.0) + load_reference)).reshape(-1, 1)
 
         # Combine real node features (num_nodes, 15)
         real_node_features = np.concatenate(
@@ -643,18 +628,16 @@ class SFCPlacementEnv(gym.Env):
 
         # Episode running-average SFC tenancy: normalised to [0,1] via /5.0
         ep_avg_sfc_tenancy_norm = min(
-            (sum(self.episode_sfc_tenancy_samples) / len(self.episode_sfc_tenancy_samples))
-            / 5.0
-            if self.episode_sfc_tenancy_samples else 0.0,
+            (self.episode_sfc_tenancy_sum / self.episode_sfc_tenancy_n) / 5.0
+            if self.episode_sfc_tenancy_n > 0 else 0.0,
             1.0,
         )
 
         # Episode running-average security margin: normalised by max possible margin
         max_possible_margin = max(self.max_security - 1.0, 1.0)
         ep_avg_sec_margin_norm = min(
-            (sum(self.episode_sec_margin_samples) / len(self.episode_sec_margin_samples))
-            / max_possible_margin
-            if self.episode_sec_margin_samples else 0.0,
+            (self.episode_sec_margin_sum / self.episode_sec_margin_n) / max_possible_margin
+            if self.episode_sec_margin_n > 0 else 0.0,
             1.0,
         )
 
@@ -705,30 +688,22 @@ class SFCPlacementEnv(gym.Env):
             else 0.0
         )
 
-        # Calculate episode-level substrate metrics averages
+        # Calculate episode-level substrate metrics averages (O(1) — running sums)
         episode_avg_sfc_tenancy = (
-            sum(self.episode_sfc_tenancy_samples)
-            / len(self.episode_sfc_tenancy_samples)
-            if self.episode_sfc_tenancy_samples
-            else 0.0
+            self.episode_sfc_tenancy_sum / self.episode_sfc_tenancy_n
+            if self.episode_sfc_tenancy_n > 0 else 0.0
         )
         episode_avg_vnf_tenancy = (
-            sum(self.episode_vnf_tenancy_samples)
-            / len(self.episode_vnf_tenancy_samples)
-            if self.episode_vnf_tenancy_samples
-            else 0.0
+            self.episode_vnf_tenancy_sum / self.episode_vnf_tenancy_n
+            if self.episode_vnf_tenancy_n > 0 else 0.0
         )
         episode_avg_substrate_util = (
-            sum(self.episode_substrate_utilization_samples)
-            / len(self.episode_substrate_utilization_samples)
-            if self.episode_substrate_utilization_samples
-            else 0.0
+            self.episode_substrate_util_sum / self.episode_substrate_util_n
+            if self.episode_substrate_util_n > 0 else 0.0
         )
         episode_avg_sec_margin = (
-            sum(self.episode_sec_margin_samples)
-            / len(self.episode_sec_margin_samples)
-            if self.episode_sec_margin_samples
-            else 0.0
+            self.episode_sec_margin_sum / self.episode_sec_margin_n
+            if self.episode_sec_margin_n > 0 else 0.0
         )
         return {
             "current_vnf_index": self.current_vnf_index,

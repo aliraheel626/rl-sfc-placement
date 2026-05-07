@@ -83,7 +83,7 @@ sfc:
 
 # Training Configuration (PPO tuning for create_maskable_ppo)
 training:
-  total_timesteps: 500000
+  total_timesteps: 100000
   # Learning rate: constant 1e-4, or linear decay from 3e-4 (set use_linear_lr_schedule: true)
   learning_rate: 0.0001 # 1e-4 (final value when using schedule)
   use_linear_lr_schedule: false
@@ -110,13 +110,13 @@ rewards:
   colocation_reward_weight: 0.3          # ω_c — subtracts from multiplier when avg SFC tenancy is high (bad)
   sec_margin_reward_weight: 0.15         # ω_s — adds to multiplier when avg security margin is high (good)
   # Per-VNF shaping rewards (applied at every intermediate VNF placement step)
+  latency_penalty_weight: 0.0            # β_lat — penalty per hop: β × (hop_latency / max_latency)
   security_margin_weight: 0.6            # α_s — reward for (s_n - s_min) / (s_max - s_min) at each intermediate step
-  colocation_penalty_weight: 0.5         # α_c — penalty via 1 - 1/(1 + sfc_count) at each intermediate step (primary)
-  spread_bonus_weight: 0.3              # α_spread — bonus for placing on a node with 0 existing SFCs (direct spread incentive)
+  spread_bonus_weight: 0.5              # α_spread — graduated spread bonus: α / (1 + new_ttl_coloc); new = not yet exposed
   # Terminal shaping weights (applied once at SFC acceptance, on top of the base acceptance reward)
   terminal_security_margin_weight: 1.0   # α_s_T — terminal security margin bonus
-  terminal_colocation_penalty_weight: 1.0 # α_c_T — terminal co-location penalty (primary)
-  terminal_spread_bonus_weight: 0.3     # α_spread_T — terminal spread bonus for last VNF on fresh node
+  terminal_spread_bonus_weight: 0.8     # α_spread_T — graduated terminal spread bonus: α / (1 + new_ttl_coloc) at last node
+  terminal_exposure_weight: 0.5         # α_exp_T — terminal penalty for total distinct SFCs exposed to across the chain
 
 # Evaluation Configuration
 evaluation:

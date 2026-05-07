@@ -847,36 +847,7 @@ def plot_tenancy_distributions(results: dict, output_dir: str = "compare/") -> N
     print(f"Tenancy grouped bar chart saved to: {path}")
     plt.close()
 
-    # ── 2. Histogram ──────────────────────────────────────────────────────────
-    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-    for ax, counts_dict, xlabel, title in [
-        (axes[0], sfc_counts, "SFC Count per Node", "SFC Count Distribution per Node"),
-        (axes[1], vnf_counts, "VNF Instance Count per Node", "VNF Count Distribution per Node"),
-    ]:
-        all_vals = np.concatenate(list(counts_dict.values()))
-        max_val = int(all_vals.max()) if len(all_vals) > 0 else 1
-        bins = np.arange(0, max_val + 2) - 0.5
-        for algo in algorithms:
-            ax.hist(
-                counts_dict[algo], bins=bins, label=algo,
-                color=color_map[algo], alpha=0.62, edgecolor="black", linewidth=0.5,
-            )
-        ax.set_xlabel(xlabel, fontsize=11)
-        ax.set_ylabel("Number of Nodes", fontsize=11)
-        ax.set_title(title, fontsize=12)
-        ax.legend(fontsize=10)
-        ax.grid(True, axis="y", linestyle="--", alpha=0.35)
-    fig.suptitle(
-        "Per-Node Tenancy Histogram: PPO vs Best-Fit",
-        fontsize=14, fontweight="bold",
-    )
-    plt.tight_layout()
-    path = out / "tenancy_histogram.png"
-    plt.savefig(path, dpi=150, bbox_inches="tight")
-    print(f"Tenancy histogram saved to: {path}")
-    plt.close()
-
-    # ── 3. Empirical CDF ──────────────────────────────────────────────────────
+    # ── 2. Empirical CDF ──────────────────────────────────────────────────────
     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
     for ax, counts_dict, xlabel, title in [
         (axes[0], sfc_counts, "SFC Count per Node", "Empirical CDF: SFC Count per Node"),
@@ -901,6 +872,83 @@ def plot_tenancy_distributions(results: dict, output_dir: str = "compare/") -> N
     plt.savefig(path, dpi=150, bbox_inches="tight")
     print(f"Tenancy CDF saved to: {path}")
     plt.close()
+
+
+def plot_tenancy_hbar(results: dict, output_dir: str = "compare/") -> None:
+    """
+    Horizontal bar chart showing cumulative SFC and VNF placements per substrate node
+    for every algorithm.  Each node is a row; algorithms are grouped side-by-side bars.
+
+    Saves: compare/tenancy_hbar.png
+    """
+    out = Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+
+    algorithms = list(results.keys())
+    n_algos = len(algorithms)
+    palette = plt.cm.tab10(np.linspace(0, 0.4, max(n_algos, 2)))[:n_algos]
+    color_map = dict(zip(algorithms, palette))
+
+    def _to_array(result: dict, key: str, n: int) -> np.ndarray:
+        d = result.get(key, {})
+        arr = np.zeros(n, dtype=float)
+        for node_id, val in d.items():
+            if node_id < n:
+                arr[node_id] = val
+        return arr
+
+    # Determine number of nodes from data
+    all_keys = set()
+    for r in results.values():
+        all_keys |= set(r.get("node_sfc_placements", {}).keys())
+        all_keys |= set(r.get("node_vnf_placements", {}).keys())
+    n_nodes = max(all_keys) + 1 if all_keys else 25
+
+    sfc_data = {a: _to_array(results[a], "node_sfc_placements", n_nodes) for a in algorithms}
+    vnf_data = {a: _to_array(results[a], "node_vnf_placements", n_nodes) for a in algorithms}
+
+    node_labels = [f"Node {i}" for i in range(n_nodes)]
+    y = np.arange(n_nodes)
+
+    # Bar height per algorithm + small gap between node groups
+    bar_h = 0.7 / max(n_algos, 1)
+    offsets = np.linspace(-(bar_h * (n_algos - 1)) / 2,
+                           (bar_h * (n_algos - 1)) / 2,
+                           n_algos)
+
+    fig_h = max(6, n_nodes * 0.35 + 1.5)
+
+    for data_dict, xlabel, title, filename in [
+        (sfc_data, "Cumulative SFC Chains Placed", "SFC Tenancy per Node", "tenancy_hbar_sfc.png"),
+        (vnf_data, "Cumulative VNF Instances Placed", "VNF Tenancy per Node", "tenancy_hbar_vnf.png"),
+    ]:
+        fig, ax = plt.subplots(figsize=(8, fig_h))
+        for algo, offset in zip(algorithms, offsets):
+            arr = data_dict[algo]
+            bars = ax.barh(
+                y + offset, arr, bar_h,
+                label=algo, color=color_map[algo],
+                alpha=0.85, edgecolor="black", linewidth=0.3,
+            )
+            for bar, val in zip(bars, arr):
+                if val > 0:
+                    ax.text(
+                        bar.get_width() + 0.3, bar.get_y() + bar.get_height() / 2,
+                        f"{int(val)}", va="center", ha="left", fontsize=7,
+                    )
+
+        ax.set_yticks(y)
+        ax.set_yticklabels(node_labels, fontsize=8)
+        ax.invert_yaxis()
+        ax.set_xlabel(xlabel, fontsize=11)
+        ax.set_title(title, fontsize=12, fontweight="bold")
+        ax.legend(fontsize=9, loc="lower right")
+        ax.grid(True, axis="x", linestyle="--", alpha=0.4)
+        plt.tight_layout()
+        path = out / filename
+        plt.savefig(path, dpi=150, bbox_inches="tight")
+        print(f"Tenancy horizontal bar chart saved to: {path}")
+        plt.close()
 
 
 def plot_rolling_averages(results: dict, output_dir: str, window_size: int = 50):
@@ -1255,6 +1303,9 @@ def main():
 
     # 3) Per-node tenancy distribution figures (grouped bar, histogram, CDF)
     plot_tenancy_distributions(rolling_results, output_dir=out_dir)
+
+    # 4) Horizontal bar chart: cumulative SFC/VNF placements per node × algorithm
+    plot_tenancy_hbar(rolling_results, output_dir=out_dir)
 
     if verbose:
         print("\nPer-episode raw values (to verify episode-to-episode variation):")
